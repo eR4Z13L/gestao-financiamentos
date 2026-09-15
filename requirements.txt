@@ -1,0 +1,8 @@
+PySide6
+pandas
+openpyxl
+gspread
+google-auth
+
+# so pra gerar o .exe (nao e dependencia do app em si)
+pyinstaller

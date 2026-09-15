@@ -1,0 +1,32 @@
+# Banco de dados local (dados reais de clientes - CPF, telefone, endereco,
+# valores) - NUNCA deve ir para o repositorio. Uma copia de exemplo com
+# dados ficticios fica em exemplo/controle_financiamentos_exemplo.xlsx.
+data/*.xlsx
+!data/.gitkeep
+~$*.xlsx
+
+# Credenciais (Google Sheets API e afins - ainda nao usadas, mas o projeto
+# ja reserva esses nomes de arquivo pra quando a sincronizacao for feita)
+credentials.json
+token.json
+.env
+credentials/
+
+# Ambiente virtual Python
+venv/
+.venv/
+
+# Cache/artefatos do Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Build do PyInstaller (gerado, nao versionado - o .spec fica versionado
+# quando existir, ja que e a "receita" customizada do build)
+build/
+dist/
+
+# Preferencias locais do editor/IDE, se houver
+.vscode/
+.idea/
