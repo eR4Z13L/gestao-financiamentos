@@ -30,18 +30,16 @@ from PySide6.QtWidgets import (
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
-from core.formatting import formatar_reais
+from core.formatting import formatar_data, formatar_meses, formatar_reais
+from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.table_model import PandasTableModel
+from desktop.widgets.shadow import aplicar_sombra_suave
 
 _TEXTO_PADRAO_PAINEL = "Selecione um cliente na lista ao lado, ou cadastre um novo."
 
 _COLUNAS_HISTORICO = ["DATA", "BANCO", "EQUIPAMENTO", "VALOR (R$)", "MESES", "STATUS", "TEMPO", "OBSERVAÇÕES"]
-
-
-def _texto_data(valor) -> str:
-    return valor.strftime("%d/%m/%Y") if isinstance(valor, pd.Timestamp) and not pd.isna(valor) else "—"
 
 
 class FichaClienteScreen(QWidget):
@@ -76,7 +74,8 @@ class FichaClienteScreen(QWidget):
         self._lista.currentItemChanged.connect(self._selecionar_cliente)
         coluna_lista.addWidget(self._lista)
 
-        botao_novo_cliente = QPushButton("➕ Novo Cliente")
+        botao_novo_cliente = QPushButton("+ Novo Cliente")
+        botao_novo_cliente.setProperty("role", "botao_primario")
         botao_novo_cliente.clicked.connect(self._abrir_cadastro_cliente)
         coluna_lista.addWidget(botao_novo_cliente)
 
@@ -112,6 +111,7 @@ class FichaClienteScreen(QWidget):
 
         cartao = QFrame()
         cartao.setProperty("role", "card")
+        aplicar_sombra_suave(cartao, settings_mod.obter_tema())
         layout_cartao = QVBoxLayout(cartao)
         layout_cartao.setContentsMargins(16, 16, 16, 16)
         layout_cartao.setSpacing(12)
@@ -121,10 +121,12 @@ class FichaClienteScreen(QWidget):
         self._nome_label.setProperty("role", "subtitulo")
         cabecalho_ficha.addWidget(self._nome_label)
         cabecalho_ficha.addStretch()
-        botao_editar = QPushButton("✏️ Editar")
+        botao_editar = QPushButton("Editar")
+        botao_editar.setProperty("role", "botao_primario")
         botao_editar.clicked.connect(self._abrir_edicao_cliente)
         cabecalho_ficha.addWidget(botao_editar)
-        botao_excluir = QPushButton("🗑️ Excluir")
+        botao_excluir = QPushButton("Excluir")
+        botao_excluir.setProperty("role", "botao_perigo")
         botao_excluir.clicked.connect(self._excluir_cliente)
         cabecalho_ficha.addWidget(botao_excluir)
         layout_cartao.addLayout(cabecalho_ficha)
@@ -168,10 +170,12 @@ class FichaClienteScreen(QWidget):
         layout.addWidget(self._tabela_historico, stretch=1)
 
         linha_botoes_historico = QHBoxLayout()
-        botao_editar_proposta = QPushButton("✏️ Editar Proposta Selecionada")
+        botao_editar_proposta = QPushButton("Editar Proposta Selecionada")
+        botao_editar_proposta.setProperty("role", "botao_primario")
         botao_editar_proposta.clicked.connect(self._editar_proposta_selecionada)
         linha_botoes_historico.addWidget(botao_editar_proposta)
-        botao_nova_proposta = QPushButton("➕ Nova Proposta")
+        botao_nova_proposta = QPushButton("+ Nova Proposta")
+        botao_nova_proposta.setProperty("role", "botao_primario")
         botao_nova_proposta.clicked.connect(self._abrir_nova_proposta)
         linha_botoes_historico.addWidget(botao_nova_proposta)
         layout.addLayout(linha_botoes_historico)
@@ -187,8 +191,9 @@ class FichaClienteScreen(QWidget):
         caixa = QVBoxLayout()
         caixa.setSpacing(2)
         legenda = QLabel(titulo)
-        legenda.setProperty("role", "secundario")
+        legenda.setProperty("role", "campo_rotulo")
         valor = QLabel("—")
+        valor.setProperty("role", "campo_valor")
         valor.setWordWrap(True)
         caixa.addWidget(legenda)
         caixa.addWidget(valor)
@@ -278,8 +283,8 @@ class FichaClienteScreen(QWidget):
         self._campo_celular.setText(cliente["CELULAR"] or "—")
         self._campo_email.setText(cliente["EMAIL"] or "—")
         self._campo_rede_social.setText(cliente["REDE SOCIAL"] or "—")
-        self._campo_nascimento.setText(_texto_data(cliente.get("NASCIMENTO")))
-        self._campo_cadastrado_em.setText(_texto_data(cliente.get("DATA CADASTRO")))
+        self._campo_nascimento.setText(formatar_data(cliente.get("NASCIMENTO")))
+        self._campo_cadastrado_em.setText(formatar_data(cliente.get("DATA CADASTRO")))
         self._campo_vinculado.setText(cliente["VINCULADO"] or "—")
         self._campo_endereco.setText(cliente["ENDEREÇO"] or "—")
 
@@ -293,9 +298,9 @@ class FichaClienteScreen(QWidget):
         self._tabela_historico.setVisible(True)
 
         exibicao = historico[_COLUNAS_HISTORICO].copy()
-        exibicao["DATA"] = exibicao["DATA"].map(_texto_data)
+        exibicao["DATA"] = exibicao["DATA"].map(formatar_data)
         exibicao["VALOR (R$)"] = exibicao["VALOR (R$)"].map(formatar_reais)
-        exibicao["MESES"] = exibicao["MESES"].apply(lambda m: "" if pd.isna(m) else str(int(m)))
+        exibicao["MESES"] = exibicao["MESES"].map(formatar_meses)
         self._modelo_historico.definir_dataframe(exibicao)
         self._tabela_historico.resizeColumnsToContents()
 

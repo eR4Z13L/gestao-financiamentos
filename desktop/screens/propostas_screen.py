@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from core import data_store as bd
 from core import propostas as propostas_mod
-from core.formatting import formatar_reais
+from core.formatting import formatar_data, formatar_meses, formatar_reais
 from core.validators import apenas_digitos
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.table_model import PandasTableModel
@@ -36,10 +36,6 @@ _COLUNAS_EXIBICAO = [
     "VALOR (R$)", "MESES", "STATUS", "TEMPO", "OBSERVAÇÕES",
 ]
 _FILTRO_TODOS = "Todos"
-
-
-def _texto_data(valor) -> str:
-    return valor.strftime("%d/%m/%Y") if isinstance(valor, pd.Timestamp) and not pd.isna(valor) else "—"
 
 
 class PropostasScreen(QWidget):
@@ -57,7 +53,8 @@ class PropostasScreen(QWidget):
         titulo.setProperty("role", "titulo")
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
-        botao_atualizar = QPushButton("🔄 Atualizar")
+        botao_atualizar = QPushButton("Atualizar")
+        botao_atualizar.setProperty("role", "botao_primario")
         botao_atualizar.clicked.connect(self._carregar_dados)
         cabecalho.addWidget(botao_atualizar)
         layout.addLayout(cabecalho)
@@ -93,13 +90,16 @@ class PropostasScreen(QWidget):
         layout.addWidget(self._tabela, stretch=1)
 
         linha_botoes = QHBoxLayout()
-        botao_editar = QPushButton("✏️ Editar")
+        botao_editar = QPushButton("Editar")
+        botao_editar.setProperty("role", "botao_primario")
         botao_editar.clicked.connect(self._editar_selecionada)
         linha_botoes.addWidget(botao_editar)
-        botao_excluir = QPushButton("🗑️ Excluir")
+        botao_excluir = QPushButton("Excluir")
+        botao_excluir.setProperty("role", "botao_perigo")
         botao_excluir.clicked.connect(self._excluir_selecionada)
         linha_botoes.addWidget(botao_excluir)
-        botao_nova = QPushButton("➕ Nova Proposta")
+        botao_nova = QPushButton("+ Nova Proposta")
+        botao_nova.setProperty("role", "botao_primario")
         botao_nova.clicked.connect(self._abrir_nova_proposta)
         linha_botoes.addWidget(botao_nova)
         layout.addLayout(linha_botoes)
@@ -156,9 +156,9 @@ class PropostasScreen(QWidget):
         self._contador.setText(f"{len(df)} proposta(s)")
 
         exibicao = df[_COLUNAS_EXIBICAO].copy()
-        exibicao["DATA"] = exibicao["DATA"].map(_texto_data)
+        exibicao["DATA"] = exibicao["DATA"].map(formatar_data)
         exibicao["VALOR (R$)"] = exibicao["VALOR (R$)"].map(formatar_reais)
-        exibicao["MESES"] = exibicao["MESES"].apply(lambda m: "" if pd.isna(m) else str(int(m)))
+        exibicao["MESES"] = exibicao["MESES"].map(formatar_meses)
         self._modelo.definir_dataframe(exibicao)
         self._tabela.resizeColumnsToContents()
 
@@ -194,7 +194,7 @@ class PropostasScreen(QWidget):
             )
             return
 
-        valor_texto = "sem valor" if pd.isna(proposta["VALOR (R$)"]) else formatar_reais(proposta["VALOR (R$)"])
+        valor_texto = formatar_reais(proposta["VALOR (R$)"])
         resposta = QMessageBox.question(
             self,
             "Excluir proposta",
