@@ -14,9 +14,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import math
+
+import pandas as pd
 from PySide6.QtWidgets import QApplication, QLineEdit
 
+from core.formatting import formatar_data, formatar_meses, formatar_reais
 from core.validators import email_valido
+from desktop.theme import PALETA_ESCURA, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 
 
@@ -88,11 +93,73 @@ def testar_email_valido() -> None:
     print(f"OK: {len(invalidos)} e-mails inválidos rejeitados.")
 
 
+def testar_formatacao_valor_ausente() -> None:
+    linha("5) Valor/mês/data ausentes (regressão do bug \"R$ nan\")")
+
+    # bug real encontrado: proposta com VALOR/MESES em branco na planilha
+    # mostrava o texto literal "R$ nan" na tela, em vez de "—"
+    for valor_ausente in [float("nan"), None, pd.NA]:
+        resultado = formatar_reais(valor_ausente)
+        assert resultado == "—", f"formatar_reais({valor_ausente!r}) = {resultado!r}, esperado '—'"
+    assert "nan" not in formatar_reais(math.nan).lower()
+    print("OK: formatar_reais(ausente) -> '—', nunca 'R$ nan'.")
+
+    assert formatar_reais(1234.5) == "R$ 1.234,50"
+    print("OK: formatar_reais ainda formata valor normal corretamente (R$ 1.234,50).")
+
+    for meses_ausente in [float("nan"), None, pd.NA]:
+        assert formatar_meses(meses_ausente) == "—", f"formatar_meses({meses_ausente!r}) deveria ser '—'"
+    assert formatar_meses(36.0) == "36"
+    print("OK: formatar_meses(ausente) -> '—', e formatar_meses(36.0) -> '36' (sem casas decimais).")
+
+    assert formatar_data(None) == "—"
+    assert formatar_data(pd.NaT) == "—"
+    assert formatar_data(pd.Timestamp(2026, 9, 1)) == "01/09/2026"
+    print("OK: formatar_data(ausente) -> '—', data válida formatada normalmente.")
+
+
+def testar_tema_escuro_intocado() -> None:
+    linha("6) Ajustes de contraste do tema claro não vazam pro escuro")
+
+    # nenhuma cor da paleta escura pode ter mudado com os ajustes do claro
+    esperado = {
+        "bg": "#0e1117",
+        "bg_secundario": "#171a21",
+        "bg_card": "#1c1f2b",
+        "borda": "#2b2f3a",
+        "texto": "#fafafa",
+        "texto_secundario": "#9aa0ac",
+        "destaque": "#4f8bf9",
+        "destaque_hover": "#3f74d6",
+        "sucesso": "#2ecc71",
+        "erro": "#ff4b4b",
+    }
+    for chave, valor in esperado.items():
+        assert PALETA_ESCURA[chave] == valor, f"cor '{chave}' do tema escuro mudou: {PALETA_ESCURA[chave]!r}"
+    assert PALETA_ESCURA["bg_sidebar"] == PALETA_ESCURA["bg_secundario"], "sidebar do escuro ganhou cor propria sem querer"
+    print("OK: nenhuma cor da paleta escura foi alterada pelos ajustes do tema claro.")
+
+    escuro = build_stylesheet(TEMA_ESCURO)
+    claro = build_stylesheet(TEMA_CLARO)
+
+    # marcadores que so devem existir no bloco exclusivo do tema claro
+    marcadores_exclusivos_do_claro = [
+        'QLabel[role="campo_rotulo"] {\n        font-size: 11px;',
+        'QLabel[role="campo_valor"] {\n        font-size: 14px;\n        font-weight: 600;',
+    ]
+    for marcador in marcadores_exclusivos_do_claro:
+        assert marcador not in escuro, f"ajuste exclusivo do tema claro vazou pro escuro: {marcador!r}"
+        assert marcador in claro, f"ajuste esperado do tema claro nao foi aplicado: {marcador!r}"
+    print("OK: os ajustes de hierarquia (botão primário preenchido, rótulo/valor) existem só no tema claro.")
+
+
 def main() -> None:
     testar_formatacao_cpf_cnpj()
     testar_formatacao_telefone()
     testar_conectar_mascara()
     testar_email_valido()
+    testar_formatacao_valor_ausente()
+    testar_tema_escuro_intocado()
     linha("TUDO OK")
 
 

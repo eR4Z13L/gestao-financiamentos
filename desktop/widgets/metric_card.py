@@ -6,11 +6,15 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
+from desktop import settings as settings_mod
+from desktop.widgets.shadow import aplicar_sombra_suave
+
 
 class MetricCard(QFrame):
     def __init__(self, titulo: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setProperty("role", "card")
+        aplicar_sombra_suave(self, settings_mod.obter_tema())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
