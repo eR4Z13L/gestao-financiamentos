@@ -12,6 +12,36 @@ class ErroEquipamento(Exception):
     pass
 
 
+_CAMPOS_NUMERICOS = [
+    ("PARCELAS", "Parcelas"),
+    ("VALOR PARCELA (R$)", "Valor da parcela"),
+    ("VALOR LÍQUIDO/REFERÊNCIA (R$)", "Valor líquido/referência"),
+]
+
+
+def _validar_numericos(campos: dict) -> dict:
+    """Cada campo numerico e opcional, mas se vier preenchido precisa ser um
+    numero positivo - PARCELAS/VALOR negativo ou zerado nao faz sentido de
+    negocio e passaria batido silenciosamente (viraria NaN na leitura, sem
+    avisar ninguem)."""
+    campos = dict(campos)
+    for coluna, rotulo in _CAMPOS_NUMERICOS:
+        if coluna not in campos:
+            continue
+        valor = campos[coluna]
+        if valor is None or valor == "" or (isinstance(valor, float) and pd.isna(valor)):
+            campos[coluna] = ""
+            continue
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            raise ErroEquipamento(f"{rotulo} deve ser um número.")
+        if numero <= 0:
+            raise ErroEquipamento(f"{rotulo} deve ser maior que zero.")
+        campos[coluna] = numero
+    return campos
+
+
 def listar_equipamentos() -> pd.DataFrame:
     df = bd.ler_equipamentos(CAMINHO_XLSX)
     return df.sort_values(["FORNECEDOR", "EQUIPAMENTO"], key=lambda s: s.str.upper()).reset_index(drop=True)
@@ -38,6 +68,7 @@ def adicionar_equipamento(campos: dict) -> None:
         raise ErroEquipamento("Nome do equipamento é obrigatório.")
     campos["EQUIPAMENTO"] = nome
     campos["FORNECEDOR"] = (campos.get("FORNECEDOR") or "").strip()
+    campos = _validar_numericos(campos)
 
     df = bd.ler_equipamentos(CAMINHO_XLSX)
     nova_linha = {col: campos.get(col, "") for col in bd.EQUIPAMENTOS_COLUNAS}
@@ -51,6 +82,15 @@ def atualizar_equipamento(indice: int, campos: dict) -> None:
     df = bd.ler_equipamentos(CAMINHO_XLSX)
     if indice not in df.index:
         raise ErroEquipamento("Equipamento não encontrado (a lista pode ter mudado).")
+
+    campos = dict(campos)
+    if "EQUIPAMENTO" in campos:
+        nome = (campos.get("EQUIPAMENTO") or "").strip()
+        if not nome:
+            raise ErroEquipamento("Nome do equipamento é obrigatório.")
+        campos["EQUIPAMENTO"] = nome
+    campos = _validar_numericos(campos)
+
     for col, valor in campos.items():
         if col in bd.EQUIPAMENTOS_COLUNAS:
             df.loc[indice, col] = valor

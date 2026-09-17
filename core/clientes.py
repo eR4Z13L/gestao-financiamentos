@@ -60,8 +60,15 @@ def _validar_campos(campos: dict, cpf_original: str | None = None) -> None:
 
     if not cpf:
         raise ErroCliente("CPF/CNPJ é obrigatório.")
-    if not cpf_cnpj_valido(cpf):
+
+    cpf_mudou = cpf_original is None or apenas_digitos(cpf) != apenas_digitos(cpf_original)
+    # so revalida o digito verificador se o CPF de fato mudou - varios
+    # clientes reais tem CPF invalido (dado legado, digitado errado antes de
+    # existir validacao) e nao podem ficar impedidos de editar QUALQUER outro
+    # campo (nome, telefone, etc.) so por causa de um CPF que ja estava assim.
+    if cpf_mudou and not cpf_cnpj_valido(cpf):
         raise ErroCliente("CPF/CNPJ inválido - confira os números digitados.")
+
     if not nome:
         raise ErroCliente("Nome do cliente é obrigatório.")
     if tipo not in TIPO_OPCOES:
@@ -72,8 +79,7 @@ def _validar_campos(campos: dict, cpf_original: str | None = None) -> None:
         raise ErroCliente("E-mail inválido - confira o endereço digitado.")
 
     existente = buscar_por_cpf(cpf)
-    e_cpf_novo = cpf_original is None or apenas_digitos(cpf) != apenas_digitos(cpf_original)
-    if e_cpf_novo and existente is not None:
+    if cpf_mudou and existente is not None:
         raise ErroCliente(f"Já existe um cliente cadastrado com o CPF/CNPJ {cpf}.")
 
 
@@ -128,8 +134,3 @@ def remover_cliente(cpf: str) -> None:
     if permanece.all():
         raise ErroCliente("Cliente não encontrado (pode já ter sido removido).")
     bd.escrever_clientes(CAMINHO_XLSX, df[permanece].reset_index(drop=True))
-
-
-def listar_vendedores() -> list[str]:
-    df = bd.ler_clientes(CAMINHO_XLSX)
-    return sorted({v for v in df["VENDEDOR"].tolist() if v})

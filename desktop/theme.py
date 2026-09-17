@@ -20,6 +20,8 @@ PALETA_ESCURA = {
     "bg_sidebar": "#171a21",
     "bg_secundario": "#171a21",
     "bg_card": "#1c1f2b",
+    # zebra igual ao bg_secundario de sempre - tema escuro nao muda aqui
+    "zebra": "#171a21",
     "borda": "#2b2f3a",
     "texto": "#fafafa",
     "texto_secundario": "#9aa0ac",
@@ -36,10 +38,13 @@ PALETA_CLARA = {
     # sidebar com tom proprio, mais escuro que o fundo principal - ancora a
     # navegacao visualmente em vez de se misturar com o conteudo
     "bg_sidebar": "#d7dee7",
-    # usado na zebra da tabela e no cabecalho - claro o bastante pra nao
-    # competir com o card branco, mas distinto do fundo principal
+    # usado so no cabecalho da tabela
     "bg_secundario": "#f3f5f7",
     "bg_card": "#ffffff",
+    # zebra das tabelas - precisa de mais contraste que o bg_secundario contra
+    # o branco do card (a diferenca de #f3f5f7 pro branco e quase impercep-
+    # tivel: ~5% de luminancia, sumia visualmente numa tela de verdade)
+    "zebra": "#eceff3",
     "borda": "#c9d1db",
     "texto": "#1a1d23",
     "texto_secundario": "#5f6672",
@@ -81,7 +86,8 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         color: {p['texto_secundario']};
     }}
     QListWidget[recolhido="true"]::item {{
-        padding: 11px 0px;
+        padding: 3px 0px;
+        margin: 2px 2px;
     }}
     QListWidget::item:selected {{
         background-color: {p['destaque']};
@@ -200,7 +206,7 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
 
     QTableView {{
         background-color: {p['bg_card']};
-        alternate-background-color: {p['bg_secundario']};
+        alternate-background-color: {p['zebra']};
         gridline-color: {p['borda']};
         border: 1px solid {p['borda']};
         border-radius: 6px;
@@ -270,17 +276,56 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         color: white;
     }}
 
+    /* barras finas e discretas (fundo transparente, sem seta nem "pagina"
+       quadrada) - a cor do "polegar" ja vem da paleta de cada tema (borda:
+       clara no tema claro, escura no escuro), entao nao precisa de um valor
+       hardcoded aqui */
     QScrollBar:vertical {{
-        background: {p['bg']};
-        width: 10px;
+        background: transparent;
+        width: 8px;
+        margin: 2px 1px 2px 0px;
     }}
     QScrollBar::handle:vertical {{
         background: {p['borda']};
-        border-radius: 5px;
-        min-height: 20px;
+        border-radius: 4px;
+        min-height: 24px;
     }}
-    QScrollBar::add-line, QScrollBar::sub-line {{
+    QScrollBar::handle:vertical:hover {{
+        background: {p['texto_secundario']};
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0px;
+        background: none;
+        border: none;
+    }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: none;
+    }}
+
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 8px;
+        margin: 0px 2px 1px 2px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {p['borda']};
+        border-radius: 4px;
+        min-width: 24px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: {p['texto_secundario']};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0px;
+        background: none;
+        border: none;
+    }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: none;
+    }}
+
+    QScrollBar::corner {{
+        background: transparent;
     }}
     """
 

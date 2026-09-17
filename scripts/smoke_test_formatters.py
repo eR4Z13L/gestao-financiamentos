@@ -21,8 +21,9 @@ from PySide6.QtWidgets import QApplication, QLineEdit
 
 from core.formatting import formatar_data, formatar_meses, formatar_reais
 from core.validators import email_valido
-from desktop.theme import PALETA_ESCURA, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
+from desktop.theme import PALETA_CLARA, PALETA_ESCURA, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
+from desktop.widgets.quebra_texto import texto_quebravel
 
 
 def linha(titulo: str) -> None:
@@ -118,6 +119,38 @@ def testar_formatacao_valor_ausente() -> None:
     print("OK: formatar_data(ausente) -> '—', data válida formatada normalmente.")
 
 
+def testar_texto_quebravel() -> None:
+    linha("7) texto_quebravel - quebra artificial em texto sem espaço (URL colada)")
+
+    ZWSP = "​"
+
+    assert texto_quebravel("") == ""
+    assert texto_quebravel(None) is None
+    print("OK: texto vazio/None passa direto, sem erro.")
+
+    curto = "https://a.co/x"  # menor que o tamanho maximo - nao deveria ganhar nenhum ZWSP
+    assert texto_quebravel(curto) == curto
+    print(f"OK: texto curto ({len(curto)} caract.) não recebe nenhum espaço de largura zero.")
+
+    texto_normal = "Fulano da Silva mora na Rua Tal"
+    assert texto_quebravel(texto_normal) == texto_normal, "espacos normais nao podem virar ZWSP nem sumir"
+    print("OK: texto com palavras curtas (nomes/frases comuns) sai idêntico ao original.")
+
+    token = "A" * 87  # bem maior que o tamanho maximo, sem nenhum ponto de quebra
+    resultado = texto_quebravel(token, tamanho_maximo=20)
+    assert resultado.replace(ZWSP, "") == token, "nenhum caractere pode ser perdido"
+    maior_pedaco = max(len(p) for p in resultado.split(ZWSP))
+    assert maior_pedaco <= 20, f"deveria ter quebrado a cada 20 caract., maior pedaço tem {maior_pedaco}"
+    print(f"OK: token de {len(token)} caracteres sem espaço nenhum virou pedaços de até 20 (maior pedaço: {maior_pedaco}).")
+
+    misto = "veja " + "B" * 60 + " depois"
+    resultado_misto = texto_quebravel(misto, tamanho_maximo=20)
+    assert resultado_misto.replace(ZWSP, "") == misto
+    partes = resultado_misto.split(" ")
+    assert partes[0] == "veja" and partes[-1] == "depois", "palavras curtas ao redor nao podem ser mexidas"
+    print("OK: só o trecho colado (sem espaço) é quebrado - palavras normais ao redor ficam intactas.")
+
+
 def testar_tema_escuro_intocado() -> None:
     linha("6) Ajustes de contraste do tema claro não vazam pro escuro")
 
@@ -126,6 +159,7 @@ def testar_tema_escuro_intocado() -> None:
         "bg": "#0e1117",
         "bg_secundario": "#171a21",
         "bg_card": "#1c1f2b",
+        "zebra": "#171a21",
         "borda": "#2b2f3a",
         "texto": "#fafafa",
         "texto_secundario": "#9aa0ac",
@@ -153,13 +187,56 @@ def testar_tema_escuro_intocado() -> None:
     print("OK: os ajustes de hierarquia (botão primário preenchido, rótulo/valor) existem só no tema claro.")
 
 
+def _luminancia(hex_cor: str) -> float:
+    hex_cor = hex_cor.lstrip("#")
+    r, g, b = (int(hex_cor[i : i + 2], 16) for i in (0, 2, 4))
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def testar_zebra_tabela() -> None:
+    linha("8) Zebra da tabela - contraste real (não só existir no CSS)")
+
+    # bug real reportado: a zebra "existia" no CSS (alternate-background-color)
+    # mas a cor era tao proxima do branco do card que ninguem enxergava - o
+    # que importa e a DIFERENCA de luminancia, nao so a cor existir
+    delta_claro = abs(_luminancia(PALETA_CLARA["zebra"]) - _luminancia(PALETA_CLARA["bg_card"]))
+    assert delta_claro >= 8, f"zebra do tema claro perto demais do card outra vez (delta={delta_claro:.1f})"
+    print(f"OK: zebra do tema claro tem contraste perceptível contra o card (delta de luminância={delta_claro:.1f}).")
+
+    # tema escuro nao foi mexido por este pedido - zebra continua igual ao bg_secundario de sempre
+    assert PALETA_ESCURA["zebra"] == PALETA_ESCURA["bg_secundario"]
+    print("OK: zebra do tema escuro segue idêntica a bg_secundario (não alterado).")
+
+
+def testar_sidebar_recolhida_quase_quadrada() -> None:
+    linha("9) Item da sidebar recolhida - proporção quase quadrada")
+
+    # bug real reportado: o item ficava um retangulo bem mais alto que largo
+    # (padding vertical de 13px + margin de 6px). Confere que os valores
+    # atuais (mais enxutos) estao no CSS gerado, nos dois temas (a regra e
+    # compartilhada no bloco base) - nao mede geometria renderizada porque
+    # QT_QPA_PLATFORM=offscreen usa metricas de emoji diferentes do Qt real
+    # (ver notas do projeto), o que tornaria essa medida nao-confiavel aqui.
+    marcador = 'QListWidget[recolhido="true"]::item {\n        padding: 3px 0px;\n        margin: 2px 2px;'
+    assert marcador in build_stylesheet(TEMA_CLARO)
+    assert marcador in build_stylesheet(TEMA_ESCURO)
+    print("OK: padding/margin enxutos (proporção quase quadrada) presentes nos dois temas.")
+
+    claro = build_stylesheet(TEMA_CLARO)
+    assert f"alternate-background-color: {PALETA_CLARA['zebra']}" in claro
+    print("OK: o QSS do tema claro realmente usa a nova cor de zebra.")
+
+
 def main() -> None:
     testar_formatacao_cpf_cnpj()
     testar_formatacao_telefone()
     testar_conectar_mascara()
     testar_email_valido()
     testar_formatacao_valor_ausente()
+    testar_texto_quebravel()
     testar_tema_escuro_intocado()
+    testar_zebra_tabela()
+    testar_sidebar_recolhida_quase_quadrada()
     linha("TUDO OK")
 
 

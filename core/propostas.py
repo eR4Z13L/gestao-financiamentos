@@ -30,13 +30,20 @@ STATUS_OPCOES = [
     STATUS_NEGADO,
 ]
 
-# Statuses que contam como "Negado" ou "Em Análise" no dashboard. Qualquer
-# outro valor - inclusive um status novo que ainda nao existe hoje - conta
-# como "Aprovado" nas taxas gerais, porque na pratica representa alguma etapa
-# depois da aprovacao inicial (combinado com o usuario: o importante e ver, no
-# detalhamento por status do dashboard, onde as aprovadas estao empacando).
-_PALAVRAS_NEGADO = {"NEGADO", "NEGADA", "REPROVADO", "REPROVADA", "CANCELADO", "CANCELADA"}
+# Reaproveita a mesma lista de "palavras de negado" usada pro calculo de
+# TEMPO em data_store.py, pra nunca ficar dessincronizada dali.
+_PALAVRAS_NEGADO = bd.PALAVRAS_STATUS_NEGADO
 _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PENDENTE"}
+# Etapas conhecidas do funil depois da aprovacao inicial - so estas contam
+# como "Aprovado" nas taxas gerais. Um status desconhecido/mal digitado (que
+# nao e nenhuma das etapas oficiais, nem negado, nem em analise) NAO vira
+# "Aprovado" por omissao - isso inflaria a taxa de aprovacao e o valor
+# aprovado do dashboard com dado ruim. Ele cai em "Não identificado".
+_PALAVRAS_APROVADO = {
+    "APROVADO", "APROVADA",
+    "PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO",
+    "NOTA FISCAL ANEXADA", "GARANTIA ASSINADA",
+}
 
 
 class ErroProposta(Exception):
@@ -44,8 +51,11 @@ class ErroProposta(Exception):
 
 
 def categoria_status(status: str) -> str:
-    """Classifica um status (mesmo um customizado/novo) em 'Negado',
-    'Em Análise' ou 'Aprovado' - as 3 categorias usadas nas taxas do dashboard.
+    """Classifica um status (mesmo um customizado/novo, desde que seja uma
+    das etapas oficiais do funil) em 'Negado', 'Em Análise' ou 'Aprovado' -
+    as 3 categorias usadas nas taxas do dashboard. Um status vazio devolve ""
+    (sem status); um status preenchido mas desconhecido devolve
+    'Não identificado' - nenhum dos dois conta como aprovacao.
     """
     s = (status or "").strip().upper()
     if not s:
@@ -54,7 +64,26 @@ def categoria_status(status: str) -> str:
         return "Negado"
     if s in _PALAVRAS_EM_ANALISE:
         return "Em Análise"
-    return "Aprovado"
+    if s in _PALAVRAS_APROVADO:
+        return "Aprovado"
+    return "Não identificado"
+
+
+def _ordenar_por_data_desc(df: pd.DataFrame) -> pd.DataFrame:
+    """Ordena por DATA (mais recente primeiro) sem quebrar se a coluna tiver
+    uma mistura de datas de verdade e texto (dado legado digitado errado na
+    planilha) - comparar datetime com str diretamente faria sort_values
+    estourar TypeError. Datas invalidas/texto vao pro final, como se fossem
+    as mais antigas. Usa uma coluna auxiliar soh pra ordenar - a coluna DATA
+    devolvida continua com os valores originais (formatar_data ja sabe
+    mostrar "—" pro que nao for uma data de verdade).
+    """
+    chave = pd.to_datetime(df["DATA"], errors="coerce")
+    return (
+        df.assign(_CHAVE_ORDENACAO=chave)
+        .sort_values("_CHAVE_ORDENACAO", ascending=False, na_position="last")
+        .drop(columns="_CHAVE_ORDENACAO")
+    )
 
 
 def listar_propostas() -> pd.DataFrame:
@@ -64,7 +93,7 @@ def listar_propostas() -> pd.DataFrame:
     indice para editar uma linha.
     """
     df = bd.ler_propostas(CAMINHO_XLSX)
-    return df.sort_values("DATA", ascending=False)
+    return _ordenar_por_data_desc(df)
 
 
 def historico_por_cpf(cpf: str) -> pd.DataFrame:
@@ -74,27 +103,59 @@ def historico_por_cpf(cpf: str) -> pd.DataFrame:
     df = bd.ler_propostas(CAMINHO_XLSX)
     alvo = apenas_digitos(cpf)
     filtrado = df[df["CPF"].map(apenas_digitos) == alvo]
-    return filtrado.sort_values("DATA", ascending=False)
+    return _ordenar_por_data_desc(filtrado)
 
 
-def _validar_campos(campos: dict) -> None:
+def _converter_valor(valor):
+    """Aceita um numero ja pronto (vindo do QDoubleSpinBox) ou texto no
+    formato brasileiro ("1.500,00") ou americano ("1500.00"). Devolve None se
+    nao for um numero valido em nenhum dos dois formatos - quem chama decide
+    a mensagem de erro, em vez de deixar o ValueError do float() estourar sem
+    tratamento (e sem mensagem clara) la na tela.
+    """
+    if valor is None or valor == "" or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
+def _validar_campos(campos: dict, *, valor_obrigatorio: bool = True) -> None:
     cpf = (campos.get("CPF") or "").strip()
-    valor = campos.get("VALOR (R$)")
     equipamento = (campos.get("EQUIPAMENTO") or "").strip()
-    banco = (campos.get("BANCO") or "").strip()
 
     if not cpf:
         raise ErroProposta("CPF do cliente é obrigatório.")
     if clientes_mod.buscar_por_cpf(cpf) is None:
         raise ErroProposta(f"Não existe cliente cadastrado com o CPF {cpf}. Cadastre o cliente primeiro.")
-    # NaN e "truthy" e NaN <= 0 e sempre False, entao "not valor or valor<=0"
-    # sozinho deixaria um valor invalido passar sem ser pego
-    if not valor or pd.isna(valor) or float(valor) <= 0:
-        raise ErroProposta("Valor solicitado deve ser maior que zero.")
+
+    valor_bruto = campos.get("VALOR (R$)")
+    valor_ausente = valor_bruto is None or valor_bruto == "" or (isinstance(valor_bruto, float) and pd.isna(valor_bruto))
+    if valor_ausente:
+        # proposta antiga sem VALOR preenchido - so bloqueia se for um
+        # cadastro novo (valor_obrigatorio=True); editar uma proposta que ja
+        # nao tinha valor (ex: soh pra mudar o status) nao pode ficar travada
+        # exigindo preencher o valor primeiro.
+        if valor_obrigatorio:
+            raise ErroProposta("Valor solicitado deve ser maior que zero.")
+    else:
+        valor = _converter_valor(valor_bruto)
+        if valor is None:
+            raise ErroProposta("Valor solicitado inválido - use um número (ex: 1500 ou 1.500,00).")
+        if valor <= 0:
+            raise ErroProposta("Valor solicitado deve ser maior que zero.")
+        campos["VALOR (R$)"] = valor
+
     if not equipamento:
         raise ErroProposta("Equipamento é obrigatório.")
-    if not banco:
-        raise ErroProposta("Banco/financeira é obrigatório.")
 
 
 def adicionar_proposta(campos: dict) -> None:
@@ -130,7 +191,15 @@ def atualizar_proposta(indice: int, campos: dict) -> None:
     # (ex: zerar o valor por engano numa linha que ja tinha valor valido).
     estado_final = df.loc[indice].to_dict()
     estado_final.update(campos)
-    _validar_campos(estado_final)
+    # numa edicao, VALOR (R$) nao e obrigatorio - uma proposta antiga que ja
+    # estava sem valor pode ser editada (ex: so pra mudar o status) sem
+    # precisar preencher o valor primeiro. Se um valor FOR informado, ele
+    # ainda precisa ser um numero valido e maior que zero (validado abaixo).
+    _validar_campos(estado_final, valor_obrigatorio=False)
+    if "VALOR (R$)" in campos:
+        # usa o valor ja convertido por _validar_campos (aceita formato
+        # brasileiro "1.500,00") em vez do texto/numero original recebido.
+        campos["VALOR (R$)"] = estado_final["VALOR (R$)"]
 
     for col, valor in campos.items():
         if col in bd.PROPOSTAS_COLUNAS_EDITAVEIS:

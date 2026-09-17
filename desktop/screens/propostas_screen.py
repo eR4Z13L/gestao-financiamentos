@@ -9,7 +9,7 @@ e o mesmo PropostaDialog usado na Ficha de Cliente.
 from __future__ import annotations
 
 import pandas as pd
-from PySide6.QtCore import QSortFilterProxyModel
+from PySide6.QtCore import Qt, QSortFilterProxyModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -29,7 +29,7 @@ from core import propostas as propostas_mod
 from core.formatting import formatar_data, formatar_meses, formatar_reais
 from core.validators import apenas_digitos
 from desktop.dialogs.proposta_dialog import PropostaDialog
-from desktop.table_model import PandasTableModel
+from desktop.table_model import PandasTableModel, limitar_largura_colunas
 
 _COLUNAS_EXIBICAO = [
     "DATA", "VENDEDOR", "CLIENTE", "CPF", "EQUIPAMENTO", "BANCO",
@@ -86,6 +86,7 @@ class PropostasScreen(QWidget):
         self._tabela.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tabela.horizontalHeader().setStretchLastSection(True)
         self._tabela.verticalHeader().setVisible(False)
+        self._tabela.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._tabela.doubleClicked.connect(self._editar_selecionada)
         layout.addWidget(self._tabela, stretch=1)
 
@@ -161,6 +162,7 @@ class PropostasScreen(QWidget):
         exibicao["MESES"] = exibicao["MESES"].map(formatar_meses)
         self._modelo.definir_dataframe(exibicao)
         self._tabela.resizeColumnsToContents()
+        limitar_largura_colunas(self._tabela)
 
     # -- selecao e acoes ------------------------------------------------------
 

@@ -140,20 +140,69 @@ class PropostaDialog(QDialog):
             )
         return cpf
 
+    def _confirmar(self, titulo: str, mensagem: str) -> bool:
+        resposta = QMessageBox.question(
+            self,
+            titulo,
+            mensagem,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return resposta == QMessageBox.StandardButton.Yes
+
+    def _duplicata_provavel(self, cpf: str, data: pd.Timestamp, valor) -> bool:
+        """Mesmo cliente + mesma data + mesmo valor de outra proposta ja
+        lancada (ignorando a que esta sendo editada agora) - um sinal comum
+        de duplicidade por engano (ex: clique duplo em "Salvar")."""
+        try:
+            historico = propostas_mod.historico_por_cpf(cpf)
+        except Exception:
+            return False  # checagem extra nao pode impedir o salvamento normal
+        if self._indice is not None:
+            historico = historico[historico.index != self._indice]
+        if historico.empty or valor in (None, ""):
+            return False
+        mesma_data = historico["DATA"] == data
+        mesmo_valor = (historico["VALOR (R$)"] - float(valor)).abs() < 0.01
+        return bool((mesma_data & mesmo_valor).any())
+
     def _salvar(self) -> None:
         cpf = self._resolver_cpf()
         if cpf is None:
             return
 
+        banco = self._banco.currentText().strip()
+        status = self._status.currentText().strip()
+        faltando = [rotulo for rotulo, valor in (("Banco/financeira", banco), ("Status", status)) if not valor]
+        if faltando:
+            plural = len(faltando) > 1
+            if not self._confirmar(
+                "Campo recomendado em branco",
+                f"{' e '.join(faltando)} não {'foram preenchidos' if plural else 'foi preenchido'}. "
+                "Deseja salvar assim mesmo?",
+            ):
+                return
+
         qdate = self._data.date()
+        data_proposta = pd.Timestamp(qdate.year(), qdate.month(), qdate.day())
+        valor_informado = self._valor.value() or ""  # 0 = campo nao preenchido (mesma convencao de MESES)
+
+        if self._duplicata_provavel(cpf, data_proposta, valor_informado):
+            if not self._confirmar(
+                "Possível duplicata",
+                "Já existe uma proposta deste cliente com a mesma data e o mesmo valor. "
+                "Deseja salvar mesmo assim?",
+            ):
+                return
+
         campos = {
-            "DATA": pd.Timestamp(qdate.year(), qdate.month(), qdate.day()),
+            "DATA": data_proposta,
             "CPF": cpf,
-            "VALOR (R$)": self._valor.value(),
+            "VALOR (R$)": valor_informado,
             "MESES": self._meses.value() or "",
             "EQUIPAMENTO": self._equipamento.currentText().strip(),
-            "BANCO": self._banco.currentText().strip(),
-            "STATUS": self._status.currentText(),
+            "BANCO": banco,
+            "STATUS": status,
             "OBSERVAÇÕES": self._observacoes.toPlainText().strip(),
         }
         try:

@@ -61,6 +61,15 @@ class DashboardScreen(QWidget):
             linha2.addWidget(card, 1)
         layout.addLayout(linha2)
 
+        # so aparece quando Aprovadas + Negadas + Em Análise nao soma o Total
+        # (proposta com status em branco ou nao reconhecido) - sem isso, o
+        # "sumiço" so ficava visivel rolando ate a tabela de detalhamento.
+        self._aviso_gap = QLabel("")
+        self._aviso_gap.setProperty("role", "secundario")
+        self._aviso_gap.setWordWrap(True)
+        self._aviso_gap.setVisible(False)
+        layout.addWidget(self._aviso_gap)
+
         subtitulo_status = QLabel("Detalhamento por status")
         subtitulo_status.setProperty("role", "subtitulo")
         layout.addWidget(subtitulo_status)
@@ -122,6 +131,22 @@ class DashboardScreen(QWidget):
         self._card_taxa_aprovacao.definir_valor(f"{totais['taxa_aprovacao']:.1f}%")
         self._card_taxa_reprovacao.definir_valor(f"{totais['taxa_reprovacao']:.1f}%")
         self._card_valor_aprovado.definir_valor(formatar_reais(totais["valor_aprovado"]))
+
+        avisos = []
+        gap = totais["sem_status"] + totais["nao_identificado"]
+        if gap:
+            avisos.append(
+                f"⚠️ {gap} proposta(s) não entram nos cards acima (status em branco ou não reconhecido)."
+            )
+        if totais["aprovadas_sem_valor"]:
+            avisos.append(
+                f"⚠️ {totais['aprovadas_sem_valor']} proposta(s) aprovada(s) sem valor preenchido - "
+                "não entram no 'Valor total aprovado' (não são tratadas como R$ 0)."
+            )
+        if avisos:
+            avisos.append("Veja o detalhamento por status abaixo.")
+            self._aviso_gap.setText("\n".join(avisos))
+        self._aviso_gap.setVisible(bool(avisos))
 
         detalhamento = dashboard_mod.detalhamento_por_status(propostas).copy()
         detalhamento["Valor (R$)"] = detalhamento["Valor (R$)"].map(formatar_reais)

@@ -6,7 +6,7 @@ em nenhum arquivo do projeto).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QCoreApplication, QSettings
+from PySide6.QtCore import QSettings
 
 from desktop.theme import TEMA_CLARO, TEMA_ESCURO
 
@@ -15,13 +15,13 @@ _APLICACAO = "Desktop"
 
 
 def _settings() -> QSettings:
-    # garante que organizationName/applicationName estao definidos mesmo se
-    # settings.py for usado antes de desktop/main.py rodar (ex: em testes)
-    if not QCoreApplication.organizationName():
-        QCoreApplication.setOrganizationName(_ORGANIZACAO)
-    if not QCoreApplication.applicationName():
-        QCoreApplication.setApplicationName(_APLICACAO)
-    return QSettings()
+    # passa organizacao/aplicativo direto pro construtor, em vez de depender
+    # de QCoreApplication.setOrganizationName()/setApplicationName() - o Qt
+    # preenche applicationName() sozinho com o nome do executavel (python,
+    # pythonw, GestaoFinanciamentos.exe...) antes do nosso codigo rodar, o
+    # que fragmentava as preferencias num local de registro diferente pra
+    # cada jeito de abrir o app (python direto, .bat, ou o .exe empacotado)
+    return QSettings(_ORGANIZACAO, _APLICACAO)
 
 
 def obter_tema() -> str:

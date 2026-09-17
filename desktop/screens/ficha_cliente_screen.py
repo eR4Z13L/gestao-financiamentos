@@ -34,7 +34,8 @@ from core.formatting import formatar_data, formatar_meses, formatar_reais
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
-from desktop.table_model import PandasTableModel
+from desktop.table_model import PandasTableModel, limitar_largura_colunas
+from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.shadow import aplicar_sombra_suave
 
 _TEXTO_PADRAO_PAINEL = "Selecione um cliente na lista ao lado, ou cadastre um novo."
@@ -166,6 +167,7 @@ class FichaClienteScreen(QWidget):
         self._tabela_historico.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tabela_historico.horizontalHeader().setStretchLastSection(True)
         self._tabela_historico.verticalHeader().setVisible(False)
+        self._tabela_historico.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._tabela_historico.doubleClicked.connect(self._editar_proposta_selecionada)
         layout.addWidget(self._tabela_historico, stretch=1)
 
@@ -276,17 +278,17 @@ class FichaClienteScreen(QWidget):
         # pra leitura, mas editar uma proposta precisa dos valores originais
         self._historico_atual = historico
 
-        self._nome_label.setText(cliente["CLIENTE"])
+        self._nome_label.setText(texto_quebravel(cliente["CLIENTE"]))
         self._campo_cpf.setText(cliente["CPF/CNPJ"])
         self._campo_tipo.setText(cliente["TIPO"] or "—")
         self._campo_vendedor.setText(cliente["VENDEDOR"] or "—")
         self._campo_celular.setText(cliente["CELULAR"] or "—")
-        self._campo_email.setText(cliente["EMAIL"] or "—")
-        self._campo_rede_social.setText(cliente["REDE SOCIAL"] or "—")
+        self._campo_email.setText(texto_quebravel(cliente["EMAIL"]) or "—")
+        self._campo_rede_social.setText(texto_quebravel(cliente["REDE SOCIAL"]) or "—")
         self._campo_nascimento.setText(formatar_data(cliente.get("NASCIMENTO")))
         self._campo_cadastrado_em.setText(formatar_data(cliente.get("DATA CADASTRO")))
-        self._campo_vinculado.setText(cliente["VINCULADO"] or "—")
-        self._campo_endereco.setText(cliente["ENDEREÇO"] or "—")
+        self._campo_vinculado.setText(texto_quebravel(cliente["VINCULADO"]) or "—")
+        self._campo_endereco.setText(texto_quebravel(cliente["ENDEREÇO"]) or "—")
 
         if historico.empty:
             self._historico_vazio.setVisible(True)
@@ -303,6 +305,7 @@ class FichaClienteScreen(QWidget):
         exibicao["MESES"] = exibicao["MESES"].map(formatar_meses)
         self._modelo_historico.definir_dataframe(exibicao)
         self._tabela_historico.resizeColumnsToContents()
+        limitar_largura_colunas(self._tabela_historico)
 
     # -- dialogos: cadastro/edicao de cliente e nova proposta ---------------
 
@@ -321,6 +324,9 @@ class FichaClienteScreen(QWidget):
             return
         cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
         if cliente is None:
+            QMessageBox.warning(self, "Cliente não encontrado", "Este cliente pode ter sido removido.")
+            self._cpf_selecionado = None
+            self._painel_stack.setCurrentIndex(0)
             return
         dialogo = ClienteDialog(cliente=cliente, parent=self)
         if dialogo.exec() != QDialog.DialogCode.Accepted:
@@ -328,6 +334,29 @@ class FichaClienteScreen(QWidget):
         self._busca.setText("")
         self._atualizar_lista()
         self._selecionar_por_cpf(dialogo.cpf_salvo)
+
+    def _recarregar_ficha_atual(self) -> bool:
+        """Recarrega cliente + historico do CPF selecionado, com a mesma
+        protecao contra erro de leitura que o primeiro carregamento
+        (_selecionar_cliente) ja tinha - antes disso, so o carregamento
+        inicial estava protegido, e um erro de leitura aqui (ex: arquivo
+        bloqueado no meio da releitura) derrubava a tela sem aviso nenhum.
+        Devolve False se o cliente sumiu ou deu erro (a tela ja foi avisada
+        e ajustada nesse caso).
+        """
+        try:
+            cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
+            historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro ao recarregar cliente", str(exc))
+            return False
+        if cliente is None:
+            QMessageBox.warning(self, "Cliente não encontrado", "Este cliente pode ter sido removido.")
+            self._cpf_selecionado = None
+            self._painel_stack.setCurrentIndex(0)
+            return False
+        self._preencher_ficha(cliente, historico)
+        return True
 
     def _abrir_nova_proposta(self) -> None:
         if not self._cpf_selecionado:
@@ -337,9 +366,7 @@ class FichaClienteScreen(QWidget):
             return
         # so precisa recarregar a ficha atual (historico) - a lista de
         # clientes nao muda ao lancar uma proposta
-        cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
-        historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
-        self._preencher_ficha(cliente, historico)
+        self._recarregar_ficha_atual()
 
     def _editar_proposta_selecionada(self, *_args) -> None:
         """*_args absorve o QModelIndex que o sinal doubleClicked manda -
@@ -363,16 +390,18 @@ class FichaClienteScreen(QWidget):
         if dialogo.exec() != QDialog.DialogCode.Accepted:
             return
 
-        cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
-        historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
-        self._preencher_ficha(cliente, historico)
+        self._recarregar_ficha_atual()
 
     def _excluir_cliente(self) -> None:
         if not self._cpf_selecionado:
             return
 
         nome = self._nome_label.text()
-        historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
+        try:
+            historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro ao carregar histórico", str(exc))
+            return
 
         mensagem = f"Tem certeza que deseja excluir '{nome}'? Essa ação não pode ser desfeita."
         if not historico.empty:

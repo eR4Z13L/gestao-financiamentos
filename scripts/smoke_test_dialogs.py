@@ -19,11 +19,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from config import CAMINHO_XLSX
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
+from core import vendedores as vendedores_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
 
@@ -52,6 +53,7 @@ def main() -> None:
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    vendedores_mod.CAMINHO_XLSX = tmp_path
 
     try:
         linha("1) ClienteDialog - CPF invalido (deve rejeitar)")
@@ -65,6 +67,9 @@ def main() -> None:
 
         linha("2) ClienteDialog - cadastro valido")
         novo_cpf = "529.982.247-25"  # CPF valido (digito verificador correto), so pra teste
+        # o combo de vendedor e travado (so lista quem ja esta cadastrado) -
+        # precisa existir no cadastro antes de conseguir selecionar
+        vendedores_mod.adicionar_vendedor("TESTE")
         dialogo = ClienteDialog(cliente=None)
         dialogo._cpf.setText(novo_cpf)
         dialogo._nome.setText("Cliente Dialogo Teste")
@@ -79,6 +84,16 @@ def main() -> None:
         assert criado is not None
         assert criado["CLIENTE"] == "CLIENTE DIALOGO TESTE"  # adicionar_cliente sobe pra maiusculas
         print(f"OK: cliente criado via dialogo -> {criado['CLIENTE']} ({criado['CPF/CNPJ']})")
+
+        linha("2b) ClienteDialog - botão \"+ Novo Vendedor\" cadastra sem fechar a tela")
+        QInputDialog.getText = staticmethod(lambda *a, **k: ("Vendedor Recem Cadastrado", True))
+        dialogo_vendedor = ClienteDialog(cliente=None)
+        qtd_antes = dialogo_vendedor._vendedor.count()
+        dialogo_vendedor._cadastrar_vendedor()
+        assert dialogo_vendedor._vendedor.currentText() == "Vendedor Recem Cadastrado"
+        assert dialogo_vendedor._vendedor.count() == qtd_antes + 1
+        assert "Vendedor Recem Cadastrado" in vendedores_mod.listar_vendedores()
+        print("OK: vendedor cadastrado pelo botão aparece e já fica selecionado, sem fechar o diálogo.")
 
         linha("3) ClienteDialog - edicao")
         dialogo = ClienteDialog(cliente=criado)
