@@ -29,7 +29,7 @@ from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.screens.dashboard_screen import DashboardScreen
-from desktop.screens.ficha_cliente_screen import FichaClienteScreen
+from desktop.screens.ficha_cliente_screen import _COLUNAS_HISTORICO, FichaClienteScreen
 
 
 def linha(titulo: str) -> None:
@@ -199,37 +199,65 @@ def testar_edicao_proposta(app: QApplication) -> None:
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
 
-    # QMessageBox.warning/critical sao modais - se a edicao for rejeitada por
-    # algum motivo (valor em branco na proposta escolhida, etc.) elas travam
-    # esperando um clique que nunca vem em modo headless. Stub por garantia.
+    # QMessageBox.warning/critical/question sao modais - se a edicao for
+    # rejeitada por algum motivo (valor em branco na proposta escolhida,
+    # etc.) ou disparar a confirmacao de "campo recomendado em branco"/
+    # "possivel duplicata" (PropostaDialog._salvar), elas travam esperando
+    # um clique que nunca vem em modo headless. Stub por garantia.
     mensagens: list[str] = []
     original_warning = QMessageBox.warning
     original_critical = QMessageBox.critical
+    original_question = QMessageBox.question
 
     def _stub_mensagem(*args, **kwargs):
         mensagens.append(args[2] if len(args) > 2 else "")
         return QMessageBox.StandardButton.Ok
 
+    def _stub_question(*args, **kwargs):
+        mensagens.append(args[2] if len(args) > 2 else "")
+        return QMessageBox.StandardButton.Yes
+
     QMessageBox.warning = staticmethod(_stub_mensagem)
     QMessageBox.critical = staticmethod(_stub_mensagem)
+    QMessageBox.question = staticmethod(_stub_question)
 
     try:
         tela = FichaClienteScreen()
         propostas = propostas_mod.listar_propostas()  # 1 unica leitura do arquivo
 
-        # pega um cliente cuja proposta MAIS RECENTE (linha 0 da tabela, que
-        # e a que vamos selecionar) tem status E valor preenchidos - a
-        # planilha real tem algumas propostas com esses campos em branco
-        # (dado historico real, nao e bug), que sao um caso a parte. Tudo em
-        # memoria a partir do `propostas` ja carregado, sem reabrir o arquivo
-        # a cada CPF candidato.
+        # pega um cliente cuja proposta MAIS RECENTE (linha 0 de
+        # historico_por_cpf - a mesma funcao/ordenacao que a tela e o
+        # dialogo usam de verdade) tem status, banco E valor preenchidos, E
+        # nao tem outra proposta do mesmo cliente com mesma data/valor - a
+        # planilha real tem algumas propostas com campos em branco ou que
+        # parecem duplicata (dado historico real, nao e bug), que sao um
+        # caso a parte (campo em branco ou duplicata dispara a confirmacao
+        # "salvar assim mesmo?" do dialogo, o que fugiria do "caminho feliz"
+        # que este teste quer exercitar). Usa historico_por_cpf() direto (em
+        # vez de agrupar/reordenar `propostas` na mao) porque sort_values usa
+        # quicksort (nao estavel) por padrao - reordenar um subconjunto ja
+        # ordenado pode desempatar datas iguais de um jeito diferente do que
+        # historico_por_cpf() faria, escolhendo uma linha "mais recente"
+        # diferente da que a tela de verdade vai selecionar.
         cpf_alvo = None
-        for cpf_candidato, grupo in propostas.groupby("CPF"):
-            mais_recente = grupo.sort_values("DATA", ascending=False).iloc[0]
-            if mais_recente["STATUS"] != "" and not pd.isna(mais_recente["VALOR (R$)"]):
+        for cpf_candidato in propostas["CPF"].unique():
+            historico_candidato = propostas_mod.historico_por_cpf(cpf_candidato)
+            mais_recente = historico_candidato.iloc[0]
+            if not (
+                mais_recente["STATUS"] != ""
+                and mais_recente["BANCO"] != ""
+                and not pd.isna(mais_recente["VALOR (R$)"])
+            ):
+                continue
+            outras = historico_candidato.iloc[1:]
+            duplicata = (
+                (outras["DATA"] == mais_recente["DATA"])
+                & ((outras["VALOR (R$)"] - mais_recente["VALOR (R$)"]).abs() < 0.01)
+            ).any()
+            if not duplicata:
                 cpf_alvo = cpf_candidato
                 break
-        assert cpf_alvo is not None, "nenhum cliente com proposta de status e valor preenchidos encontrado"
+        assert cpf_alvo is not None, "nenhum cliente com proposta 'limpa' (sem campo em branco nem duplicata) encontrado"
 
         historico_antes = propostas_mod.historico_por_cpf(cpf_alvo)
         assert not historico_antes.empty
@@ -285,6 +313,66 @@ def testar_edicao_proposta(app: QApplication) -> None:
     finally:
         QMessageBox.warning = original_warning
         QMessageBox.critical = original_critical
+        QMessageBox.question = original_question
+        tmp_path.unlink(missing_ok=True)
+
+
+def testar_texto_longo_sem_quebra(app: QApplication) -> None:
+    linha("5) Texto longo sem espaço (URL colada) não estica o layout")
+
+    # bug real reportado: uma URL longa sem espaço em Rede Social fazia o
+    # tamanho MINIMO da ficha inteira (e por tabela, da janela) crescer bem
+    # alem da tela, empurrando ate a barra lateral pra fora da area visivel
+    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_texto_longo.xlsx"
+    shutil.copy(CAMINHO_XLSX, tmp_path)
+    clientes_mod.CAMINHO_XLSX = tmp_path
+    propostas_mod.CAMINHO_XLSX = tmp_path
+
+    # token de proposito sem "/", "-", "." ou espaço nenhum - o pior caso,
+    # onde o Qt normalmente nao tem NENHUM ponto de quebra natural
+    token_sem_quebra = "Draju9k2LpXz7QmNvBw4RtY8sHcF1JdA3EoU6IgK5WnT2XcVbZmQpLrSjHfDkGa" * 3
+    url_longa = "https://maapp.com.br/" + token_sem_quebra
+
+    try:
+        todos = clientes_mod.listar_clientes()
+        cliente = todos[todos["TIPO"] == "Cliente"].iloc[0]
+        cpf = cliente["CPF/CNPJ"]
+        clientes_mod.atualizar_cliente(
+            cpf, {"CPF/CNPJ": cpf, "CLIENTE": cliente["CLIENTE"], "TIPO": "Cliente", "REDE SOCIAL": url_longa}
+        )
+
+        historico = propostas_mod.historico_por_cpf(cpf)
+        if not historico.empty:
+            propostas_mod.atualizar_proposta(historico.index[0], {"OBSERVAÇÕES": url_longa})
+
+        tela = FichaClienteScreen()
+        tela._selecionar_por_cpf(cpf)
+
+        # e o teste que realmente importa: a URL inteira (em Rede Social E em
+        # Observacoes) nao pode forcar a ficha a pedir uma largura minima
+        # gigante - antes da correcao, so o campo Rede Social sozinho ja
+        # levava isso a quase 2000px
+        largura_minima = tela.minimumSizeHint().width()
+        assert largura_minima < 1100, f"minimumSizeHint ficou grande demais ({largura_minima}px) - layout vai estourar a tela"
+        print(f"OK: minimumSizeHint da ficha com URL longa em Rede Social e Observações ficou em {largura_minima}px (< 1100px).")
+
+        # o texto exibido tem que conter a URL inteira (so quebrada por
+        # espacos de largura zero invisiveis) - nenhum caractere pode ter
+        # sido perdido/truncado silenciosamente
+        texto_exibido = tela._campo_rede_social.text().replace("​", "")
+        assert texto_exibido == url_longa, "a URL exibida deveria ser identica a original, sem espaços de largura zero"
+        print("OK: a URL inteira continua visível na ficha (só quebrada em várias linhas), nada foi cortado.")
+
+        if not historico.empty:
+            idx_observacoes = _COLUNAS_HISTORICO.index("OBSERVAÇÕES")
+            largura_coluna = tela._tabela_historico.columnWidth(idx_observacoes)
+            assert largura_coluna <= 280, f"coluna OBSERVAÇÕES ficou com {largura_coluna}px - deveria estar limitada"
+            print(f"OK: coluna OBSERVAÇÕES da tabela de histórico limitada a {largura_coluna}px (Qt trunca com '...' e mostra o resto no tooltip).")
+
+        print("\nOK: texto longo sem espaço não estica mais o layout da Ficha de Cliente.")
+    finally:
+        clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_path.unlink(missing_ok=True)
 
 
@@ -294,6 +382,7 @@ def main() -> None:
     testar_ficha_cliente_screen(app)
     testar_exclusao_cliente(app)
     testar_edicao_proposta(app)
+    testar_texto_longo_sem_quebra(app)
     linha("TUDO OK")
 
 

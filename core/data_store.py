@@ -18,6 +18,7 @@ Regras importantes:
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from datetime import date, datetime
@@ -26,9 +27,14 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+from core.validators import apenas_digitos
+
+_logger = logging.getLogger(__name__)
+
 ABA_CLIENTES = "CLIENTES"
 ABA_EQUIPAMENTOS = "EQUIPAMENTOS"
 ABA_PROPOSTAS = "PROPOSTAS"
+ABA_VENDEDORES = "VENDEDORES"
 
 CLIENTES_COLUNAS = [
     "DATA CADASTRO",
@@ -52,6 +58,10 @@ EQUIPAMENTOS_COLUNAS = [
     "VALOR LÍQUIDO/REFERÊNCIA (R$)",
     "OBSERVAÇÕES",
 ]
+
+# Cadastro proprio de vendedores - existe pra nao depender de "quem ja foi
+# usado em CLIENTES" (uma aba a mais, so com o nome).
+VENDEDORES_COLUNAS = ["NOME"]
 
 # Colunas realmente digitadas/gravadas na aba PROPOSTAS.
 PROPOSTAS_COLUNAS_EDITAVEIS = [
@@ -84,7 +94,15 @@ PROPOSTAS_COLUNAS = [
     "OBSERVAÇÕES",
 ]
 
-STATUS_ENCERRADO = {"APROVADO", "NEGADO"}
+# Palavras (em CAIXA ALTA) que contam como "negado" pro calculo de TEMPO e
+# pras categorias do dashboard (core/propostas.py reaproveita esta lista, em
+# vez de manter a propria copia, pra nunca ficar dessincronizada daqui).
+PALAVRAS_STATUS_NEGADO = {"NEGADO", "NEGADA", "REPROVADO", "REPROVADA", "CANCELADO", "CANCELADA"}
+
+# Status que fazem uma proposta parar de contar "N dias" e virar "Encerrado"
+# na coluna TEMPO - qualquer desfecho final (aprovado ou negado/cancelado),
+# nao so as duas grafias originais "APROVADO"/"NEGADO".
+STATUS_ENCERRADO = {"APROVADO"} | PALAVRAS_STATUS_NEGADO
 
 _COLUNAS_DE_DATA = {
     ABA_CLIENTES: {"DATA CADASTRO", "NASCIMENTO"},
@@ -102,6 +120,7 @@ _EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
 _PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES"]
 _PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES"]
+_VENDEDORES_COLUNAS_TEXTO = ["NOME"]
 
 
 class ErroArquivoBloqueado(Exception):
@@ -138,15 +157,36 @@ def _esta_vazio(valor) -> bool:
 def _normalizar_texto(valor) -> str:
     if _esta_vazio(valor):
         return ""
-    return str(valor).strip()
-
-
-def _normalizar_celular(valor) -> str:
-    if _esta_vazio(valor):
-        return ""
     if isinstance(valor, float) and valor.is_integer():
+        # celula numerica (ex: CPF digitado sem formatacao, Excel guarda como
+        # numero) vira "11144477735.0" sem isso - corrompendo o texto com um
+        # ".0" no final em vez do numero inteiro esperado.
         valor = int(valor)
     return str(valor).strip()
+
+
+def _eh_formula(valor) -> bool:
+    return isinstance(valor, str) and valor.startswith("=")
+
+
+def _avisar_formulas_nao_calculadas(df: pd.DataFrame, nome_aba: str, colunas: list[str]) -> None:
+    """openpyxl (data_only=False) le uma celula com formula como o TEXTO da
+    formula (ex: "=A2*1,1"), nunca o valor calculado - convertida pra numero/
+    data depois, essa celula vira NaN silenciosamente, como se estivesse
+    vazia. Aqui so avisamos no log (nao ha como calcular a formula sem abrir
+    o arquivo no Excel), pra quem for investigar um numero "faltando" saber
+    que a causa e uma formula na planilha, nao um campo realmente em branco.
+    """
+    for coluna in colunas:
+        if coluna not in df.columns:
+            continue
+        for indice, valor in df[coluna].items():
+            if _eh_formula(valor):
+                _logger.warning(
+                    "%s!%s (linha %d da planilha) contém uma fórmula do Excel (%r) em vez de um valor "
+                    "pronto - foi tratada como vazia. Abra o arquivo no Excel e cole como valor.",
+                    nome_aba, coluna, indice + 2, valor,
+                )
 
 
 def _linhas_da_aba(ws, n_colunas: int):
@@ -174,18 +214,64 @@ def ler_clientes(caminho_xlsx: Path) -> pd.DataFrame:
     df = ler_aba(caminho_xlsx, ABA_CLIENTES, CLIENTES_COLUNAS)
     for col in _CLIENTES_COLUNAS_TEXTO:
         df[col] = df[col].map(_normalizar_texto)
-    df["CELULAR"] = df["CELULAR"].map(_normalizar_celular)
+    df["CELULAR"] = df["CELULAR"].map(_normalizar_texto)
     return df
 
 
 def ler_equipamentos(caminho_xlsx: Path) -> pd.DataFrame:
     df = ler_aba(caminho_xlsx, ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS)
+    _avisar_formulas_nao_calculadas(df, ABA_EQUIPAMENTOS, _EQUIPAMENTOS_COLUNAS_NUMERICAS)
     for col in _EQUIPAMENTOS_COLUNAS_TEXTO:
         df[col] = df[col].map(_normalizar_texto)
     for col in _EQUIPAMENTOS_COLUNAS_NUMERICAS:
         # celula vazia deve virar NaN "de verdade" (tipo numerico), nao um
         # None solto num objeto - senao a tela exibe o texto literal "None".
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _garantir_aba_vendedores(wb) -> bool:
+    """Cria a aba VENDEDORES se o arquivo ainda nao tem uma (planilhas de
+    antes dessa funcionalidade existir), populando com os nomes ja usados em
+    CLIENTES - sem duplicar por diferenca de maiusculas/espacos, mantendo a
+    primeira grafia encontrada. Retorna True se criou agora (quem chamou
+    precisa salvar o arquivo depois)."""
+    if ABA_VENDEDORES in wb.sheetnames:
+        return False
+
+    ws = wb.create_sheet(ABA_VENDEDORES)
+    ws.append(VENDEDORES_COLUNAS)
+
+    indice_vendedor = CLIENTES_COLUNAS.index("VENDEDOR")
+    vistos: set[str] = set()
+    nomes: list[str] = []
+    for linha in wb[ABA_CLIENTES].iter_rows(min_row=2, values_only=True):
+        if linha is None or len(linha) <= indice_vendedor:
+            continue
+        nome = _normalizar_texto(linha[indice_vendedor])
+        chave = nome.upper()
+        if not nome or chave in vistos:
+            continue
+        vistos.add(chave)
+        nomes.append(nome)
+
+    for nome in sorted(nomes, key=str.upper):
+        ws.append([nome])
+    return True
+
+
+def ler_vendedores(caminho_xlsx: Path) -> pd.DataFrame:
+    wb = _carregar_planilha(caminho_xlsx)
+    try:
+        migrou = _garantir_aba_vendedores(wb)
+        if migrou:
+            _salvar_planilha(wb, caminho_xlsx)
+        linhas = list(_linhas_da_aba(wb[ABA_VENDEDORES], len(VENDEDORES_COLUNAS)))
+    finally:
+        wb.close()
+    df = pd.DataFrame(linhas, columns=VENDEDORES_COLUNAS)
+    for col in _VENDEDORES_COLUNAS_TEXTO:
+        df[col] = df[col].map(_normalizar_texto)
     return df
 
 
@@ -215,6 +301,7 @@ def ler_propostas(caminho_xlsx: Path, df_clientes: pd.DataFrame | None = None) -
     # usado.
     completo = ler_aba(caminho_xlsx, ABA_PROPOSTAS, PROPOSTAS_COLUNAS)
     df = completo[PROPOSTAS_COLUNAS_EDITAVEIS].copy()
+    _avisar_formulas_nao_calculadas(df, ABA_PROPOSTAS, [*_PROPOSTAS_COLUNAS_NUMERICAS, "DATA"])
     for col in _PROPOSTAS_COLUNAS_TEXTO:
         df[col] = df[col].map(_normalizar_texto)
     for col in _PROPOSTAS_COLUNAS_NUMERICAS:
@@ -224,10 +311,18 @@ def ler_propostas(caminho_xlsx: Path, df_clientes: pd.DataFrame | None = None) -
 
     if df_clientes is None:
         df_clientes = ler_clientes(caminho_xlsx)
-    referencia = df_clientes.drop_duplicates("CPF/CNPJ").set_index("CPF/CNPJ")
-
-    df["VENDEDOR"] = df["CPF"].map(referencia["VENDEDOR"]).fillna("")
-    df["CLIENTE"] = df["CPF"].map(referencia["CLIENTE"]).fillna("")
+    # cruza por CPF/CNPJ SEM pontuacao dos dois lados - comparar a string
+    # exata deixaria VENDEDOR/CLIENTE em branco sempre que a pontuacao
+    # divergisse entre as duas abas (ex: "123.456.789-00" vs "12345678900"),
+    # mesmo sendo o mesmo cliente.
+    referencia = (
+        df_clientes.assign(_CHAVE=df_clientes["CPF/CNPJ"].map(apenas_digitos))
+        .drop_duplicates("_CHAVE")
+        .set_index("_CHAVE")
+    )
+    chave_proposta = df["CPF"].map(apenas_digitos)
+    df["VENDEDOR"] = chave_proposta.map(referencia["VENDEDOR"]).fillna("")
+    df["CLIENTE"] = chave_proposta.map(referencia["CLIENTE"]).fillna("")
     df["TEMPO"] = [_calcular_tempo(d, s) for d, s in zip(df["DATA"], df["STATUS"])]
     return df[PROPOSTAS_COLUNAS]
 
@@ -298,13 +393,17 @@ def _escrever_linhas_propostas(ws, registros: list[dict]) -> None:
         ws.cell(row=i, column=6, value=_limpar_valor(registro.get("MESES")))
         ws.cell(row=i, column=7, value=registro.get("EQUIPAMENTO"))
         ws.cell(row=i, column=8, value=registro.get("BANCO"))
-        # TEMPO: enquanto nao for Aprovado/Negado, mostra "N dias" desde o
-        # envio; depois disso mostra "Encerrado" (a proposta parou de "correr").
+        # TEMPO: enquanto o status nao for um desfecho final (STATUS_ENCERRADO),
+        # mostra "N dias" desde o envio; depois disso mostra "Encerrado" (a
+        # proposta parou de "correr"). As condicoes sao geradas a partir do
+        # mesmo conjunto usado pelo app (_calcular_tempo), pra nunca ficar
+        # dessincronizada se um novo status "final" for adicionado.
+        condicoes_encerrado = ",".join(f'UPPER(J{i})="{palavra}"' for palavra in sorted(STATUS_ENCERRADO))
         ws.cell(
             row=i,
             column=9,
             value=(
-                f'=IF(A{i}="","",IF(OR(UPPER(J{i})="APROVADO",UPPER(J{i})="NEGADO"),'
+                f'=IF(A{i}="","",IF(OR({condicoes_encerrado}),'
                 f'"Encerrado",TODAY()-A{i}&" dias"))'
             ),
         )
@@ -325,6 +424,16 @@ def escrever_equipamentos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     wb = _carregar_planilha(caminho_xlsx)
     try:
         _escrever_linhas_simples(wb[ABA_EQUIPAMENTOS], ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS, df.to_dict("records"))
+        _salvar_planilha(wb, caminho_xlsx)
+    finally:
+        wb.close()
+
+
+def escrever_vendedores(caminho_xlsx: Path, df: pd.DataFrame) -> None:
+    wb = _carregar_planilha(caminho_xlsx)
+    try:
+        _garantir_aba_vendedores(wb)
+        _escrever_linhas_simples(wb[ABA_VENDEDORES], ABA_VENDEDORES, VENDEDORES_COLUNAS, df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
     finally:
         wb.close()

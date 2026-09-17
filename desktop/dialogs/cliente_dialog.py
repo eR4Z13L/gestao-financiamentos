@@ -15,14 +15,18 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
+    QInputDialog,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QWidget,
 )
 
 from core import clientes as clientes_mod
 from core import data_store as bd
+from core import vendedores as vendedores_mod
 from core.validators import email_valido
 from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 
@@ -41,7 +45,6 @@ class ClienteDialog(QDialog):
         layout = QFormLayout(self)
 
         self._cpf = QLineEdit(cliente.get("CPF/CNPJ", "") if cliente else "")
-        self._cpf.setPlaceholderText("CPF ou CNPJ - só números")
         conectar_mascara(self._cpf, formatar_cpf_cnpj_parcial)
         layout.addRow("CPF/CNPJ *", self._cpf)
 
@@ -50,18 +53,44 @@ class ClienteDialog(QDialog):
 
         self._tipo = QComboBox()
         self._tipo.addItems(clientes_mod.TIPO_OPCOES)
-        if cliente and cliente.get("TIPO") in clientes_mod.TIPO_OPCOES:
-            self._tipo.setCurrentText(cliente["TIPO"])
+        tipo_atual = (cliente.get("TIPO") or "").strip() if cliente else ""
+        if tipo_atual:
+            # compara sem diferenciar maiusculas/minusculas - um cliente
+            # antigo salvo como "AVALISTA" precisa continuar marcado como
+            # Avalista na edicao, nunca voltar silenciosamente pro primeiro
+            # item ("Cliente") so por causa da grafia diferente.
+            correspondente = next(
+                (op for op in clientes_mod.TIPO_OPCOES if op.upper() == tipo_atual.upper()), None
+            )
+            if correspondente:
+                self._tipo.setCurrentText(correspondente)
+            else:
+                # valor fora do padrao (ex: editado direto no Excel) - mostra
+                # como esta, em vez de trocar pro primeiro item sem avisar
+                self._tipo.addItem(tipo_atual)
+                self._tipo.setCurrentText(tipo_atual)
         layout.addRow("Tipo *", self._tipo)
 
+        vendedor_linha = QWidget()
+        vendedor_layout = QHBoxLayout(vendedor_linha)
+        vendedor_layout.setContentsMargins(0, 0, 0, 0)
+        vendedor_layout.setSpacing(6)
+
+        # combo travado (nao editavel) - so aceita nomes do cadastro de
+        # vendedores, pra nao criar "BRUNO" e "Bruno" como pessoas diferentes
         self._vendedor = QComboBox()
-        self._vendedor.setEditable(True)
-        self._vendedor.addItems(clientes_mod.listar_vendedores())
-        self._vendedor.setCurrentText(cliente.get("VENDEDOR", "") if cliente else "")
-        layout.addRow("Vendedor responsável", self._vendedor)
+        self._vendedor.setEditable(False)
+        self._recarregar_vendedores(cliente.get("VENDEDOR", "") if cliente else "")
+        vendedor_layout.addWidget(self._vendedor, 1)
+
+        botao_novo_vendedor = QPushButton("+ Novo Vendedor")
+        botao_novo_vendedor.setProperty("role", "botao_primario")
+        botao_novo_vendedor.clicked.connect(self._cadastrar_vendedor)
+        vendedor_layout.addWidget(botao_novo_vendedor)
+
+        layout.addRow("Vendedor responsável", vendedor_linha)
 
         self._celular = QLineEdit(cliente.get("CELULAR", "") if cliente else "")
-        self._celular.setPlaceholderText("(00) 00000-0000")
         conectar_mascara(self._celular, formatar_telefone_parcial)
         layout.addRow("Celular", self._celular)
 
@@ -98,6 +127,36 @@ class ClienteDialog(QDialog):
         botoes.accepted.connect(self._salvar)
         botoes.rejected.connect(self.reject)
         layout.addRow(botoes)
+
+    def _recarregar_vendedores(self, selecionado: str = "") -> None:
+        self._vendedor.blockSignals(True)
+        self._vendedor.clear()
+        self._vendedor.addItem("")  # vendedor e opcional - permite deixar em branco
+        nomes = vendedores_mod.listar_vendedores()
+        self._vendedor.addItems(nomes)
+        if selecionado and selecionado.upper() not in {n.upper() for n in nomes}:
+            # cliente antigo com um vendedor que nao esta (mais) cadastrado -
+            # mostra o valor atual em vez de trocar silenciosamente pra vazio
+            self._vendedor.addItem(selecionado)
+        self._vendedor.setCurrentText(selecionado)
+        self._vendedor.blockSignals(False)
+
+    def _cadastrar_vendedor(self) -> None:
+        nome, ok = QInputDialog.getText(self, "Novo vendedor", "Nome do vendedor:")
+        if not ok:
+            return
+        try:
+            nome_salvo = vendedores_mod.adicionar_vendedor(nome)
+        except vendedores_mod.ErroVendedor as exc:
+            QMessageBox.warning(self, "Não foi possível cadastrar", str(exc))
+            return
+        except bd.ErroArquivoBloqueado as exc:
+            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro inesperado ao cadastrar vendedor", str(exc))
+            return
+        self._recarregar_vendedores(nome_salvo)
 
     def _validar_email_ao_vivo(self, texto: str) -> None:
         """So um aviso visual (borda vermelha) enquanto digita - quem

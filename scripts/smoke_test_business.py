@@ -17,6 +17,7 @@ from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
+from core import vendedores as vendedores_mod
 
 
 def linha(titulo: str) -> None:
@@ -31,6 +32,7 @@ def main() -> None:
     clientes_mod.CAMINHO_XLSX = tmp_path
     equipamentos_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    vendedores_mod.CAMINHO_XLSX = tmp_path
 
     try:
         linha("1) CLIENTES - busca e validacao")
@@ -69,6 +71,7 @@ def main() -> None:
             print(f"validacao de e-mail invalido OK -> {exc}")
 
         novo_cpf = "529.982.247-25"  # CPF valido (digito verificador correto) so pra teste
+        vendedores_mod.adicionar_vendedor("TESTE")  # precisa estar no cadastro oficial pra aparecer no dashboard
         clientes_mod.adicionar_cliente(
             {"CPF/CNPJ": novo_cpf, "CLIENTE": "Cliente Smoke Test", "TIPO": "Cliente", "VENDEDOR": "TESTE"}
         )
@@ -137,11 +140,81 @@ def main() -> None:
         print(pv.head(5).to_string(index=False))
         assert "TESTE" in pv["Vendedor"].values
 
-        for status_extra in [propostas_mod.STATUS_PRE_APROVADO, propostas_mod.STATUS_NF_ANEXADA, propostas_mod.STATUS_GARANTIA_ASSINADA, "STATUS BEM NOVO QUE NAO EXISTE AINDA"]:
+        for status_extra in [propostas_mod.STATUS_PRE_APROVADO, propostas_mod.STATUS_NF_ANEXADA, propostas_mod.STATUS_GARANTIA_ASSINADA]:
             assert propostas_mod.categoria_status(status_extra) == "Aprovado", status_extra
         assert propostas_mod.categoria_status("Negado") == "Negado"
+        assert propostas_mod.categoria_status("Cancelado") == "Negado"
         assert propostas_mod.categoria_status("Em Análise") == "Em Análise"
-        print("\nOK: status extras/futuros contam como 'Aprovado', Negado/Em Análise ficam corretos.")
+        # status desconhecido/mal digitado NAO conta como aprovado - isso
+        # inflaria a taxa de aprovacao e o valor aprovado com dado ruim
+        assert propostas_mod.categoria_status("STATUS BEM NOVO QUE NAO EXISTE AINDA") == "Não identificado"
+        assert propostas_mod.categoria_status("") == ""
+        print("\nOK: etapas oficiais do funil contam como 'Aprovado'; status desconhecido vira 'Não identificado'.")
+
+        linha("4b) DASHBOARD - gap de status em branco/desconhecido em totais_gerais (achado C8)")
+        # proposta com STATUS em branco - nao pode ser contabilizada em
+        # nenhum dos 3 cards (Aprovadas/Negadas/Em Análise), mas TEM que
+        # continuar entrando no Total e aparecer em totais["sem_status"]
+        propostas_mod.adicionar_proposta(
+            {"CPF": novo_cpf, "VALOR (R$)": 1000, "EQUIPAMENTO": "Equip Smoke", "BANCO": "Santander", "STATUS": ""}
+        )
+        # proposta com STATUS preenchido mas fora de qualquer categoria
+        # conhecida - tambem nao pode inflar "Aprovadas"
+        propostas_mod.adicionar_proposta(
+            {
+                "CPF": novo_cpf, "VALOR (R$)": 2000, "EQUIPAMENTO": "Equip Smoke", "BANCO": "Santander",
+                "STATUS": "Status Maluco Que Nao Existe",
+            }
+        )
+
+        antes = totais  # totais calculado em 4), antes de adicionar essas 2 propostas
+        propostas_atualizadas = propostas_mod.listar_propostas()
+        depois = dashboard_mod.totais_gerais(propostas_atualizadas)
+        print("totais_gerais depois de status em branco + desconhecido:", depois)
+
+        assert depois["total_propostas"] == antes["total_propostas"] + 2
+        assert depois["sem_status"] == antes["sem_status"] + 1
+        assert depois["nao_identificado"] == antes["nao_identificado"] + 1
+        # nenhuma das duas pode ter sido contada como aprovada/negada/em analise
+        assert depois["aprovadas"] == antes["aprovadas"]
+        assert depois["negadas"] == antes["negadas"]
+        assert depois["em_analise"] == antes["em_analise"]
+        gap = depois["total_propostas"] - depois["aprovadas"] - depois["negadas"] - depois["em_analise"]
+        assert gap == depois["sem_status"] + depois["nao_identificado"], "o gap tem que bater exatamente com sem_status+nao_identificado"
+        print(f"OK: {gap} proposta(s) fora dos 3 cards ficam visiveis em sem_status/nao_identificado, sem sumir nem virar 'Aprovado'.")
+
+        linha("4c) DASHBOARD - 'Aprovado' sem VALOR não vira R$0 silenciosamente (achado #22)")
+        # cria com um valor valido (adicionar_proposta exige) e depois edita
+        # removendo o valor - e o unico jeito de chegar num "Aprovado sem
+        # valor" pelo fluxo normal (editar proposta antiga sem valor e permitido,
+        # lançar uma nova sem valor não é - achado #16)
+        propostas_mod.adicionar_proposta(
+            {
+                "CPF": novo_cpf, "VALOR (R$)": 999, "EQUIPAMENTO": "Equip Smoke", "BANCO": "Santander",
+                "STATUS": propostas_mod.STATUS_APROVADO, "OBSERVAÇÕES": "marcador smoke test 4c",
+            }
+        )
+        # varias propostas do mesmo CPF caem na mesma data ("hoje") neste
+        # teste - sort_values por DATA usa quicksort (nao estavel), entao
+        # ".index[0]" poderia pegar OUTRA proposta em caso de empate. Acha a
+        # que acabou de ser criada pelo marcador, em vez de confiar na ordem.
+        historico_novo_cpf = propostas_mod.historico_por_cpf(novo_cpf)
+        idx_aprovada_sem_valor = historico_novo_cpf.index[
+            historico_novo_cpf["OBSERVAÇÕES"] == "marcador smoke test 4c"
+        ][0]
+        propostas_mod.atualizar_proposta(idx_aprovada_sem_valor, {"VALOR (R$)": ""})
+
+        antes_c = depois
+        totais_c = dashboard_mod.totais_gerais(propostas_mod.listar_propostas())
+        assert totais_c["aprovadas_sem_valor"] == antes_c["aprovadas_sem_valor"] + 1
+        # ainda conta como aprovada (o status é válido) mas o valor "ausente"
+        # não pode ter entrado como 0 na soma - valor_aprovado so pode ter
+        # subido pelas OUTRAS aprovadas que tem valor de verdade, nunca por essa
+        assert totais_c["valor_aprovado"] == antes_c["valor_aprovado"]
+        print(
+            f"OK: aprovadas_sem_valor foi de {antes_c['aprovadas_sem_valor']} para {totais_c['aprovadas_sem_valor']}, "
+            f"e valor_aprovado não mudou (R$ {totais_c['valor_aprovado']:.2f}) - valor ausente não virou R$0."
+        )
 
         linha("TUDO OK")
     finally:

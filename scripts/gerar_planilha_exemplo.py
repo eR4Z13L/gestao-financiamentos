@@ -23,6 +23,7 @@ from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
+from core import vendedores as vendedores_mod
 
 DESTINO = Path(__file__).resolve().parent.parent / "exemplo" / "controle_financiamentos_exemplo.xlsx"
 
@@ -34,6 +35,7 @@ def _criar_planilha_vazia(caminho: Path) -> None:
         (bd.ABA_CLIENTES, bd.CLIENTES_COLUNAS),
         (bd.ABA_EQUIPAMENTOS, bd.EQUIPAMENTOS_COLUNAS),
         (bd.ABA_PROPOSTAS, bd.PROPOSTAS_COLUNAS),
+        (bd.ABA_VENDEDORES, bd.VENDEDORES_COLUNAS),
     ):
         ws = wb.create_sheet(nome)
         ws.append(colunas)
@@ -45,10 +47,13 @@ def main() -> None:
     DESTINO.unlink(missing_ok=True)
     _criar_planilha_vazia(DESTINO)
 
-    # aponta as 3 camadas de negocio pra planilha de exemplo, nao pra real
+    # aponta as camadas de negocio pra planilha de exemplo, nao pra real
     clientes_mod.CAMINHO_XLSX = DESTINO
     equipamentos_mod.CAMINHO_XLSX = DESTINO
     propostas_mod.CAMINHO_XLSX = DESTINO
+    vendedores_mod.CAMINHO_XLSX = DESTINO
+
+    vendedores_mod.adicionar_vendedor("Vendedor Exemplo")
 
     clientes_mod.adicionar_cliente(
         {
