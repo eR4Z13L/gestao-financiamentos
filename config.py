@@ -27,3 +27,14 @@ BANCOS_CONHECIDOS = [
     "Mova HTM",
     "Todos",
 ]
+
+# Sincronizacao com Google Sheets (login com dois niveis de acesso - Fase 1).
+# So o ADMIN escreve (a partir do .xlsx local, apos cada escrita bem
+# sucedida); a credencial e a chave da conta de servico do Google Cloud, que
+# fica FORA do repositorio (pasta credentials/, no .gitignore).
+CAMINHO_CREDENCIAIS_GOOGLE = DIRETORIO_BASE / "credentials" / "service_account_admin.json"
+GOOGLE_SHEETS_ID = "1-Iedzv3gw0QcurzpoFIzri4J68-OGjfsKihcqes0ACc"
+
+# Liga/desliga a sincronizacao - usado pelos smoke tests pra nunca mandar
+# dado de teste pra planilha real na nuvem (veja scripts/smoke_test_*.py).
+SINCRONIZACAO_GOOGLE_ATIVADA = True

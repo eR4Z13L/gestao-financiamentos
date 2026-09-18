@@ -21,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import openpyxl
 
 from config import CAMINHO_XLSX
+
+import config
+config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import data_store as bd
 from core import vendedores as vendedores_mod
 

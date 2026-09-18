@@ -14,6 +14,9 @@ Regras importantes:
 - Se o Excel estiver com o arquivo aberto, a escrita falha com
   ErroArquivoBloqueado em vez de travar o app - quem chamou decide como
   avisar o usuario (nunca deixamos o erro passar em silencio).
+- Toda escrita bem sucedida dispara, em background, uma tentativa de
+  sincronizar a aba correspondente com o Google Sheets (core/sheets_sync.py)
+  - nunca bloqueia nem falha a escrita local por causa disso.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+from core import sheets_sync
 from core.validators import apenas_digitos
 
 _logger = logging.getLogger(__name__)
@@ -418,6 +422,7 @@ def escrever_clientes(caminho_xlsx: Path, df: pd.DataFrame) -> None:
         _salvar_planilha(wb, caminho_xlsx)
     finally:
         wb.close()
+    sheets_sync.sincronizar_em_background(ABA_CLIENTES, ler_clientes(caminho_xlsx))
 
 
 def escrever_equipamentos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
@@ -427,6 +432,7 @@ def escrever_equipamentos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
         _salvar_planilha(wb, caminho_xlsx)
     finally:
         wb.close()
+    sheets_sync.sincronizar_em_background(ABA_EQUIPAMENTOS, ler_equipamentos(caminho_xlsx))
 
 
 def escrever_vendedores(caminho_xlsx: Path, df: pd.DataFrame) -> None:
@@ -437,6 +443,7 @@ def escrever_vendedores(caminho_xlsx: Path, df: pd.DataFrame) -> None:
         _salvar_planilha(wb, caminho_xlsx)
     finally:
         wb.close()
+    sheets_sync.sincronizar_em_background(ABA_VENDEDORES, ler_vendedores(caminho_xlsx))
 
 
 def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
@@ -447,3 +454,7 @@ def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
         _salvar_planilha(wb, caminho_xlsx)
     finally:
         wb.close()
+    # sincroniza a VISAO COMPLETA (com VENDEDOR/CLIENTE/TEMPO ja calculados,
+    # nao formulas) - e o formato que a leitura remota (Fase 2) espera, sem
+    # precisar reimplementar as formulas do Excel do outro lado.
+    sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, ler_propostas(caminho_xlsx))

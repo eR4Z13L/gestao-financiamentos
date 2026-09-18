@@ -24,6 +24,9 @@ from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import CAMINHO_XLSX
+
+import config
+config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod

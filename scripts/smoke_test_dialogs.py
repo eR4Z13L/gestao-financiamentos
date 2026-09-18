@@ -22,6 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from config import CAMINHO_XLSX
+
+import config
+config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import vendedores as vendedores_mod
