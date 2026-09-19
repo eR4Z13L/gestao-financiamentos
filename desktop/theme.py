@@ -56,6 +56,38 @@ PALETA_CLARA = {
 
 PALETAS = {TEMA_ESCURO: PALETA_ESCURA, TEMA_CLARO: PALETA_CLARA}
 
+# Cores de cada etapa do status de proposta (cards de "Todas as Propostas"),
+# uma por tema. Por etapa: "faixa" (faixa lateral do card e borda da pilula),
+# "fundo" e "texto" (pilula com o nome do status). Verde = aprovado/efetivado,
+# vermelho = negado, ambar = em analise, e uma cor propria (azul, roxo, ciano)
+# pra cada etapa intermediaria. "Efetivado" e verde como "Aprovado", mas com a
+# pilula PREENCHIDA (a de Aprovado e so um tom claro) - da pra ver de longe
+# quem ja virou venda. Contrastes (WCAG) conferidos em
+# scripts/smoke_test_propostas_screen.py: texto/pilula >= 4.5 e faixa/card >= 3
+# nos dois temas.
+CORES_STATUS = {
+    TEMA_ESCURO: {
+        "aprovado": {"faixa": "#2ecc71", "fundo": "#123524", "texto": "#7ee2a8"},
+        "efetivado": {"faixa": "#2ecc71", "fundo": "#2ecc71", "texto": "#06281a"},
+        "negado": {"faixa": "#ff6b6b", "fundo": "#3d1a1f", "texto": "#ff9a9a"},
+        "em_analise": {"faixa": "#f5b942", "fundo": "#3a2d0f", "texto": "#ffd27a"},
+        "pre_aprovado": {"faixa": "#5b9cff", "fundo": "#14284d", "texto": "#9cc3ff"},
+        "nota_fiscal": {"faixa": "#a78bfa", "fundo": "#2a1f4d", "texto": "#cdbcff"},
+        "garantia": {"faixa": "#22d3ee", "fundo": "#0e3540", "texto": "#8cebf7"},
+        "neutro": {"faixa": "#8b93a3", "fundo": "#2a2e3a", "texto": "#c2c7d2"},
+    },
+    TEMA_CLARO: {
+        "aprovado": {"faixa": "#1e9e5a", "fundo": "#d9f2e3", "texto": "#0f5c33"},
+        "efetivado": {"faixa": "#1e9e5a", "fundo": "#177a45", "texto": "#ffffff"},
+        "negado": {"faixa": "#d63939", "fundo": "#fbe0e0", "texto": "#8f1d1d"},
+        "em_analise": {"faixa": "#c47600", "fundo": "#fdebc8", "texto": "#7a4a00"},
+        "pre_aprovado": {"faixa": "#2f6fed", "fundo": "#dce8ff", "texto": "#173f9c"},
+        "nota_fiscal": {"faixa": "#7a56e0", "fundo": "#e8e0ff", "texto": "#4526a8"},
+        "garantia": {"faixa": "#0891b2", "fundo": "#d0f1f7", "texto": "#0b5566"},
+        "neutro": {"faixa": "#8a919e", "fundo": "#e6e9ee", "texto": "#3d4451"},
+    },
+}
+
 
 def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     p = PALETAS.get(tema, PALETA_ESCURA)

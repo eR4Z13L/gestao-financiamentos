@@ -1,17 +1,18 @@
 """Tela Todas as Propostas.
 
-Lista as propostas de todos os clientes (nao so de um), com busca livre,
-filtro por status e ordenacao por coluna (clicando no cabecalho, via
-QSortFilterProxyModel). Cadastro/edicao/exclusao reaproveitam core/propostas.py
-e o mesmo PropostaDialog usado na Ficha de Cliente.
+Lista as propostas de todos os clientes (nao so de um) em CARDS - um por
+proposta, com so o essencial (cliente, status colorido e data); ao clicar num
+card abre a tela de leitura da proposta (PropostaDialog, a mesma da Ficha de
+Cliente) com todos os detalhes e os botoes de copiar. Busca livre e filtro por
+status; cadastro/edicao/exclusao reaproveitam core/propostas.py e o mesmo
+PropostaDialog.
 """
 
 from __future__ import annotations
 
 import pandas as pd
-from PySide6.QtCore import Qt, QSortFilterProxyModel
+from PySide6.QtCore import QModelIndex
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -19,7 +20,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -27,10 +27,10 @@ from PySide6.QtWidgets import (
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from core.formatting import formatar_data, formatar_meses, formatar_reais
+from core.formatting import formatar_data, formatar_reais
 from core.validators import apenas_digitos
 from desktop.dialogs.proposta_dialog import PropostaDialog
-from desktop.table_model import PandasTableModel, limitar_largura_colunas
+from desktop.widgets.lista_cartoes import ListaCartoes, ModeloCartoes
 
 _COLUNAS_EXIBICAO = [
     "DATA", "VENDEDOR", "CLIENTE", "CPF", "EQUIPAMENTO", "BANCO",
@@ -75,22 +75,16 @@ class PropostasScreen(QWidget):
         self._contador.setProperty("role", "secundario")
         layout.addWidget(self._contador)
 
-        self._modelo = PandasTableModel()
-        self._proxy = QSortFilterProxyModel()
-        self._proxy.setSourceModel(self._modelo)
-        self._tabela = QTableView()
-        self._tabela.setModel(self._proxy)
-        self._tabela.setSortingEnabled(True)
-        self._tabela.setAlternatingRowColors(True)
-        self._tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._tabela.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._tabela.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._tabela.horizontalHeader().setStretchLastSection(True)
-        self._tabela.verticalHeader().setVisible(False)
-        self._tabela.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self._tabela.doubleClicked.connect(self._editar_selecionada)
-        layout.addWidget(self._tabela, stretch=1)
+        self._modelo = ModeloCartoes(self)
+        self._lista = ListaCartoes()
+        self._lista.setModel(self._modelo)
+        self._lista.definir_mensagem_vazia("Nenhuma proposta encontrada com esses filtros.")
+        # um clique (ou Enter) no card abre a tela de leitura da proposta
+        self._lista.acionado.connect(self._editar_selecionada)
+        layout.addWidget(self._lista, stretch=1)
 
+        # fixos embaixo: agem sobre o card selecionado (clicar num card ja o
+        # deixa selecionado), e assim nao poluem cada card com botoes
         linha_botoes = QHBoxLayout()
         self._botao_editar = QPushButton("Editar")
         self._botao_editar.setProperty("role", "botao_primario")
@@ -110,13 +104,16 @@ class PropostasScreen(QWidget):
         self._carregar_dados()
 
     def _aplicar_restricoes_papel(self) -> None:
-        """VENDEDOR e so-leitura - ver mesmo metodo em FichaClienteScreen."""
+        """VENDEDOR e so-leitura - ver mesmo metodo em FichaClienteScreen: nao
+        ve os botoes de editar/excluir/criar, mas AINDA abre o card na tela de
+        leitura (so leitura + copiar - o dialogo ja nao oferece "Habilitar
+        edicao" pra quem nao e ADMIN). Sem isso, com os detalhes fora do card,
+        o vendedor perderia acesso a valor/equipamento/banco/observacoes."""
         if not sessao_mod.eh_vendedor():
             return
         self._botao_editar.setVisible(False)
         self._botao_excluir.setVisible(False)
         self._botao_nova.setVisible(False)
-        self._tabela.doubleClicked.disconnect(self._editar_selecionada)
 
     # -- carregamento e filtro -----------------------------------------------
 
@@ -165,32 +162,48 @@ class PropostasScreen(QWidget):
         if status_selecionado and status_selecionado != _FILTRO_TODOS:
             df = df[df["STATUS"] == status_selecionado]
 
-        self._contador.setText(f"{len(df)} proposta(s)")
+        self._contador.setText(f"{len(df)} proposta(s) — clique em um card para ver os detalhes")
 
-        exibicao = df[_COLUNAS_EXIBICAO].copy()
-        exibicao["DATA"] = exibicao["DATA"].map(formatar_data)
-        exibicao["VALOR (R$)"] = exibicao["VALOR (R$)"].map(formatar_reais)
-        exibicao["MESES"] = exibicao["MESES"].map(formatar_meses)
-        self._modelo.definir_dataframe(exibicao)
-        self._tabela.resizeColumnsToContents()
-        limitar_largura_colunas(self._tabela)
+        # mantem selecionado o mesmo card (mesma proposta no arquivo) depois de
+        # recarregar/filtrar - senao editar uma proposta "perde" o card
+        selecionada = self._indice_real_selecionado()
+        self._modelo.definir_itens(
+            [
+                {
+                    "indice": indice,
+                    # CPF sem cliente cadastrado: CLIENTE vem vazio - o card avisa em vez de ficar sem nome
+                    "cliente": linha["CLIENTE"],
+                    "status": linha["STATUS"],
+                    "data": formatar_data(linha["DATA"]),
+                }
+                for indice, linha in df.iterrows()
+            ]
+        )
+        if selecionada is not None:
+            linha_nova = self._modelo.linha_do_indice_real(selecionada)
+            if linha_nova is not None:
+                self._lista.setCurrentIndex(self._modelo.index(linha_nova))
 
     # -- selecao e acoes ------------------------------------------------------
 
+    def _indice_real_selecionado(self) -> int | None:
+        linha = self._lista.linha_atual()
+        return None if linha is None else self._modelo.indice_real(linha)
+
     def _linha_selecionada(self) -> tuple[int | None, dict | None]:
-        selecionadas = self._tabela.selectionModel().selectedRows()
-        if not selecionadas:
+        indice_real = self._indice_real_selecionado()
+        if indice_real is None:
             return None, None
-        indice_fonte = self._proxy.mapToSource(selecionadas[0])
-        indice_real = self._modelo.indice_real(indice_fonte.row())
         return indice_real, self._todas.loc[indice_real].to_dict()
 
     def _editar_selecionada(self, *_args) -> None:
-        """*_args absorve o QModelIndex que o sinal doubleClicked manda."""
+        """Abre a tela de leitura da proposta selecionada (dela se chega a
+        edicao, por "Habilitar edicao"). *_args absorve o numero da linha que
+        o sinal `acionado` manda - so importa a selecao atual."""
         indice_real, proposta = self._linha_selecionada()
         if indice_real is None:
             QMessageBox.information(
-                self, "Nenhuma proposta selecionada", "Selecione uma proposta na tabela para editar."
+                self, "Nenhuma proposta selecionada", "Clique em um card para selecionar a proposta."
             )
             return
 
@@ -203,7 +216,7 @@ class PropostasScreen(QWidget):
         indice_real, proposta = self._linha_selecionada()
         if indice_real is None:
             QMessageBox.information(
-                self, "Nenhuma proposta selecionada", "Selecione uma proposta na tabela para excluir."
+                self, "Nenhuma proposta selecionada", "Clique em um card para selecionar a proposta a excluir."
             )
             return
 
@@ -231,6 +244,10 @@ class PropostasScreen(QWidget):
             QMessageBox.critical(self, "Erro inesperado ao excluir", str(exc))
             return
 
+        # o card excluido nao existe mais; os indices dos seguintes mudam - nao
+        # da pra "manter a selecao" por indice real depois de uma exclusao
+        self._lista.setCurrentIndex(QModelIndex())
+        self._lista.clearSelection()
         self._carregar_dados()
 
     def _abrir_nova_proposta(self) -> None:

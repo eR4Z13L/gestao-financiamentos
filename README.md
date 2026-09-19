@@ -79,6 +79,22 @@ data/       # onde o .xlsx REAL fica (não versionado - ver abaixo)
    migração: pode ser removida (junto do código que a usa) depois que os
    dados definitivos estiverem carregados.
 
+   **Status de proposta e a coluna `TEMPO`:** o fluxo é Em Análise →
+   Pré-aprovado → Aprovado → Nota Fiscal Anexada → Garantia Assinada →
+   **Efetivado** (aprovada *e* compra concluída), ou Negado. `TEMPO` mostra
+   "Encerrado" só para Efetivado e Negado/Reprovado/Cancelado — "Aprovado"
+   continua contando dias até virar Efetivado. No Dashboard, Efetivado conta
+   como aprovado na taxa de aprovação, e o card "Aprovados não efetivados"
+   mostra quantas propostas ainda estão em "Aprovado". O app só regrava as
+   fórmulas do Excel quando alguém grava uma proposta; numa planilha gravada
+   com a regra antiga (Aprovado = Encerrado), atualize a coluna `TEMPO` de uma
+   vez — o script simula por padrão e, com `--aplicar`, faz backup e mexe só
+   nessa coluna:
+   ```bash
+   venv\Scripts\python.exe scripts\atualizar_formulas_tempo.py
+   venv\Scripts\python.exe scripts\atualizar_formulas_tempo.py --aplicar
+   ```
+
 4. **Configure a sincronização com o Google Sheets** (necessária mesmo pro ADMIN sozinho, já que a leitura de VENDEDOR depende dela):
    - Crie um projeto no [Google Cloud Console](https://console.cloud.google.com/), ative a API do Google Sheets (e a do Drive)
    - Crie uma Conta de Serviço, gere uma chave JSON e salve em `credentials/service_account_admin.json` (pasta já no `.gitignore`)
@@ -114,6 +130,9 @@ venv\Scripts\python.exe scripts\smoke_test_vendedores.py
 venv\Scripts\python.exe scripts\smoke_test_usuarios_screen.py
 venv\Scripts\python.exe scripts\smoke_test_migracao_endereco.py
 venv\Scripts\python.exe scripts\smoke_test_ficha_cliente.py
+venv\Scripts\python.exe scripts\smoke_test_filtros_clientes.py
+venv\Scripts\python.exe scripts\smoke_test_status_efetivado.py
+venv\Scripts\python.exe scripts\smoke_test_cards_propostas.py
 venv\Scripts\python.exe scripts\smoke_test_fase2.py
 ```
 
