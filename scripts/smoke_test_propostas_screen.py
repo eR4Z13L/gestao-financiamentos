@@ -1,4 +1,4 @@
-"""Testa a tela Todas as Propostas (filtro, ordenacao, cadastro/edicao/
+"""Testa a tela Todas as Propostas (filtro, cadastro/edicao/
 exclusao), o modo "cliente avulso" do PropostaDialog, remover_proposta, e o
 menu retratil/seletor de tema da MainWindow.
 
@@ -21,7 +21,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from config import CAMINHO_XLSX
@@ -177,10 +176,7 @@ def testar_propostas_screen(app: QApplication) -> None:
             assert tela._modelo.rowCount() == total_inicial
 
             # seleciona a primeira linha e edita
-            indice_proxy = tela._proxy.index(0, 0)
-            tela._tabela.selectionModel().select(
-                indice_proxy, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
-            )
+            tela._lista.setCurrentIndex(tela._modelo.index(0))  # (nao dispara o clique: so seleciona o card)
             indice_real, proposta_antes = tela._linha_selecionada()
             assert indice_real is not None
 
@@ -203,11 +199,9 @@ def testar_propostas_screen(app: QApplication) -> None:
             assert depois.loc[indice_real, "OBSERVAÇÕES"] == "editado via tela todas propostas"
             print(f"OK: editar pela tela 'Todas as Propostas' funcionou (posição real {indice_real}).")
 
-            # editar recarrega a tabela (_carregar_dados), o que limpa a
-            # selecao - reseleciona a mesma linha antes de excluir
-            tela._tabela.selectionModel().select(
-                tela._proxy.index(0, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
-            )
+            # editar recarrega os cards (_carregar_dados) e o MESMO card continua
+            # selecionado (mesma proposta no arquivo)
+            assert tela._linha_selecionada()[0] == indice_real, "o card editado continua selecionado"
             indice_real_para_excluir, _ = tela._linha_selecionada()
             assert indice_real_para_excluir == indice_real, "deveria continuar sendo a mesma proposta (so 1 linha 0 possivel)"
 

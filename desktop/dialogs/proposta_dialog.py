@@ -106,7 +106,11 @@ class PropostaDialog(QDialog):
 
         self._equipamento = ComboTravavel()
         self._equipamento.setEditable(True)
-        self._equipamento.addItems(equipamentos_mod.listar_nomes_equipamento())
+        # a lista de sugestoes so serve pra digitar/escolher (edicao). Vendedor
+        # nunca edita e pode estar numa maquina sem o .xlsx local (le do Google
+        # Sheets), onde ler as sugestoes falharia - abre a leitura sem elas.
+        if not sessao_mod.eh_vendedor():
+            self._equipamento.addItems(equipamentos_mod.listar_nomes_equipamento())
         self._adicionar_linha(layout, "Equipamento *", self._equipamento, lambda c: c.currentText().strip())
 
         self._banco = ComboTravavel()
