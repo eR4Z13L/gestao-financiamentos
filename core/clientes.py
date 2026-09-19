@@ -8,6 +8,7 @@ data_store.py precisa mudar.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import date
 
 import pandas as pd
@@ -36,9 +37,48 @@ def _ler_da_fonte_ativa() -> pd.DataFrame:
     return bd.ler_clientes(CAMINHO_XLSX)
 
 
-def listar_clientes() -> pd.DataFrame:
+ORDENACAO_NOME_AZ = "nome_az"
+ORDENACAO_NOME_ZA = "nome_za"
+ORDENACAO_CADASTRO_RECENTE = "cadastro_recente"
+ORDENACAO_CADASTRO_ANTIGO = "cadastro_antigo"
+# (chave, rotulo) na ordem em que a tela deve listar
+ORDENACAO_OPCOES = [
+    (ORDENACAO_NOME_AZ, "Nome (A-Z)"),
+    (ORDENACAO_NOME_ZA, "Nome (Z-A)"),
+    (ORDENACAO_CADASTRO_RECENTE, "Data de cadastro (mais recente primeiro)"),
+    (ORDENACAO_CADASTRO_ANTIGO, "Data de cadastro (mais antigo primeiro)"),
+]
+
+
+def _chave_nome(nome: str) -> str:
+    """Maiusculas e SEM acento, pra ordenar como um dicionario: por padrao o
+    Python poe "JÉSSICA" depois de "JULIANA" (o "É" vale mais que qualquer
+    letra sem acento), o que na lista parece um erro de ordem alfabetica."""
+    sem_acento = "".join(c for c in unicodedata.normalize("NFD", nome) if unicodedata.category(c) != "Mn")
+    return sem_acento.upper()
+
+
+def _ordenar(df: pd.DataFrame, ordenacao: str) -> pd.DataFrame:
+    if ordenacao not in {chave for chave, _ in ORDENACAO_OPCOES}:
+        raise ValueError(f"Ordenação desconhecida: {ordenacao!r}")
+
+    auxiliar = df.assign(
+        _NOME=df["CLIENTE"].map(_chave_nome),
+        _CADASTRO=pd.to_datetime(df["DATA CADASTRO"], errors="coerce"),
+    )
+    if ordenacao in (ORDENACAO_NOME_AZ, ORDENACAO_NOME_ZA):
+        colunas, crescente = ["_NOME", "CPF/CNPJ"], [ordenacao == ORDENACAO_NOME_AZ, True]
+    else:
+        # empate de data (muito comum: varios cadastrados no mesmo dia) desempata
+        # por nome, e quem nao tem data de cadastro vai sempre pro fim
+        colunas, crescente = ["_CADASTRO", "_NOME"], [ordenacao == ORDENACAO_CADASTRO_ANTIGO, True]
+    auxiliar = auxiliar.sort_values(colunas, ascending=crescente, na_position="last")
+    return auxiliar.drop(columns=["_NOME", "_CADASTRO"]).reset_index(drop=True)
+
+
+def listar_clientes(ordenacao: str = ORDENACAO_NOME_AZ) -> pd.DataFrame:
     df = sessao_mod.filtrar_por_vendedor_logado(_ler_da_fonte_ativa())
-    return df.sort_values("CLIENTE", key=lambda s: s.str.upper()).reset_index(drop=True)
+    return _ordenar(df, ordenacao)
 
 
 def buscar_por_cpf(cpf: str) -> dict | None:
@@ -50,20 +90,54 @@ def buscar_por_cpf(cpf: str) -> dict | None:
     return encontrado.iloc[0].to_dict()
 
 
-def buscar(termo: str) -> pd.DataFrame:
-    """Busca por nome (substring, sem diferenciar maiusculas) ou por CPF/CNPJ."""
-    df = listar_clientes()
+def _mesmo_texto(serie: pd.Series, valor: str) -> pd.Series:
+    """Igualdade sem diferenciar maiusculas nem espacos nas pontas (dado
+    legado tem "AVALISTA"/"Avalista" e nomes de vendedor com grafias mistas)."""
+    return serie.str.strip().str.upper() == valor.strip().upper()
+
+
+def buscar(
+    termo: str = "",
+    *,
+    vendedor: str | None = None,
+    tipo: str | None = None,
+    cadastro_de: date | pd.Timestamp | None = None,
+    cadastro_ate: date | pd.Timestamp | None = None,
+    ordenacao: str = ORDENACAO_NOME_AZ,
+) -> pd.DataFrame:
+    """Busca por nome (substring, sem diferenciar maiusculas) ou por CPF/CNPJ,
+    combinada (E) com os filtros que vierem preenchidos:
+    - vendedor / tipo: igualdade exata, sem diferenciar maiusculas;
+    - cadastro_de / cadastro_ate: periodo da DATA CADASTRO, com as duas pontas
+      INCLUIDAS; quem nao tem data de cadastro nunca entra num periodo.
+    Filtro None (ou "") = sem filtro. O resultado sai na `ordenacao` pedida."""
+    df = listar_clientes(ordenacao)
+    mascara = pd.Series(True, index=df.index)
+
     termo = (termo or "").strip()
-    if not termo:
-        return df
-    digitos = apenas_digitos(termo)
-    por_cpf = (
-        df["CPF/CNPJ"].map(apenas_digitos).str.contains(digitos, na=False)
-        if digitos
-        else pd.Series(False, index=df.index)
-    )
-    por_nome = df["CLIENTE"].str.upper().str.contains(termo.upper(), na=False)
-    return df[por_nome | por_cpf]
+    if termo:
+        digitos = apenas_digitos(termo)
+        por_cpf = (
+            df["CPF/CNPJ"].map(apenas_digitos).str.contains(digitos, na=False)
+            if digitos
+            else pd.Series(False, index=df.index)
+        )
+        por_nome = df["CLIENTE"].str.upper().str.contains(termo.upper(), na=False)
+        mascara &= por_nome | por_cpf
+
+    if vendedor:
+        mascara &= _mesmo_texto(df["VENDEDOR"], vendedor)
+    if tipo:
+        mascara &= _mesmo_texto(df["TIPO"], tipo)
+
+    if cadastro_de is not None or cadastro_ate is not None:
+        cadastro = pd.to_datetime(df["DATA CADASTRO"], errors="coerce")
+        if cadastro_de is not None:
+            mascara &= cadastro >= pd.Timestamp(cadastro_de).normalize()
+        if cadastro_ate is not None:
+            mascara &= cadastro <= pd.Timestamp(cadastro_ate).normalize()
+
+    return df[mascara]
 
 
 def _normalizar_cep(campos: dict) -> None:
