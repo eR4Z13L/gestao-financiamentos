@@ -19,10 +19,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 
+import config
+
+# ESSENCIAL: sem isto, cada cadastro abaixo mandaria os dados ficticios pro
+# Google Sheets REAL (core/sheets_sync.py), sobrescrevendo as abas de verdade.
+config.SINCRONIZACAO_GOOGLE_ATIVADA = False
+
+import pandas as pd
+
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 
 DESTINO = Path(__file__).resolve().parent.parent / "exemplo" / "controle_financiamentos_exemplo.xlsx"
@@ -44,6 +53,8 @@ def _criar_planilha_vazia(caminho: Path) -> None:
 
 
 def main() -> None:
+    # as funcoes de cadastro so funcionam logado como ADMIN (core/sessao.py)
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     DESTINO.unlink(missing_ok=True)
     _criar_planilha_vazia(DESTINO)
 
@@ -63,8 +74,18 @@ def main() -> None:
             "VENDEDOR": "Vendedor Exemplo",
             "CELULAR": "(11) 91234-5678",
             "EMAIL": "maria.exemplo@email.com",
-            "ENDEREÇO": "Rua Fictícia, 123 - Bairro Exemplo - Cidade/UF",
+            "NASCIMENTO": pd.Timestamp(1985, 3, 15),
+            "CEP": "01001-000",
+            "LOGRADOURO": "Rua Fictícia",
+            "NÚMERO": "123",
+            "COMPLEMENTO": "apto 45",
+            "BAIRRO": "Bairro Exemplo",
+            "CIDADE": "Cidade Exemplo",
+            "UF": "SP",
             "REDE SOCIAL": "@maria.exemplo",
+            "NOME DO PAI": "Pai Exemplo da Silva",
+            "NOME DA MÃE": "Mãe Exemplo da Silva",
+            "PROFISSÃO": "Profissão Exemplo",
         }
     )
     clientes_mod.adicionar_cliente(
@@ -75,7 +96,12 @@ def main() -> None:
             "VENDEDOR": "Vendedor Exemplo",
             "CELULAR": "(21) 98888-7777",
             "EMAIL": "joao.exemplo@email.com",
-            "ENDEREÇO": "Avenida Modelo, 456 - Bairro Teste - Cidade/UF",
+            "CEP": "20000-000",
+            "LOGRADOURO": "Avenida Modelo",
+            "NÚMERO": "456",
+            "BAIRRO": "Bairro Teste",
+            "CIDADE": "Cidade Teste",
+            "UF": "RJ",
         }
     )
     clientes_mod.adicionar_cliente(
@@ -87,7 +113,9 @@ def main() -> None:
             "CELULAR": "(31) 97777-6666",
             "EMAIL": "ana.exemplo@email.com",
             "VINCULADO": "Maria Exemplo da Silva",
-            "ENDEREÇO": "Praça Amostra, 789 - Bairro Fake - Cidade/UF",
+            # exemplo de endereco que a migracao nao separou: texto original
+            # fica em ENDEREÇO (REVISAR) ate alguem preencher os campos
+            "ENDEREÇO (REVISAR)": "Praça Amostra, 789 apto 12 - Bairro Fake - Cidade/UF",
         }
     )
 

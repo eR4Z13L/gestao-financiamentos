@@ -30,11 +30,13 @@ from PySide6.QtWidgets import (
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core.formatting import formatar_data, formatar_meses, formatar_reais
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.table_model import PandasTableModel, limitar_largura_colunas
+from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.shadow import aplicar_sombra_suave
 
@@ -75,10 +77,10 @@ class FichaClienteScreen(QWidget):
         self._lista.currentItemChanged.connect(self._selecionar_cliente)
         coluna_lista.addWidget(self._lista)
 
-        botao_novo_cliente = QPushButton("+ Novo Cliente")
-        botao_novo_cliente.setProperty("role", "botao_primario")
-        botao_novo_cliente.clicked.connect(self._abrir_cadastro_cliente)
-        coluna_lista.addWidget(botao_novo_cliente)
+        self._botao_novo_cliente = QPushButton("+ Novo Cliente")
+        self._botao_novo_cliente.setProperty("role", "botao_primario")
+        self._botao_novo_cliente.clicked.connect(self._abrir_cadastro_cliente)
+        coluna_lista.addWidget(self._botao_novo_cliente)
 
         corpo.addLayout(coluna_lista, 1)
 
@@ -89,7 +91,22 @@ class FichaClienteScreen(QWidget):
 
         layout_principal.addLayout(corpo, stretch=1)
 
+        self._aplicar_restricoes_papel()
         self._atualizar_lista()
+
+    def _aplicar_restricoes_papel(self) -> None:
+        """VENDEDOR e so-leitura: nenhum botao de criar/editar/excluir pode
+        aparecer (a camada core/*.py ja bloqueia a acao de verdade via
+        sessao.exigir_admin(), isso aqui e so pra nao mostrar um botao que
+        sempre daria erro)."""
+        if not sessao_mod.eh_vendedor():
+            return
+        self._botao_novo_cliente.setVisible(False)
+        self._botao_editar_cliente.setVisible(False)
+        self._botao_excluir_cliente.setVisible(False)
+        self._botao_editar_proposta.setVisible(False)
+        self._botao_nova_proposta.setVisible(False)
+        self._tabela_historico.doubleClicked.disconnect(self._editar_proposta_selecionada)
 
     # -- construcao dos widgets --------------------------------------------
 
@@ -122,31 +139,63 @@ class FichaClienteScreen(QWidget):
         self._nome_label.setProperty("role", "subtitulo")
         cabecalho_ficha.addWidget(self._nome_label)
         cabecalho_ficha.addStretch()
-        botao_editar = QPushButton("Editar")
-        botao_editar.setProperty("role", "botao_primario")
-        botao_editar.clicked.connect(self._abrir_edicao_cliente)
-        cabecalho_ficha.addWidget(botao_editar)
-        botao_excluir = QPushButton("Excluir")
-        botao_excluir.setProperty("role", "botao_perigo")
-        botao_excluir.clicked.connect(self._excluir_cliente)
-        cabecalho_ficha.addWidget(botao_excluir)
+        self._botao_editar_cliente = QPushButton("Editar")
+        self._botao_editar_cliente.setProperty("role", "botao_primario")
+        self._botao_editar_cliente.clicked.connect(self._abrir_edicao_cliente)
+        cabecalho_ficha.addWidget(self._botao_editar_cliente)
+        self._botao_excluir_cliente = QPushButton("Excluir")
+        self._botao_excluir_cliente.setProperty("role", "botao_perigo")
+        self._botao_excluir_cliente.clicked.connect(self._excluir_cliente)
+        cabecalho_ficha.addWidget(self._botao_excluir_cliente)
         layout_cartao.addLayout(cabecalho_ficha)
 
-        grade = QGridLayout()
-        grade.setHorizontalSpacing(24)
-        grade.setVerticalSpacing(8)
+        grade = self._nova_grade()
+        # informacoes principais (as duas primeiras linhas), logo abaixo do
+        # nome do cliente: quem e, quando nasceu, como falar com ele
         self._campo_cpf = self._criar_campo(grade, 0, 0, "CPF/CNPJ")
-        self._campo_tipo = self._criar_campo(grade, 1, 0, "Tipo")
-        self._campo_vendedor = self._criar_campo(grade, 2, 0, "Vendedor")
-        self._campo_celular = self._criar_campo(grade, 0, 1, "Celular")
+        self._campo_nascimento = self._criar_campo(grade, 0, 1, "Nascimento")
+        self._campo_tipo = self._criar_campo(grade, 0, 2, "Tipo")
+        self._campo_celular = self._criar_campo(grade, 1, 0, "Celular")
         self._campo_email = self._criar_campo(grade, 1, 1, "E-mail")
-        self._campo_rede_social = self._criar_campo(grade, 2, 1, "Rede social")
-        self._campo_nascimento = self._criar_campo(grade, 0, 2, "Nascimento")
-        self._campo_cadastrado_em = self._criar_campo(grade, 1, 2, "Cadastrado em")
-        self._campo_vinculado = self._criar_campo(grade, 2, 2, "Vinculado a")
+        self._campo_vendedor = self._criar_campo(grade, 1, 2, "Vendedor")
+        # informacoes secundarias
+        self._campo_rede_social = self._criar_campo(grade, 2, 0, "Rede social")
+        self._campo_vinculado = self._criar_campo(grade, 2, 1, "Vinculado a")
+        self._campo_cadastrado_em = self._criar_campo(grade, 2, 2, "Cadastrado em")
+        self._campo_nome_pai = self._criar_campo(grade, 3, 0, "Nome do pai")
+        self._campo_nome_mae = self._criar_campo(grade, 3, 1, "Nome da mãe")
+        self._campo_profissao = self._criar_campo(grade, 3, 2, "Profissão")
         layout_cartao.addLayout(grade)
 
-        self._campo_endereco = self._criar_campo(layout_cartao, None, None, "Endereço", em_grid=False)
+        subtitulo_endereco = QLabel("Endereço")
+        subtitulo_endereco.setProperty("role", "subtitulo")
+        layout_cartao.addWidget(subtitulo_endereco)
+
+        # cada campo do endereco tem seu botao de copiar (a ideia e copiar
+        # um de cada vez pra colar em outro sistema)
+        grade_endereco = self._nova_grade()
+        self._campo_cep = self._criar_campo_copiavel(grade_endereco, 0, 0, "CEP")
+        self._campo_logradouro = self._criar_campo_copiavel(grade_endereco, 0, 1, "Logradouro")
+        self._campo_numero = self._criar_campo_copiavel(grade_endereco, 0, 2, "Número")
+        self._campo_complemento = self._criar_campo_copiavel(grade_endereco, 1, 0, "Complemento")
+        self._campo_bairro = self._criar_campo_copiavel(grade_endereco, 1, 1, "Bairro")
+        # Cidade e UF dividem a 3a coluna (a UF e curta) - assim a grade
+        # continua com as mesmas 3 colunas da grade de dados, la em cima
+        caixa_cidade, self._campo_cidade = self._caixa_copiavel("Cidade")
+        caixa_uf, self._campo_uf = self._caixa_copiavel("UF")
+        linha_cidade_uf = QHBoxLayout()
+        linha_cidade_uf.setSpacing(12)
+        linha_cidade_uf.addLayout(caixa_cidade, 3)
+        linha_cidade_uf.addLayout(caixa_uf, 1)
+        grade_endereco.addLayout(linha_cidade_uf, 1, 2)
+        layout_cartao.addLayout(grade_endereco)
+
+        # so aparece pra quem tem endereco antigo que a migracao nao separou
+        self._aviso_endereco_revisar = QLabel("")
+        self._aviso_endereco_revisar.setProperty("role", "secundario")
+        self._aviso_endereco_revisar.setWordWrap(True)
+        self._aviso_endereco_revisar.setVisible(False)
+        layout_cartao.addWidget(self._aviso_endereco_revisar)
 
         layout.addWidget(cartao)
 
@@ -172,39 +221,83 @@ class FichaClienteScreen(QWidget):
         layout.addWidget(self._tabela_historico, stretch=1)
 
         linha_botoes_historico = QHBoxLayout()
-        botao_editar_proposta = QPushButton("Editar Proposta Selecionada")
-        botao_editar_proposta.setProperty("role", "botao_primario")
-        botao_editar_proposta.clicked.connect(self._editar_proposta_selecionada)
-        linha_botoes_historico.addWidget(botao_editar_proposta)
-        botao_nova_proposta = QPushButton("+ Nova Proposta")
-        botao_nova_proposta.setProperty("role", "botao_primario")
-        botao_nova_proposta.clicked.connect(self._abrir_nova_proposta)
-        linha_botoes_historico.addWidget(botao_nova_proposta)
+        self._botao_editar_proposta = QPushButton("Editar Proposta Selecionada")
+        self._botao_editar_proposta.setProperty("role", "botao_primario")
+        self._botao_editar_proposta.clicked.connect(self._editar_proposta_selecionada)
+        linha_botoes_historico.addWidget(self._botao_editar_proposta)
+        self._botao_nova_proposta = QPushButton("+ Nova Proposta")
+        self._botao_nova_proposta.setProperty("role", "botao_primario")
+        self._botao_nova_proposta.clicked.connect(self._abrir_nova_proposta)
+        linha_botoes_historico.addWidget(self._botao_nova_proposta)
         layout.addLayout(linha_botoes_historico)
 
         return pagina
 
     @staticmethod
-    def _criar_campo(container, row, col, titulo: str, em_grid: bool = True) -> QLabel:
-        """Cria um par legenda/valor e devolve o QLabel do valor (pra dar
-        setText depois). `container` e um QGridLayout (em_grid=True, usa
-        row/col) ou um QBoxLayout comum (em_grid=False, so adiciona no fim).
-        """
+    def _nova_grade() -> QGridLayout:
+        grade = QGridLayout()
+        grade.setHorizontalSpacing(24)
+        grade.setVerticalSpacing(8)
+        # tres colunas iguais - as duas grades do cartao (dados e endereco)
+        # ficam alinhadas entre si
+        for coluna in range(3):
+            grade.setColumnStretch(coluna, 1)
+        return grade
+
+    @staticmethod
+    def _criar_rotulo_valor() -> QLabel:
+        valor = QLabel("—")
+        valor.setProperty("role", "campo_valor")
+        valor.setWordWrap(True)
+        return valor
+
+    @staticmethod
+    def _criar_campo(grade: QGridLayout, row: int, col: int, titulo: str) -> QLabel:
+        """Cria um par legenda/valor na grade e devolve o QLabel do valor (pra
+        dar setText depois)."""
         caixa = QVBoxLayout()
         caixa.setSpacing(2)
         legenda = QLabel(titulo)
         legenda.setProperty("role", "campo_rotulo")
-        valor = QLabel("—")
-        valor.setProperty("role", "campo_valor")
-        valor.setWordWrap(True)
+        valor = FichaClienteScreen._criar_rotulo_valor()
         caixa.addWidget(legenda)
         caixa.addWidget(valor)
-
-        if em_grid:
-            container.addLayout(caixa, row, col)
-        else:
-            container.addLayout(caixa)
+        grade.addLayout(caixa, row, col)
         return valor
+
+    @staticmethod
+    def _caixa_copiavel(titulo: str) -> tuple[QVBoxLayout, QLabel]:
+        """Legenda + valor + botao Copiar ao lado do valor. Devolve o layout
+        (pra quem chamou encaixar onde quiser) e o QLabel do valor. O que o
+        botao copia e o texto CRU guardado na propriedade "texto_cru" (ver
+        _definir_valor_copiavel), nunca o que aparece no QLabel: la o texto
+        tem "—" quando vazio e pontos de quebra invisiveis (texto_quebravel)."""
+        caixa = QVBoxLayout()
+        caixa.setSpacing(2)
+        legenda = QLabel(titulo)
+        legenda.setProperty("role", "campo_rotulo")
+        caixa.addWidget(legenda)
+
+        valor = FichaClienteScreen._criar_rotulo_valor()
+        botao = BotaoCopiar(lambda: valor.property("texto_cru") or "")
+        linha = QHBoxLayout()
+        linha.setSpacing(4)
+        linha.addWidget(valor, stretch=1)
+        linha.addWidget(botao, alignment=Qt.AlignmentFlag.AlignTop)
+        caixa.addLayout(linha)
+        return caixa, valor
+
+    @staticmethod
+    def _criar_campo_copiavel(grade: QGridLayout, row: int, col: int, titulo: str) -> QLabel:
+        """Como _criar_campo, mas com um botao Copiar ao lado do valor."""
+        caixa, valor = FichaClienteScreen._caixa_copiavel(titulo)
+        grade.addLayout(caixa, row, col)
+        return valor
+
+    @staticmethod
+    def _definir_valor_copiavel(rotulo: QLabel, texto: str) -> None:
+        rotulo.setProperty("texto_cru", texto)
+        rotulo.setText(texto_quebravel(texto) or "—")
 
     # -- carregamento de dados ----------------------------------------------
 
@@ -288,7 +381,24 @@ class FichaClienteScreen(QWidget):
         self._campo_nascimento.setText(formatar_data(cliente.get("NASCIMENTO")))
         self._campo_cadastrado_em.setText(formatar_data(cliente.get("DATA CADASTRO")))
         self._campo_vinculado.setText(texto_quebravel(cliente["VINCULADO"]) or "—")
-        self._campo_endereco.setText(texto_quebravel(cliente["ENDEREÇO"]) or "—")
+        self._campo_nome_pai.setText(texto_quebravel(cliente["NOME DO PAI"]) or "—")
+        self._campo_nome_mae.setText(texto_quebravel(cliente["NOME DA MÃE"]) or "—")
+        self._campo_profissao.setText(texto_quebravel(cliente["PROFISSÃO"]) or "—")
+
+        self._definir_valor_copiavel(self._campo_cep, cliente["CEP"])
+        self._definir_valor_copiavel(self._campo_logradouro, cliente["LOGRADOURO"])
+        self._definir_valor_copiavel(self._campo_numero, cliente["NÚMERO"])
+        self._definir_valor_copiavel(self._campo_complemento, cliente["COMPLEMENTO"])
+        self._definir_valor_copiavel(self._campo_bairro, cliente["BAIRRO"])
+        self._definir_valor_copiavel(self._campo_cidade, cliente["CIDADE"])
+        self._definir_valor_copiavel(self._campo_uf, cliente["UF"])
+
+        texto_revisar = cliente["ENDEREÇO (REVISAR)"]
+        self._aviso_endereco_revisar.setVisible(bool(texto_revisar))
+        if texto_revisar:
+            self._aviso_endereco_revisar.setText(
+                f"⚠ Endereço a revisar (ainda não separado nos campos acima): {texto_quebravel(texto_revisar)}"
+            )
 
         if historico.empty:
             self._historico_vazio.setVisible(True)

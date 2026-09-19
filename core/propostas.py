@@ -11,6 +11,7 @@ import pandas as pd
 from config import CAMINHO_XLSX
 from core import clientes as clientes_mod
 from core import data_store as bd
+from core import sessao as sessao_mod
 from core.validators import apenas_digitos
 
 STATUS_EM_ANALISE = "Em Análise"
@@ -86,13 +87,30 @@ def _ordenar_por_data_desc(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _ler_da_fonte_ativa() -> pd.DataFrame:
+    """ADMIN sempre le do .xlsx local (funciona offline); VENDEDOR le do
+    Google Sheets (pode estar em outro computador, sem acesso ao arquivo
+    local do ADMIN) - ver core/data_store_sheets.py. Nos dois casos, so
+    devolve as propostas do vendedor logado (sessao_mod.eh_vendedor())."""
+    if sessao_mod.eh_vendedor():
+        from core import data_store_sheets as bd_sheets
+
+        df = bd_sheets.ler_propostas()
+    else:
+        df = bd.ler_propostas(CAMINHO_XLSX)
+    return sessao_mod.filtrar_por_vendedor_logado(df)
+
+
 def listar_propostas() -> pd.DataFrame:
     """O indice do DataFrame retornado corresponde a posicao real da proposta
     no arquivo (a mesma que atualizar_proposta espera) - por isso NAO e
     resetado depois do sort. Nao reordene esse DataFrame antes de usar o
-    indice para editar uma linha.
+    indice para editar uma linha. Atencao: com VENDEDOR logado, o indice
+    ainda e a posicao real no arquivo/planilha completa - so a LISTAGEM e
+    filtrada, e como VENDEDOR nunca escreve (core.sessao.exigir_admin() nas
+    funcoes de escrita), esse indice nunca chega a ser usado pra editar.
     """
-    df = bd.ler_propostas(CAMINHO_XLSX)
+    df = _ler_da_fonte_ativa()
     return _ordenar_por_data_desc(df)
 
 
@@ -100,7 +118,7 @@ def historico_por_cpf(cpf: str) -> pd.DataFrame:
     """Mesma observacao de listar_propostas: o indice reflete a posicao real
     no arquivo, necessaria para atualizar_proposta().
     """
-    df = bd.ler_propostas(CAMINHO_XLSX)
+    df = _ler_da_fonte_ativa()
     alvo = apenas_digitos(cpf)
     filtrado = df[df["CPF"].map(apenas_digitos) == alvo]
     return _ordenar_por_data_desc(filtrado)
@@ -161,6 +179,7 @@ def _validar_campos(campos: dict, *, valor_obrigatorio: bool = True) -> None:
 def adicionar_proposta(campos: dict) -> None:
     """`campos` deve conter DATA, CPF, VALOR (R$), MESES, EQUIPAMENTO, BANCO,
     STATUS, OBSERVAÇÕES. DATA e STATUS tem valor padrao se nao informados."""
+    sessao_mod.exigir_admin()
     campos = dict(campos)
     campos.setdefault("DATA", pd.Timestamp(date.today()))
     campos.setdefault("STATUS", STATUS_EM_ANALISE)
@@ -181,6 +200,7 @@ def atualizar_proposta(indice: int, campos: dict) -> None:
     posicao continua valida entre a leitura e a escrita, desde que nada mais
     tenha mexido no arquivo nesse meio-tempo (uso individual e local).
     """
+    sessao_mod.exigir_admin()
     df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
     if indice not in df.index:
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
@@ -214,6 +234,7 @@ def atualizar_proposta(indice: int, campos: dict) -> None:
 def remover_proposta(indice: int) -> None:
     """`indice` e a posicao real da proposta no arquivo (mesmo valor que
     atualizar_proposta espera - ver o aviso na docstring dela)."""
+    sessao_mod.exigir_admin()
     df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
     if indice not in df.index:
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")

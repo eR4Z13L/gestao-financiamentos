@@ -41,6 +41,15 @@ def formatar_telefone_parcial(digitos: str) -> str:
     return _aplicar_mascara(digitos, mascara)
 
 
+def formatar_data_parcial(digitos: str) -> str:
+    """Digitos -> "dd/mm/aaaa" (as barras entram sozinhas enquanto digita)."""
+    return _aplicar_mascara(digitos[:8], "##/##/####")
+
+
+def formatar_cep_parcial(digitos: str) -> str:
+    return _aplicar_mascara(digitos[:8], "#####-###")
+
+
 def conectar_mascara(campo: QLineEdit, formatador: Callable[[str], str]) -> None:
     """Reformata `campo` a cada tecla digitada, usando `formatador` (recebe
     so os digitos ja limpos e devolve o texto pontuado). Mantem o cursor na

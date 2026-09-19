@@ -14,6 +14,8 @@ import pandas as pd
 
 from config import CAMINHO_XLSX
 from core import data_store as bd
+from core import sessao as sessao_mod
+from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
 
 TIPO_OPCOES = ["Cliente", "Avalista"]
@@ -23,13 +25,24 @@ class ErroCliente(Exception):
     """Erro de validacao de negocio (nao de leitura/escrita de arquivo)."""
 
 
+def _ler_da_fonte_ativa() -> pd.DataFrame:
+    """ADMIN sempre le do .xlsx local (funciona offline); VENDEDOR le do
+    Google Sheets (pode estar em outro computador, sem acesso ao arquivo
+    local do ADMIN) - ver core/data_store_sheets.py."""
+    if sessao_mod.eh_vendedor():
+        from core import data_store_sheets as bd_sheets
+
+        return bd_sheets.ler_clientes()
+    return bd.ler_clientes(CAMINHO_XLSX)
+
+
 def listar_clientes() -> pd.DataFrame:
-    df = bd.ler_clientes(CAMINHO_XLSX)
+    df = sessao_mod.filtrar_por_vendedor_logado(_ler_da_fonte_ativa())
     return df.sort_values("CLIENTE", key=lambda s: s.str.upper()).reset_index(drop=True)
 
 
 def buscar_por_cpf(cpf: str) -> dict | None:
-    df = bd.ler_clientes(CAMINHO_XLSX)
+    df = sessao_mod.filtrar_por_vendedor_logado(_ler_da_fonte_ativa())
     alvo = apenas_digitos(cpf)
     encontrado = df[df["CPF/CNPJ"].map(apenas_digitos) == alvo]
     if encontrado.empty:
@@ -51,6 +64,29 @@ def buscar(termo: str) -> pd.DataFrame:
     )
     por_nome = df["CLIENTE"].str.upper().str.contains(termo.upper(), na=False)
     return df[por_nome | por_cpf]
+
+
+def _normalizar_cep(campos: dict) -> None:
+    """CEP em branco fica em branco; preenchido, tem que ter 8 numeros e e
+    gravado sempre como 00000-000 (com o zero da frente preservado - por isso
+    a coluna e texto, nunca numero)."""
+    cep = (campos.get("CEP") or "").strip()
+    if not cep:
+        campos["CEP"] = ""
+        return
+    digitos = apenas_digitos(cep)
+    if len(digitos) != 8:
+        raise ErroCliente("CEP inválido - o CEP tem 8 números (ex.: 60165-120).")
+    campos["CEP"] = f"{digitos[:5]}-{digitos[5:]}"
+
+
+def _normalizar_uf(campos: dict) -> None:
+    """UF em branco fica em branco; preenchida, e sempre a sigla de um estado
+    valido em maiusculas (ex.: "ce" vira "CE"; "Ceara" e recusado)."""
+    uf = (campos.get("UF") or "").strip().upper()
+    if uf and uf not in UFS_VALIDAS:
+        raise ErroCliente("UF inválida - use a sigla do estado com 2 letras (ex.: CE).")
+    campos["UF"] = uf
 
 
 def _validar_campos(campos: dict, cpf_original: str | None = None) -> None:
@@ -86,12 +122,15 @@ def _validar_campos(campos: dict, cpf_original: str | None = None) -> None:
 def adicionar_cliente(campos: dict) -> None:
     """`campos` deve ter as chaves de data_store.CLIENTES_COLUNAS (DATA CADASTRO
     e preenchida automaticamente com hoje se nao vier)."""
+    sessao_mod.exigir_admin()
     campos = dict(campos)
     campos.setdefault("DATA CADASTRO", pd.Timestamp(date.today()))
     campos["CPF/CNPJ"] = (campos.get("CPF/CNPJ") or "").strip()
     campos["CLIENTE"] = (campos.get("CLIENTE") or "").strip().upper()
 
     _validar_campos(campos)
+    _normalizar_cep(campos)
+    _normalizar_uf(campos)
 
     df = bd.ler_clientes(CAMINHO_XLSX)
     nova_linha = {col: campos.get(col, "") for col in bd.CLIENTES_COLUNAS}
@@ -100,11 +139,17 @@ def adicionar_cliente(campos: dict) -> None:
 
 
 def atualizar_cliente(cpf_original: str, campos: dict) -> None:
+    sessao_mod.exigir_admin()
     campos = dict(campos)
     campos["CPF/CNPJ"] = (campos.get("CPF/CNPJ") or "").strip()
     campos["CLIENTE"] = (campos.get("CLIENTE") or "").strip().upper()
 
     _validar_campos(campos, cpf_original=cpf_original)
+    # atualizacao parcial (so alguns campos) nao mexe no que nao veio
+    if "CEP" in campos:
+        _normalizar_cep(campos)
+    if "UF" in campos:
+        _normalizar_uf(campos)
 
     df = bd.ler_clientes(CAMINHO_XLSX)
     alvo = apenas_digitos(cpf_original)
@@ -128,6 +173,7 @@ def remover_cliente(cpf: str) -> None:
     nenhum cliente cadastrado). Avisar o usuario sobre isso antes de excluir
     e responsabilidade da tela, nao desta funcao.
     """
+    sessao_mod.exigir_admin()
     df = bd.ler_clientes(CAMINHO_XLSX)
     alvo = apenas_digitos(cpf)
     permanece = df["CPF/CNPJ"].map(apenas_digitos) != alvo

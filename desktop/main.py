@@ -11,9 +11,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
+from core import sessao as sessao_mod
 from desktop import settings as settings_mod
+from desktop.dialogs.login_dialog import LoginDialog
 from desktop.main_window import MainWindow
 from desktop.theme import build_stylesheet
 
@@ -22,6 +24,11 @@ def main() -> None:
     app = QApplication(sys.argv)
     # settings_mod ja garante organizationName/applicationName antes de ler
     app.setStyleSheet(build_stylesheet(settings_mod.obter_tema()))
+
+    login = LoginDialog()
+    if login.exec() != QDialog.DialogCode.Accepted or login.sessao_criada is None:
+        sys.exit(0)
+    sessao_mod.iniciar(login.sessao_criada)
 
     janela = MainWindow()
     janela.show()

@@ -25,6 +25,7 @@ from config import CAMINHO_XLSX
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import data_store as bd
+from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 
 
@@ -82,6 +83,7 @@ def testar_cadastro_sem_duplicar(tmp_path: Path) -> None:
 
 
 def main() -> None:
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     tmp_path = CAMINHO_XLSX.parent / "_smoke_test_vendedores.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     # o arquivo real ja passou pela migracao (a aba VENDEDORES foi criada nele
