@@ -10,7 +10,7 @@ vazio = "nao informado".
 
 from __future__ import annotations
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import QCalendarWidget, QHBoxLayout, QLineEdit, QMenu, QPushButton, QWidget, QWidgetAction
 
 from desktop.widgets.formatters import conectar_mascara, formatar_data_parcial
@@ -21,8 +21,13 @@ _TAMANHO_COMPLETO = len("dd/mm/aaaa")
 
 
 class CampoData(QWidget):
-    def __init__(self, parent: QWidget | None = None):
+    alterado = Signal()  # o texto mudou (ja com a mascara aplicada)
+
+    def __init__(self, parent: QWidget | None = None, permitir_futuro: bool = False):
+        """`permitir_futuro`: por padrao uma data no futuro e recusada (serve
+        pra nascimento); um filtro de periodo ("ate 31/12") precisa aceitar."""
         super().__init__(parent)
+        self._permitir_futuro = permitir_futuro
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -31,7 +36,7 @@ class CampoData(QWidget):
         self.campo = QLineEdit()
         self.campo.setPlaceholderText("dd/mm/aaaa")
         conectar_mascara(self.campo, formatar_data_parcial)
-        self.campo.textChanged.connect(self._marcar_invalido_se_completo)
+        self.campo.textChanged.connect(self._ao_alterar_texto)
         layout.addWidget(self.campo, stretch=1)
 
         self._botao_calendario = QPushButton("📅")
@@ -43,7 +48,8 @@ class CampoData(QWidget):
 
         self._calendario = QCalendarWidget()
         self._calendario.setMinimumDate(_DATA_MINIMA)
-        self._calendario.setMaximumDate(QDate.currentDate())
+        if not permitir_futuro:
+            self._calendario.setMaximumDate(QDate.currentDate())
         self._calendario.clicked.connect(self._data_escolhida_no_calendario)
         # o calendario mora dentro de um menu-popup: fecha sozinho ao clicar
         # fora, sem precisar de um dialogo proprio
@@ -73,20 +79,27 @@ class CampoData(QWidget):
             return None, f"'{texto}' não é uma data válida - use o formato dd/mm/aaaa (ex.: 15/03/1985)."
         if data < _DATA_MINIMA:
             return None, "A data não pode ser anterior a 1900."
-        if data > QDate.currentDate():
+        if not self._permitir_futuro and data > QDate.currentDate():
             return None, "A data não pode estar no futuro."
         return data, ""
 
+    def esta_invalido(self) -> bool:
+        """Texto COMPLETO (10 caracteres) que mesmo assim nao e uma data
+        aceitavel. Incompleto ("15/0", ainda digitando) nao conta como erro."""
+        return len(self.texto()) >= _TAMANHO_COMPLETO and bool(self.avaliar()[1])
+
+    def limpar(self) -> None:
+        self.campo.clear()
+
     # -- internos ----------------------------------------------------------------
 
-    def _marcar_invalido_se_completo(self, _texto: str) -> None:
-        """Borda vermelha so quando o texto ja esta completo (10 caracteres) e
-        mesmo assim invalido - enquanto digita, "1" ou "15/0" nao sao erro."""
-        completo = len(self.texto()) >= _TAMANHO_COMPLETO
-        invalido = completo and bool(self.avaliar()[1])
-        self.campo.setProperty("invalido", invalido)
+    def _ao_alterar_texto(self, _texto: str) -> None:
+        # borda vermelha so quando o texto ja esta completo e mesmo assim
+        # invalido - enquanto digita, "1" ou "15/0" nao sao erro
+        self.campo.setProperty("invalido", self.esta_invalido())
         self.campo.style().unpolish(self.campo)
         self.campo.style().polish(self.campo)
+        self.alterado.emit()
 
     def _abrir_calendario(self) -> None:
         atual, _ = self.avaliar()

@@ -11,6 +11,7 @@ import pandas as pd
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -31,12 +32,14 @@ from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendedores as vendedores_mod
 from core.formatting import formatar_data, formatar_meses, formatar_reais
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.table_model import PandasTableModel, limitar_largura_colunas
 from desktop.widgets.botao_copiar import BotaoCopiar
+from desktop.widgets.campo_data import CampoData
 from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.shadow import aplicar_sombra_suave
 
@@ -51,6 +54,10 @@ class FichaClienteScreen(QWidget):
 
         self._cpf_selecionado: str | None = None
         self._historico_atual: pd.DataFrame = pd.DataFrame(columns=_COLUNAS_HISTORICO)
+        # ultimo periodo (de, ate, avisos) aplicado na lista - digitar uma data
+        # dispara um evento por tecla, e so vale reler a lista quando o que
+        # valeria mudou de fato (ex.: "15/0" -> "15/03/" nao muda nada)
+        self._estado_periodo: tuple = (None, None, ())
 
         layout_principal = QVBoxLayout(self)
         layout_principal.setContentsMargins(24, 24, 24, 24)
@@ -60,10 +67,8 @@ class FichaClienteScreen(QWidget):
         titulo.setProperty("role", "titulo")
         layout_principal.addWidget(titulo)
 
-        self._busca = QLineEdit()
-        self._busca.setPlaceholderText("🔎 Buscar cliente por nome ou CPF/CNPJ")
-        self._busca.textChanged.connect(self._atualizar_lista)
-        layout_principal.addWidget(self._busca)
+        layout_principal.addLayout(self._construir_linha_busca_e_ordenacao())
+        layout_principal.addLayout(self._construir_linha_filtros())
 
         corpo = QHBoxLayout()
         corpo.setSpacing(16)
@@ -92,6 +97,139 @@ class FichaClienteScreen(QWidget):
         layout_principal.addLayout(corpo, stretch=1)
 
         self._aplicar_restricoes_papel()
+        self._recarregar_vendedores_filtro()
+        self._atualizar_lista()
+
+    # -- busca, ordenacao e filtros da lista --------------------------------
+
+    def _construir_linha_busca_e_ordenacao(self) -> QHBoxLayout:
+        linha = QHBoxLayout()
+        linha.setSpacing(12)
+
+        self._busca = QLineEdit()
+        self._busca.setPlaceholderText("🔎 Buscar cliente por nome ou CPF/CNPJ")
+        self._busca.textChanged.connect(self._atualizar_lista)
+        linha.addWidget(self._busca, stretch=1)
+
+        rotulo = QLabel("Ordenar por")
+        rotulo.setProperty("role", "secundario")
+        linha.addWidget(rotulo)
+        self._ordenacao = QComboBox()
+        for chave, texto in clientes_mod.ORDENACAO_OPCOES:
+            self._ordenacao.addItem(texto, chave)
+        self._ordenacao.currentIndexChanged.connect(self._atualizar_lista)
+        linha.addWidget(self._ordenacao)
+        return linha
+
+    @staticmethod
+    def _bloco_com_rotulo(texto: str, controle: QWidget) -> QWidget:
+        """Rotulo pequeno em cima + o controle embaixo, num widget so (pra
+        poder esconder o conjunto todo, ex.: o filtro de vendedor)."""
+        bloco = QWidget()
+        camada = QVBoxLayout(bloco)
+        camada.setContentsMargins(0, 0, 0, 0)
+        camada.setSpacing(2)
+        legenda = QLabel(texto)
+        legenda.setProperty("role", "campo_rotulo")
+        camada.addWidget(legenda)
+        camada.addWidget(controle)
+        return bloco
+
+    def _construir_linha_filtros(self) -> QHBoxLayout:
+        linha = QHBoxLayout()
+        linha.setSpacing(12)
+
+        self._filtro_vendedor = QComboBox()
+        self._filtro_vendedor.setMinimumWidth(150)
+        self._filtro_vendedor.currentIndexChanged.connect(self._atualizar_lista)
+        self._bloco_filtro_vendedor = self._bloco_com_rotulo("Vendedor", self._filtro_vendedor)
+        linha.addWidget(self._bloco_filtro_vendedor)
+
+        self._filtro_tipo = QComboBox()
+        self._filtro_tipo.addItem("Todos", None)
+        for tipo in clientes_mod.TIPO_OPCOES:
+            self._filtro_tipo.addItem(tipo, tipo)
+        self._filtro_tipo.currentIndexChanged.connect(self._atualizar_lista)
+        linha.addWidget(self._bloco_com_rotulo("Tipo", self._filtro_tipo))
+
+        # o "ate" aceita data futura (ex.: "ate 31/12"); as duas so filtram
+        # quando a data esta completa e valida
+        self._filtro_cadastro_de = CampoData(permitir_futuro=True)
+        self._filtro_cadastro_de.setFixedWidth(150)
+        self._filtro_cadastro_de.alterado.connect(self._ao_mudar_periodo)
+        linha.addWidget(self._bloco_com_rotulo("Cadastrado de", self._filtro_cadastro_de))
+
+        self._filtro_cadastro_ate = CampoData(permitir_futuro=True)
+        self._filtro_cadastro_ate.setFixedWidth(150)
+        self._filtro_cadastro_ate.alterado.connect(self._ao_mudar_periodo)
+        linha.addWidget(self._bloco_com_rotulo("até", self._filtro_cadastro_ate))
+
+        linha.addStretch(1)  # peso 1: so o espacador estica; sem isso o espaco extra se reparte entre os campos
+        self._botao_limpar_filtros = QPushButton("Limpar filtros")
+        self._botao_limpar_filtros.setToolTip("Volta Vendedor, Tipo e período para \"Todos\" / em branco (a busca e a ordenação continuam)")
+        self._botao_limpar_filtros.clicked.connect(self._limpar_filtros)
+        linha.addWidget(self._botao_limpar_filtros, alignment=Qt.AlignmentFlag.AlignBottom)
+        return linha
+
+    def _recarregar_vendedores_filtro(self) -> bool:
+        """Repovoa o filtro de Vendedor com quem esta no cadastro AGORA (a
+        lista muda quando alguem cadastra um vendedor novo, em qualquer tela).
+        Devolve True se o vendedor que estava escolhido nao existe mais e o
+        filtro voltou pra "Todos" - quem chamou precisa reler a lista."""
+        if sessao_mod.eh_vendedor():
+            return False  # vendedor so enxerga os proprios clientes; o filtro nem aparece
+        try:
+            nomes = vendedores_mod.listar_vendedores()
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.warning(self, "Erro ao carregar vendedores", str(exc))
+            return False
+
+        escolhido = self._filtro_vendedor.currentData()
+        self._filtro_vendedor.blockSignals(True)
+        self._filtro_vendedor.clear()
+        self._filtro_vendedor.addItem("Todos", None)
+        for nome in nomes:
+            self._filtro_vendedor.addItem(nome, nome)
+        indice = self._filtro_vendedor.findData(escolhido) if escolhido else 0
+        self._filtro_vendedor.setCurrentIndex(max(indice, 0))
+        self._filtro_vendedor.blockSignals(False)
+        return bool(escolhido) and indice < 0
+
+    def _ler_periodo(self) -> tuple[pd.Timestamp | None, pd.Timestamp | None, list[str]]:
+        """(inicio, fim, avisos) do periodo digitado. Data incompleta (ainda
+        digitando) simplesmente nao filtra; completa mas invalida e IGNORADA
+        com aviso (a borda vermelha do campo tambem mostra) - nunca vira um
+        filtro diferente do que a pessoa escreveu sem dizer nada."""
+        avisos: list[str] = []
+        valores: list[pd.Timestamp | None] = []
+        for campo, nome in ((self._filtro_cadastro_de, "inicial"), (self._filtro_cadastro_ate, "final")):
+            data, _erro = campo.avaliar()
+            if campo.esta_invalido():
+                avisos.append(f"data {nome} inválida (ignorada)")
+            valores.append(pd.Timestamp(data.year(), data.month(), data.day()) if data else None)
+        inicio, fim = valores
+        if inicio is not None and fim is not None and inicio > fim:
+            avisos.append("a data inicial é maior que a final")
+        return inicio, fim, avisos
+
+    def _ao_mudar_periodo(self) -> None:
+        inicio, fim, avisos = self._ler_periodo()
+        if (inicio, fim, tuple(avisos)) == self._estado_periodo:
+            return
+        self._atualizar_lista()
+
+    def _limpar_filtros(self, *_args) -> None:
+        """Vendedor e Tipo voltam pra "Todos" e o periodo fica em branco (a
+        busca e a ordenacao NAO sao filtros - continuam como estao). Le a
+        lista uma vez so, no fim."""
+        for combo in (self._filtro_vendedor, self._filtro_tipo):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        for campo in (self._filtro_cadastro_de, self._filtro_cadastro_ate):
+            campo.blockSignals(True)  # so o sinal "alterado" do conjunto; o campo interno ainda repinta a borda
+            campo.limpar()
+            campo.blockSignals(False)
         self._atualizar_lista()
 
     def _aplicar_restricoes_papel(self) -> None:
@@ -101,6 +239,7 @@ class FichaClienteScreen(QWidget):
         sempre daria erro)."""
         if not sessao_mod.eh_vendedor():
             return
+        self._bloco_filtro_vendedor.setVisible(False)  # so enxerga os proprios clientes: filtrar por vendedor nao faz sentido
         self._botao_novo_cliente.setVisible(False)
         self._botao_editar_cliente.setVisible(False)
         self._botao_excluir_cliente.setVisible(False)
@@ -301,10 +440,28 @@ class FichaClienteScreen(QWidget):
 
     # -- carregamento de dados ----------------------------------------------
 
-    def _atualizar_lista(self) -> None:
+    def showEvent(self, evento) -> None:
+        super().showEvent(evento)
+        # alguem pode ter cadastrado um vendedor em outra tela (Usuarios) desde a
+        # ultima vez que esta tela apareceu
+        if self._recarregar_vendedores_filtro():
+            self._atualizar_lista()
+
+    def _atualizar_lista(self, *_args) -> None:
+        """Le a lista de novo com a busca + filtros + ordenacao atuais (todos
+        combinados) e atualiza o contador. *_args absorve o valor que os
+        sinais dos controles mandam."""
         termo = self._busca.text().strip()
+        inicio, fim, avisos = self._ler_periodo()
         try:
-            resultados = clientes_mod.buscar(termo) if termo else clientes_mod.listar_clientes()
+            resultados = clientes_mod.buscar(
+                termo,
+                vendedor=self._filtro_vendedor.currentData(),
+                tipo=self._filtro_tipo.currentData(),
+                cadastro_de=inicio,
+                cadastro_ate=fim,
+                ordenacao=self._ordenacao.currentData(),
+            )
         except FileNotFoundError:
             QMessageBox.critical(
                 self,
@@ -316,30 +473,66 @@ class FichaClienteScreen(QWidget):
             QMessageBox.critical(self, "Erro ao buscar clientes", str(exc))
             return
 
-        self._contador.setText(f"{len(resultados)} cliente(s)")
+        self._estado_periodo = (inicio, fim, tuple(avisos))
+        contador = f"{len(resultados)} cliente(s)"
+        if avisos:
+            contador += " — " + "; ".join(avisos)
+        self._contador.setText(contador)
+        self._botao_limpar_filtros.setEnabled(
+            bool(
+                self._filtro_vendedor.currentData()
+                or self._filtro_tipo.currentData()
+                or self._filtro_cadastro_de.texto()
+                or self._filtro_cadastro_ate.texto()
+            )
+        )
 
         # bloqueia sinais pra repovoar a lista sem disparar _selecionar_cliente
         # a cada item removido/inserido
+        cpf_anterior = self._cpf_selecionado
+        item_anterior: QListWidgetItem | None = None
         self._lista.blockSignals(True)
         self._lista.clear()
         for _, linha in resultados.iterrows():
             item = QListWidgetItem(f"{linha['CLIENTE']} — {linha['CPF/CNPJ']}")
             item.setData(Qt.ItemDataRole.UserRole, linha["CPF/CNPJ"])
             self._lista.addItem(item)
+            if linha["CPF/CNPJ"] == cpf_anterior:
+                item_anterior = item
+        if item_anterior is not None:
+            # mudar ordenacao/filtro nao pode fechar a ficha aberta se o cliente
+            # continua na lista (ainda com os sinais bloqueados: nada de reler a ficha)
+            self._lista.setCurrentItem(item_anterior)
         self._lista.blockSignals(False)
 
-        self._cpf_selecionado = None
-        self._painel_stack.setCurrentIndex(0)
+        if item_anterior is None:
+            self._cpf_selecionado = None
+            self._painel_stack.setCurrentIndex(0)
 
-    def _selecionar_por_cpf(self, cpf: str) -> None:
+    def _selecionar_por_cpf(self, cpf: str) -> bool:
         """Procura `cpf` na lista atual e seleciona (dispara _selecionar_cliente).
         Usado depois de cadastrar/editar um cliente, pra reabrir a ficha dele.
+        Devolve False se ele nao esta na lista (ex.: escondido pelos filtros).
         """
         for i in range(self._lista.count()):
             item = self._lista.item(i)
             if item.data(Qt.ItemDataRole.UserRole) == cpf:
+                ja_selecionado = self._cpf_selecionado == cpf and self._lista.currentRow() == i
                 self._lista.setCurrentItem(item)
-                return
+                if ja_selecionado:
+                    # ja era o atual: setCurrentItem nao dispara nada, e a ficha
+                    # aberta ainda mostra os dados de ANTES da edicao
+                    self._recarregar_ficha_atual()
+                return True
+        return False
+
+    def _mostrar_cliente(self, cpf: str) -> None:
+        """Abre a ficha de `cpf`. Se os filtros o escondem (ex.: acabou de
+        cadastrar alguem de outro vendedor, ou trocou o vendedor de quem estava
+        aberto), limpa os filtros - senao a pessoa salvou e o cliente "sumiu"."""
+        if not self._selecionar_por_cpf(cpf):
+            self._limpar_filtros()
+            self._selecionar_por_cpf(cpf)
 
     def _selecionar_cliente(self, atual: QListWidgetItem | None, _anterior: QListWidgetItem | None = None) -> None:
         if atual is None:
@@ -421,13 +614,19 @@ class FichaClienteScreen(QWidget):
 
     def _abrir_cadastro_cliente(self) -> None:
         dialogo = ClienteDialog(cliente=None, parent=self)
-        if dialogo.exec() != QDialog.DialogCode.Accepted:
+        aceito = dialogo.exec() == QDialog.DialogCode.Accepted
+        # o dialogo tem "+ Novo Vendedor": o filtro precisa enxergar quem foi
+        # cadastrado, mesmo que o cliente nao tenha sido salvo
+        vendedor_escolhido_sumiu = self._recarregar_vendedores_filtro()
+        if not aceito:
+            if vendedor_escolhido_sumiu:
+                self._atualizar_lista()
             return
         # limpa a busca pra garantir que o cliente novo apareca na lista,
         # mesmo que o texto buscado antes nao bata com o nome/CPF dele
         self._busca.setText("")
         self._atualizar_lista()
-        self._selecionar_por_cpf(dialogo.cpf_salvo)
+        self._mostrar_cliente(dialogo.cpf_salvo)
 
     def _abrir_edicao_cliente(self) -> None:
         if not self._cpf_selecionado:
@@ -439,11 +638,15 @@ class FichaClienteScreen(QWidget):
             self._painel_stack.setCurrentIndex(0)
             return
         dialogo = ClienteDialog(cliente=cliente, parent=self)
-        if dialogo.exec() != QDialog.DialogCode.Accepted:
+        aceito = dialogo.exec() == QDialog.DialogCode.Accepted
+        vendedor_escolhido_sumiu = self._recarregar_vendedores_filtro()
+        if not aceito:
+            if vendedor_escolhido_sumiu:
+                self._atualizar_lista()
             return
         self._busca.setText("")
         self._atualizar_lista()
-        self._selecionar_por_cpf(dialogo.cpf_salvo)
+        self._mostrar_cliente(dialogo.cpf_salvo)
 
     def _recarregar_ficha_atual(self) -> bool:
         """Recarrega cliente + historico do CPF selecionado, com a mesma
