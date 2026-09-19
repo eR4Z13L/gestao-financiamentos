@@ -20,6 +20,7 @@ from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 
 
@@ -28,6 +29,11 @@ def linha(titulo: str) -> None:
 
 
 def main() -> None:
+    # login com dois niveis de acesso (Fase 2): as funcoes de escrita
+    # exigem uma sessao ADMIN ativa - este script testa o fluxo completo de
+    # CRUD, entao "loga" como admin igual a tela de login faria.
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
+
     tmp_path = CAMINHO_XLSX.parent / "_smoke_test_business.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
 

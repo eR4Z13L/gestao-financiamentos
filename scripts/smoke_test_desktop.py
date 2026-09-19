@@ -30,6 +30,7 @@ config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra pla
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import _COLUNAS_HISTORICO, FichaClienteScreen
@@ -290,6 +291,8 @@ def testar_edicao_proposta(app: QApplication) -> None:
             assert self._status.currentText() == status_original, (
                 f"dialogo veio com status {self._status.currentText()!r}, esperado {status_original!r}"
             )
+            assert self._modo_leitura, "proposta existente deveria abrir em modo leitura"
+            self._habilitar_edicao()
             self._status.setCurrentText(propostas_mod.STATUS_APROVADO)
             self._observacoes.setPlainText("editado no smoke test")
             self._salvar()
@@ -380,6 +383,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
 
 
 def main() -> None:
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     app = QApplication.instance() or QApplication(sys.argv)
     testar_dashboard_screen(app)
     testar_ficha_cliente_screen(app)

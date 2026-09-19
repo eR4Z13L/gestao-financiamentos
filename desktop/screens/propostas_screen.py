@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from core import data_store as bd
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core.formatting import formatar_data, formatar_meses, formatar_reais
 from core.validators import apenas_digitos
 from desktop.dialogs.proposta_dialog import PropostaDialog
@@ -91,21 +92,31 @@ class PropostasScreen(QWidget):
         layout.addWidget(self._tabela, stretch=1)
 
         linha_botoes = QHBoxLayout()
-        botao_editar = QPushButton("Editar")
-        botao_editar.setProperty("role", "botao_primario")
-        botao_editar.clicked.connect(self._editar_selecionada)
-        linha_botoes.addWidget(botao_editar)
-        botao_excluir = QPushButton("Excluir")
-        botao_excluir.setProperty("role", "botao_perigo")
-        botao_excluir.clicked.connect(self._excluir_selecionada)
-        linha_botoes.addWidget(botao_excluir)
-        botao_nova = QPushButton("+ Nova Proposta")
-        botao_nova.setProperty("role", "botao_primario")
-        botao_nova.clicked.connect(self._abrir_nova_proposta)
-        linha_botoes.addWidget(botao_nova)
+        self._botao_editar = QPushButton("Editar")
+        self._botao_editar.setProperty("role", "botao_primario")
+        self._botao_editar.clicked.connect(self._editar_selecionada)
+        linha_botoes.addWidget(self._botao_editar)
+        self._botao_excluir = QPushButton("Excluir")
+        self._botao_excluir.setProperty("role", "botao_perigo")
+        self._botao_excluir.clicked.connect(self._excluir_selecionada)
+        linha_botoes.addWidget(self._botao_excluir)
+        self._botao_nova = QPushButton("+ Nova Proposta")
+        self._botao_nova.setProperty("role", "botao_primario")
+        self._botao_nova.clicked.connect(self._abrir_nova_proposta)
+        linha_botoes.addWidget(self._botao_nova)
         layout.addLayout(linha_botoes)
 
+        self._aplicar_restricoes_papel()
         self._carregar_dados()
+
+    def _aplicar_restricoes_papel(self) -> None:
+        """VENDEDOR e so-leitura - ver mesmo metodo em FichaClienteScreen."""
+        if not sessao_mod.eh_vendedor():
+            return
+        self._botao_editar.setVisible(False)
+        self._botao_excluir.setVisible(False)
+        self._botao_nova.setVisible(False)
+        self._tabela.doubleClicked.disconnect(self._editar_selecionada)
 
     # -- carregamento e filtro -----------------------------------------------
 

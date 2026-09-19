@@ -6,6 +6,7 @@ import pandas as pd
 
 from config import CAMINHO_XLSX
 from core import data_store as bd
+from core import sessao as sessao_mod
 
 
 class ErroEquipamento(Exception):
@@ -62,6 +63,7 @@ def listar_nomes_equipamento() -> list[str]:
 
 
 def adicionar_equipamento(campos: dict) -> None:
+    sessao_mod.exigir_admin()
     campos = dict(campos)
     nome = (campos.get("EQUIPAMENTO") or "").strip()
     if not nome:
@@ -79,6 +81,7 @@ def adicionar_equipamento(campos: dict) -> None:
 def atualizar_equipamento(indice: int, campos: dict) -> None:
     """`indice` e a posicao na tabela retornada por listar_equipamentos()/
     bd.ler_equipamentos() no momento em que a edicao foi aberta."""
+    sessao_mod.exigir_admin()
     df = bd.ler_equipamentos(CAMINHO_XLSX)
     if indice not in df.index:
         raise ErroEquipamento("Equipamento não encontrado (a lista pode ter mudado).")

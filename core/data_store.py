@@ -40,6 +40,10 @@ ABA_EQUIPAMENTOS = "EQUIPAMENTOS"
 ABA_PROPOSTAS = "PROPOSTAS"
 ABA_VENDEDORES = "VENDEDORES"
 
+# As colunas A-E (DATA CADASTRO, CPF/CNPJ, VENDEDOR, TIPO, CLIENTE) NAO podem
+# mudar de lugar: as formulas de VENDEDOR/CLIENTE na aba PROPOSTAS fazem
+# VLOOKUP nelas por letra de coluna (CLIENTES!$B:$C e $B:$E) - ver
+# _escrever_linhas_propostas.
 CLIENTES_COLUNAS = [
     "DATA CADASTRO",
     "CPF/CNPJ",
@@ -48,10 +52,23 @@ CLIENTES_COLUNAS = [
     "CLIENTE",
     "NASCIMENTO",
     "CELULAR",
-    "ENDEREÇO",
+    "CEP",
+    "LOGRADOURO",
+    "NÚMERO",
+    "COMPLEMENTO",
+    "BAIRRO",
+    "CIDADE",
+    "UF",
+    # texto do antigo campo unico "ENDEREÇO" de quem a migracao nao conseguiu
+    # separar com seguranca (core/endereco.py) - fica so pra revisao manual;
+    # apague o conteudo depois de preencher CEP/LOGRADOURO/... daquele cliente
+    "ENDEREÇO (REVISAR)",
     "VINCULADO",
     "REDE SOCIAL",
     "EMAIL",
+    "NOME DO PAI",
+    "NOME DA MÃE",
+    "PROFISSÃO",
 ]
 
 EQUIPAMENTOS_COLUNAS = [
@@ -64,8 +81,9 @@ EQUIPAMENTOS_COLUNAS = [
 ]
 
 # Cadastro proprio de vendedores - existe pra nao depender de "quem ja foi
-# usado em CLIENTES" (uma aba a mais, so com o nome).
-VENDEDORES_COLUNAS = ["NOME"]
+# usado em CLIENTES" (uma aba a mais). SENHA_HASH/SALT sao do login da Fase 2
+# (core/auth.py) - a senha em texto puro NUNCA e gravada em lugar nenhum.
+VENDEDORES_COLUNAS = ["NOME", "SENHA_HASH", "SALT"]
 
 # Colunas realmente digitadas/gravadas na aba PROPOSTAS.
 PROPOSTAS_COLUNAS_EDITAVEIS = [
@@ -117,18 +135,30 @@ _COLUNAS_DE_MOEDA = {
     ABA_PROPOSTAS: {"VALOR (R$)"},
 }
 
-_CLIENTES_COLUNAS_TEXTO = [
-    "CPF/CNPJ", "VENDEDOR", "TIPO", "CLIENTE", "ENDEREÇO", "VINCULADO", "REDE SOCIAL", "EMAIL",
-]
+# tudo que nao e data (CELULAR incluido: e sempre texto, nunca numero)
+_CLIENTES_COLUNAS_TEXTO = [c for c in CLIENTES_COLUNAS if c not in {"DATA CADASTRO", "NASCIMENTO"}]
+
+# colunas que o Excel deve tratar como TEXTO ao digitar direto na planilha -
+# senao um CEP "02378-255" digitado sem o hifen vira o numero 2378255 (perde o
+# zero da frente) e "45A" vira erro
+_COLUNAS_FORCADAS_A_TEXTO = {
+    ABA_CLIENTES: {"CEP", "NÚMERO"},
+}
 _EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
 _PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES"]
 _PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES"]
-_VENDEDORES_COLUNAS_TEXTO = ["NOME"]
+_VENDEDORES_COLUNAS_TEXTO = ["NOME", "SENHA_HASH", "SALT"]
 
 
 class ErroArquivoBloqueado(Exception):
     """O .xlsx esta aberto no Excel (ou outro programa) e nao pode ser salvo agora."""
+
+
+class ErroPlanilhaDesatualizada(Exception):
+    """A aba CLIENTES do .xlsx esta num formato de colunas diferente do que o
+    app espera (ex.: planilha de antes da separacao do endereco) - ler ou
+    gravar assim trocaria dados de coluna sem ninguem perceber."""
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +230,35 @@ def _linhas_da_aba(ws, n_colunas: int):
         yield linha
 
 
-def ler_aba(caminho_xlsx: Path, nome_aba: str, colunas: list[str]) -> pd.DataFrame:
+def _conferir_cabecalho(ws, nome_aba: str, colunas: list[str], nome_arquivo: str) -> None:
+    """A leitura e a escrita das abas sao por POSICAO de coluna (nao pelo
+    nome do cabecalho). Se a planilha estiver num formato diferente do que o
+    app espera, ler assim misturaria colunas sem ninguem perceber - entao
+    recusa, dizendo exatamente o que esta diferente."""
+    encontrado = [_normalizar_texto(ws.cell(row=1, column=j).value) for j in range(1, len(colunas) + 1)]
+    if encontrado == colunas:
+        return
+    diferentes = [
+        f"coluna {j}: esperava '{esperada}', achou '{achada}'"
+        for j, (esperada, achada) in enumerate(zip(colunas, encontrado), start=1)
+        if esperada != achada
+    ]
+    raise ErroPlanilhaDesatualizada(
+        f"A aba {nome_aba} de '{nome_arquivo}' está num formato diferente do esperado "
+        f"({'; '.join(diferentes[:3])}{' ...' if len(diferentes) > 3 else ''}). "
+        "Se for uma planilha de formato antigo (antes do endereço em campos separados, do complemento ou da UF), "
+        "rode: venv\\Scripts\\python.exe scripts\\migrar_endereco_clientes.py"
+    )
+
+
+def ler_aba(
+    caminho_xlsx: Path, nome_aba: str, colunas: list[str], conferir_cabecalho: bool = False
+) -> pd.DataFrame:
     wb = _carregar_planilha(caminho_xlsx)
     try:
         ws = wb[nome_aba]
+        if conferir_cabecalho:
+            _conferir_cabecalho(ws, nome_aba, colunas, caminho_xlsx.name)
         linhas = list(_linhas_da_aba(ws, len(colunas)))
     finally:
         wb.close()
@@ -215,10 +270,9 @@ def ler_aba(caminho_xlsx: Path, nome_aba: str, colunas: list[str]) -> pd.DataFra
 # ---------------------------------------------------------------------------
 
 def ler_clientes(caminho_xlsx: Path) -> pd.DataFrame:
-    df = ler_aba(caminho_xlsx, ABA_CLIENTES, CLIENTES_COLUNAS)
+    df = ler_aba(caminho_xlsx, ABA_CLIENTES, CLIENTES_COLUNAS, conferir_cabecalho=True)
     for col in _CLIENTES_COLUNAS_TEXTO:
         df[col] = df[col].map(_normalizar_texto)
-    df["CELULAR"] = df["CELULAR"].map(_normalizar_texto)
     return df
 
 
@@ -360,6 +414,8 @@ def _aplicar_formato(cell, nome_aba: str, nome_coluna: str) -> None:
         cell.number_format = "dd/mm/yyyy"
     elif nome_coluna in _COLUNAS_DE_MOEDA.get(nome_aba, ()):
         cell.number_format = '"R$ "#,##0.00'
+    elif nome_coluna in _COLUNAS_FORCADAS_A_TEXTO.get(nome_aba, ()):
+        cell.number_format = "@"
 
 
 def _limpar_valor(valor):
@@ -418,6 +474,7 @@ def _escrever_linhas_propostas(ws, registros: list[dict]) -> None:
 def escrever_clientes(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     wb = _carregar_planilha(caminho_xlsx)
     try:
+        _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
         _escrever_linhas_simples(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
     finally:

@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import math
+import re
 
 import pandas as pd
 from PySide6.QtWidgets import QApplication, QLineEdit
@@ -209,18 +210,20 @@ def testar_zebra_tabela() -> None:
 
 
 def testar_sidebar_recolhida_quase_quadrada() -> None:
-    linha("9) Item da sidebar recolhida - proporção quase quadrada")
+    linha("9) Item da sidebar recolhida - altura maior, sem espremer o ícone")
 
-    # bug real reportado: o item ficava um retangulo bem mais alto que largo
-    # (padding vertical de 13px + margin de 6px). Confere que os valores
-    # atuais (mais enxutos) estao no CSS gerado, nos dois temas (a regra e
-    # compartilhada no bloco base) - nao mede geometria renderizada porque
-    # QT_QPA_PLATFORM=offscreen usa metricas de emoji diferentes do Qt real
-    # (ver notas do projeto), o que tornaria essa medida nao-confiavel aqui.
-    marcador = 'QListWidget[recolhido="true"]::item {\n        padding: 3px 0px;\n        margin: 2px 2px;'
-    assert marcador in build_stylesheet(TEMA_CLARO)
-    assert marcador in build_stylesheet(TEMA_ESCURO)
-    print("OK: padding/margin enxutos (proporção quase quadrada) presentes nos dois temas.")
+    # bug real ja visto nesta tela: padding horizontal alto (11px) nao cabe
+    # nos ~40px uteis da barra recolhida (60px de largura - 10px de padding
+    # do QListWidget de cada lado) e o emoji simplesmente some (Qt nao
+    # desenha nada, em vez de cortar). O padding horizontal tem que ficar
+    # baixo (2px); so o vertical pode subir livremente, pra aproximar a
+    # altura do icone aqui da altura dele no item expandido (padding
+    # vertical 11px). Nao mede geometria renderizada porque
+    # QT_QPA_PLATFORM=offscreen usa metricas de emoji diferentes do Qt real.
+    padrao = re.compile(r'QListWidget\[recolhido="true"\]::item \{[^}]*padding:\s*8px 2px;[^}]*margin:\s*2px 2px;', re.S)
+    assert padrao.search(build_stylesheet(TEMA_CLARO)), "padding esperado não encontrado no tema claro"
+    assert padrao.search(build_stylesheet(TEMA_ESCURO)), "padding esperado não encontrado no tema escuro"
+    print("OK: padding do ícone recolhido (8px vertical, 2px horizontal) presente nos dois temas.")
 
     claro = build_stylesheet(TEMA_CLARO)
     assert f"alternate-background-color: {PALETA_CLARA['zebra']}" in claro

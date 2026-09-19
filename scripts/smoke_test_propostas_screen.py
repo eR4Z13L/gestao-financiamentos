@@ -30,6 +30,7 @@ import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core.validators import apenas_digitos
 from desktop import settings as settings_mod
 from desktop.dialogs.proposta_dialog import PropostaDialog
@@ -186,6 +187,8 @@ def testar_propostas_screen(app: QApplication) -> None:
             original_exec = PropostaDialog.exec
 
             def _exec_edicao(self):
+                assert self._modo_leitura, "proposta existente deveria abrir em modo leitura"
+                self._habilitar_edicao()
                 self._observacoes.setPlainText("editado via tela todas propostas")
                 self._salvar()
                 return self.result()
@@ -304,6 +307,7 @@ def testar_sidebar_e_tema(app: QApplication) -> None:
 
 
 def main() -> None:
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     app = QApplication.instance() or QApplication(sys.argv)
     testar_remover_proposta_core()
     testar_dialogo_cliente_avulso(app)

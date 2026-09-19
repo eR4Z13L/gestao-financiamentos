@@ -86,7 +86,14 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         color: {p['texto_secundario']};
     }}
     QListWidget[recolhido="true"]::item {{
-        padding: 3px 0px;
+        /* padding horizontal tem que ficar bem baixo - a barra recolhida so
+        tem 60px de largura (menos o padding proprio do QListWidget, 10px de
+        cada lado): qualquer coisa alem de ~2px de padding horizontal aqui
+        espreme o emoji pra fora da area de desenho e ele some (bug real ja
+        visto). O padding vertical pode ser bem maior sem esse problema -
+        aumentado pra aproximar a altura do icone aqui da altura que ele tem
+        no item expandido (padding vertical 11px, ver ::item acima). */
+        padding: 8px 2px;
         margin: 2px 2px;
     }}
     QListWidget::item:selected {{
@@ -195,6 +202,32 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     }}
     QComboBox:focus {{
         border: 1px solid {p['destaque']};
+    }}
+
+    /* campos travados (dialogo de proposta em modo leitura, propriedade
+       "travado" - ver desktop/dialogs/proposta_dialog.py): todos com a mesma
+       caixa dos combos/QLineEdit. Data/valor/meses e observacoes so ganham
+       caixa estilizada aqui, travados - editando, o QSS de borda quebraria as
+       setas de subir/descer do QSpinBox (ficam ilegiveis), por isso la
+       continuam com o visual nativo de sempre. */
+    QAbstractSpinBox[travado="true"], QPlainTextEdit[travado="true"] {{
+        background-color: {p['bg_card']};
+        border: 1px solid {p['borda']};
+        border-radius: 6px;
+        padding: 5px 8px;
+        color: {p['texto']};
+    }}
+    QPlainTextEdit[travado="true"] {{
+        padding: 1px 4px;  /* o texto ja tem uns 4px de margem propria */
+    }}
+    /* combo travado (ver desktop/widgets/combo_travavel.py): sem a seta de
+       abrir a lista - ela nao faria nada */
+    QComboBox[travado="true"]::drop-down {{
+        width: 0px;
+        border: none;
+    }}
+    QComboBox[travado="true"]::down-arrow {{
+        image: none;
     }}
     QComboBox QAbstractItemView {{
         background-color: {p['bg_card']};

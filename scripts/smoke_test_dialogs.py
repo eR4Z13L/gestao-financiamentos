@@ -27,6 +27,7 @@ import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.dialogs.proposta_dialog import PropostaDialog
@@ -37,6 +38,7 @@ def linha(titulo: str) -> None:
 
 
 def main() -> None:
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     app = QApplication.instance() or QApplication(sys.argv)
 
     # QMessageBox.warning/critical sao chamadas modais (.exec() proprio) -
@@ -51,6 +53,7 @@ def main() -> None:
 
     QMessageBox.warning = staticmethod(_stub_mensagem)
     QMessageBox.critical = staticmethod(_stub_mensagem)
+    QMessageBox.information = staticmethod(_stub_mensagem)
 
     tmp_path = CAMINHO_XLSX.parent / "_smoke_test_dialogs.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)

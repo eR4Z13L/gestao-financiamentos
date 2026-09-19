@@ -24,10 +24,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core import sessao as sessao_mod
 from desktop import settings as settings_mod
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.screens.propostas_screen import PropostasScreen
+from desktop.screens.usuarios_screen import UsuariosScreen
 from desktop.theme import TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 
 _LARGURA_EXPANDIDA = 230
@@ -65,11 +67,17 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _construir_itens() -> list[tuple[str, str, QWidget]]:
-        return [
+        itens = [
             ("📊", "Dashboard de Propostas", DashboardScreen()),
             ("🗂️", "Ficha de Cliente", FichaClienteScreen()),
             ("📋", "Todas as Propostas", PropostasScreen()),
         ]
+        # gestao de usuarios (trocar a propria senha, cadastrar vendedor,
+        # redefinir senha de vendedor) e coisa de ADMIN - nem aparece no
+        # menu pro VENDEDOR, que so tem acesso de leitura mesmo
+        if sessao_mod.eh_admin():
+            itens.append(("👤", "Usuários", UsuariosScreen()))
+        return itens
 
     def _construir_sidebar(self) -> QWidget:
         sidebar = QFrame()
@@ -96,6 +104,19 @@ class MainWindow(QMainWindow):
         layout_cabecalho.addWidget(self._titulo_app)
         layout_cabecalho.addStretch()
         layout.addWidget(cabecalho)
+
+        # identifica quem esta logado e com que nivel de acesso - fica visivel
+        # o tempo todo, pra nunca deixar duvida sobre estar em modo leitura
+        sessao = sessao_mod.atual()
+        if sessao is not None:
+            papel_rotulo = "Administrador" if sessao.papel == sessao_mod.PAPEL_ADMIN else "Vendedor (somente leitura)"
+            self._identidade = QLabel(f"👤 {sessao.nome_usuario}\n{papel_rotulo}")
+        else:
+            self._identidade = QLabel("")
+        self._identidade.setProperty("role", "secundario")
+        self._identidade.setWordWrap(True)
+        self._identidade.setContentsMargins(14, 0, 14, 12)
+        layout.addWidget(self._identidade)
 
         self._menu = QListWidget()
         self._menu.setFrameShape(QFrame.Shape.NoFrame)
@@ -132,6 +153,7 @@ class MainWindow(QMainWindow):
         self._menu.style().polish(self._menu)
 
         self._titulo_app.setVisible(not self._menu_recolhido)
+        self._identidade.setVisible(not self._menu_recolhido)
 
         alinhamento = (
             Qt.AlignmentFlag.AlignCenter

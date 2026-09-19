@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
+from core import sessao as sessao_mod
 from core.formatting import formatar_reais
 from desktop.table_model import PandasTableModel
 from desktop.widgets.metric_card import MetricCard
@@ -89,15 +90,26 @@ class DashboardScreen(QWidget):
         self._configurar_tabela(self._tabela_status)
         layout.addWidget(self._tabela_status, stretch=1)
 
+        # "Desempenho por vendedor" nao faz sentido pro proprio vendedor ver
+        # (seria uma tabela de 1 linha so, redundante com os cards acima) -
+        # so aparece pro ADMIN, que ve a empresa inteira.
+        self._secao_vendedor = QWidget()
+        layout_secao_vendedor = QVBoxLayout(self._secao_vendedor)
+        layout_secao_vendedor.setContentsMargins(0, 0, 0, 0)
+        layout_secao_vendedor.setSpacing(16)
+
         subtitulo_vendedor = QLabel("Desempenho por vendedor")
         subtitulo_vendedor.setProperty("role", "subtitulo")
-        layout.addWidget(subtitulo_vendedor)
+        layout_secao_vendedor.addWidget(subtitulo_vendedor)
 
         self._modelo_vendedor = PandasTableModel()
         self._tabela_vendedor = QTableView()
         self._tabela_vendedor.setModel(self._modelo_vendedor)
         self._configurar_tabela(self._tabela_vendedor)
-        layout.addWidget(self._tabela_vendedor, stretch=1)
+        layout_secao_vendedor.addWidget(self._tabela_vendedor, stretch=1)
+
+        layout.addWidget(self._secao_vendedor, stretch=1)
+        self._secao_vendedor.setVisible(not sessao_mod.eh_vendedor())
 
         self._carregar_dados()
 
@@ -153,7 +165,8 @@ class DashboardScreen(QWidget):
         self._modelo_status.definir_dataframe(detalhamento)
         self._tabela_status.resizeColumnsToContents()
 
-        vendedor = dashboard_mod.por_vendedor(propostas).copy()
-        vendedor["Valor Aprovado (R$)"] = vendedor["Valor Aprovado (R$)"].map(formatar_reais)
-        self._modelo_vendedor.definir_dataframe(vendedor)
-        self._tabela_vendedor.resizeColumnsToContents()
+        if not sessao_mod.eh_vendedor():
+            vendedor = dashboard_mod.por_vendedor(propostas).copy()
+            vendedor["Valor Aprovado (R$)"] = vendedor["Valor Aprovado (R$)"].map(formatar_reais)
+            self._modelo_vendedor.definir_dataframe(vendedor)
+            self._tabela_vendedor.resizeColumnsToContents()
