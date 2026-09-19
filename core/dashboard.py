@@ -7,11 +7,20 @@ from __future__ import annotations
 import pandas as pd
 
 from core import vendedores as vendedores_mod
-from core.propostas import categoria_status, listar_propostas
+from core.propostas import categoria_status, eh_aprovado_nao_efetivado, eh_efetivado, listar_propostas
 
 
 def _percentual(numerador: float, denominador: float) -> float:
     return (numerador / denominador * 100) if denominador else 0.0
+
+
+def _nao_efetivadas(status: pd.Series) -> tuple[int, int, float]:
+    """(efetivadas, aprovadas nao efetivadas, % nao efetivadas) de uma serie
+    de STATUS. A porcentagem e sobre Aprovado + Efetivado - "de tudo que foi
+    aprovado, quanto ainda nao virou venda"; 0.0 se nao ha nenhuma das duas."""
+    efetivadas = int(status.map(eh_efetivado).sum())
+    nao_efetivadas = int(status.map(eh_aprovado_nao_efetivado).sum())
+    return efetivadas, nao_efetivadas, _percentual(nao_efetivadas, nao_efetivadas + efetivadas)
 
 
 def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
@@ -35,9 +44,13 @@ def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
     # aprovado" pode estar subestimado (nao esta errado, so incompleto).
     aprovadas_sem_valor = int(((categoria == "Aprovado") & df["VALOR (R$)"].isna()).sum())
     valor_aprovado = float(df.loc[categoria == "Aprovado", "VALOR (R$)"].sum())
+    efetivadas, aprovadas_nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(df["STATUS"])
 
     return {
         "total_propostas": total,
+        # "aprovadas" e a CATEGORIA (Aprovado, Pre-aprovado, Nota Fiscal Anexada,
+        # Garantia Assinada e Efetivado) - Efetivado continua dentro dela, entao
+        # separar essa etapa nao muda a taxa de aprovacao
         "aprovadas": aprovadas,
         "negadas": negadas,
         "em_analise": em_analise,
@@ -47,6 +60,11 @@ def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
         "taxa_aprovacao": _percentual(aprovadas, decididas),
         "taxa_reprovacao": _percentual(negadas, decididas),
         "valor_aprovado": valor_aprovado,
+        "efetivadas": efetivadas,
+        # status exatamente "Aprovado" (ainda nao virou "Efetivado") e a
+        # porcentagem dele sobre Aprovado + Efetivado
+        "aprovadas_nao_efetivadas": aprovadas_nao_efetivadas,
+        "pct_aprovadas_nao_efetivadas": pct_nao_efetivadas,
     }
 
 
@@ -79,7 +97,7 @@ def detalhamento_por_status(propostas: pd.DataFrame | None = None) -> pd.DataFra
 
 _COLUNAS_POR_VENDEDOR = [
     "Vendedor", "Total", "Aprovadas", "Negadas", "Em Análise", "Não Contabilizado",
-    "Taxa Aprovação (%)", "Valor Aprovado (R$)",
+    "Taxa Aprovação (%)", "Não Efetivadas", "Não Efetivadas (%)", "Valor Aprovado (R$)",
 ]
 
 _VENDEDOR_NAO_IDENTIFICADO = "Não identificado"
@@ -111,6 +129,7 @@ def por_vendedor(propostas: pd.DataFrame | None = None) -> pd.DataFrame:
         em_analise = int((grupo["_categoria"] == "Em Análise").sum())
         nao_contabilizado = len(grupo) - aprovadas - negadas - em_analise
         decididas = aprovadas + negadas
+        _, nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(grupo["STATUS"])
         linhas.append(
             {
                 "Vendedor": vendedor,
@@ -120,6 +139,8 @@ def por_vendedor(propostas: pd.DataFrame | None = None) -> pd.DataFrame:
                 "Em Análise": em_analise,
                 "Não Contabilizado": nao_contabilizado,
                 "Taxa Aprovação (%)": round(_percentual(aprovadas, decididas), 1),
+                "Não Efetivadas": nao_efetivadas,
+                "Não Efetivadas (%)": round(pct_nao_efetivadas, 1),
                 "Valor Aprovado (R$)": float(grupo.loc[grupo["_categoria"] == "Aprovado", "VALOR (R$)"].sum()),
             }
         )

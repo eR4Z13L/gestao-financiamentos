@@ -29,5 +29,17 @@ class MetricCard(QFrame):
         self._valor.setProperty("role", "valor_metrica")
         layout.addWidget(self._valor)
 
+        # linha pequena opcional abaixo do valor (ex.: a porcentagem que
+        # acompanha um numero absoluto) - so aparece se definir_detalhe() for chamado
+        self._detalhe = QLabel("")
+        self._detalhe.setProperty("role", "secundario")
+        self._detalhe.setWordWrap(True)
+        self._detalhe.setVisible(False)
+        layout.addWidget(self._detalhe)
+
     def definir_valor(self, texto: str) -> None:
         self._valor.setText(texto)
+
+    def definir_detalhe(self, texto: str) -> None:
+        self._detalhe.setText(texto)
+        self._detalhe.setVisible(bool(texto))

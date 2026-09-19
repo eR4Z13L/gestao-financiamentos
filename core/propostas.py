@@ -19,32 +19,57 @@ STATUS_PRE_APROVADO = "Pré-aprovado"
 STATUS_APROVADO = "Aprovado"
 STATUS_NF_ANEXADA = "Nota Fiscal Anexada"
 STATUS_GARANTIA_ASSINADA = "Garantia Assinada"
+STATUS_EFETIVADO = "Efetivado"
 STATUS_NEGADO = "Negado"
 
 # Ordem sugerida nos formularios/dropdowns (funil aproximado da proposta).
+# "Efetivado" (compra concluida) e a ultima etapa do lado positivo: vem depois
+# de "Aprovado" (e das etapas de nota fiscal/garantia), antes do "Negado".
 STATUS_OPCOES = [
     STATUS_EM_ANALISE,
     STATUS_PRE_APROVADO,
     STATUS_APROVADO,
     STATUS_NF_ANEXADA,
     STATUS_GARANTIA_ASSINADA,
+    STATUS_EFETIVADO,
     STATUS_NEGADO,
 ]
 
-# Reaproveita a mesma lista de "palavras de negado" usada pro calculo de
-# TEMPO em data_store.py, pra nunca ficar dessincronizada dali.
+# Reaproveita as mesmas listas de "palavras" usadas pro calculo de TEMPO em
+# data_store.py, pra nunca ficar dessincronizada dali.
 _PALAVRAS_NEGADO = bd.PALAVRAS_STATUS_NEGADO
+_PALAVRAS_EFETIVADO = bd.PALAVRAS_STATUS_EFETIVADO
+_PALAVRAS_APROVADO_NAO_EFETIVADO = {"APROVADO", "APROVADA"}
 _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PENDENTE"}
 # Etapas conhecidas do funil depois da aprovacao inicial - so estas contam
 # como "Aprovado" nas taxas gerais. Um status desconhecido/mal digitado (que
 # nao e nenhuma das etapas oficiais, nem negado, nem em analise) NAO vira
 # "Aprovado" por omissao - isso inflaria a taxa de aprovacao e o valor
 # aprovado do dashboard com dado ruim. Ele cai em "Não identificado".
-_PALAVRAS_APROVADO = {
-    "APROVADO", "APROVADA",
-    "PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO",
-    "NOTA FISCAL ANEXADA", "GARANTIA ASSINADA",
-}
+# "Efetivado" conta como aprovado: separar essa etapa nao pode derrubar a
+# taxa de aprovacao (foi aprovado E virou compra).
+_PALAVRAS_PRE_APROVADO = {"PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO"}
+_PALAVRAS_NF_ANEXADA = {"NOTA FISCAL ANEXADA"}
+_PALAVRAS_GARANTIA_ASSINADA = {"GARANTIA ASSINADA"}
+_PALAVRAS_APROVADO = (
+    _PALAVRAS_APROVADO_NAO_EFETIVADO
+    | _PALAVRAS_EFETIVADO
+    | _PALAVRAS_PRE_APROVADO
+    | _PALAVRAS_NF_ANEXADA
+    | _PALAVRAS_GARANTIA_ASSINADA
+)
+
+# Etapas "finas" do funil (uma por status oficial), pra quem precisa distinguir
+# alem das 3 categorias do dashboard - ex.: a cor do status nos cards.
+ETAPA_SEM_STATUS = ""
+ETAPA_EM_ANALISE = "em_analise"
+ETAPA_PRE_APROVADO = "pre_aprovado"
+ETAPA_APROVADO = "aprovado"
+ETAPA_NF_ANEXADA = "nota_fiscal"
+ETAPA_GARANTIA_ASSINADA = "garantia"
+ETAPA_EFETIVADO = "efetivado"
+ETAPA_NEGADO = "negado"
+ETAPA_DESCONHECIDA = "desconhecida"
 
 
 class ErroProposta(Exception):
@@ -68,6 +93,40 @@ def categoria_status(status: str) -> str:
     if s in _PALAVRAS_APROVADO:
         return "Aprovado"
     return "Não identificado"
+
+
+def etapa_status(status: str) -> str:
+    """Etapa do funil a que o status pertence (uma das constantes ETAPA_*),
+    sem diferenciar maiusculas/acentos das grafias legadas ("APROVADO",
+    "EM ANALISE"...). Status vazio -> ETAPA_SEM_STATUS; preenchido mas
+    desconhecido -> ETAPA_DESCONHECIDA (nunca chuta uma etapa)."""
+    s = (status or "").strip().upper()
+    if not s:
+        return ETAPA_SEM_STATUS
+    for etapa, palavras in (
+        (ETAPA_NEGADO, _PALAVRAS_NEGADO),
+        (ETAPA_EFETIVADO, _PALAVRAS_EFETIVADO),
+        (ETAPA_APROVADO, _PALAVRAS_APROVADO_NAO_EFETIVADO),
+        (ETAPA_PRE_APROVADO, _PALAVRAS_PRE_APROVADO),
+        (ETAPA_NF_ANEXADA, _PALAVRAS_NF_ANEXADA),
+        (ETAPA_GARANTIA_ASSINADA, _PALAVRAS_GARANTIA_ASSINADA),
+        (ETAPA_EM_ANALISE, _PALAVRAS_EM_ANALISE),
+    ):
+        if s in palavras:
+            return etapa
+    return ETAPA_DESCONHECIDA
+
+
+def eh_efetivado(status: str) -> bool:
+    """Compra concluida (status "Efetivado"), sem diferenciar maiusculas."""
+    return (status or "").strip().upper() in _PALAVRAS_EFETIVADO
+
+
+def eh_aprovado_nao_efetivado(status: str) -> bool:
+    """Status exatamente "Aprovado" - aprovada pelo banco mas ainda sem virar
+    compra. As etapas Pre-aprovado / Nota Fiscal Anexada / Garantia Assinada
+    NAO entram aqui: sao outras etapas do funil, com nome proprio."""
+    return (status or "").strip().upper() in _PALAVRAS_APROVADO_NAO_EFETIVADO
 
 
 def _ordenar_por_data_desc(df: pd.DataFrame) -> pd.DataFrame:
