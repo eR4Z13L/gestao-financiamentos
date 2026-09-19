@@ -58,7 +58,15 @@ class DashboardScreen(QWidget):
         self._card_taxa_aprovacao = MetricCard("Taxa de aprovação")
         self._card_taxa_reprovacao = MetricCard("Taxa de reprovação")
         self._card_valor_aprovado = MetricCard("Valor total aprovado")
-        for card in (self._card_taxa_aprovacao, self._card_taxa_reprovacao, self._card_valor_aprovado):
+        # propostas ainda em "Aprovado" (nao viraram "Efetivado"): numero
+        # absoluto no valor e a porcentagem no detalhe
+        self._card_nao_efetivadas = MetricCard("Aprovados não efetivados")
+        for card in (
+            self._card_taxa_aprovacao,
+            self._card_taxa_reprovacao,
+            self._card_valor_aprovado,
+            self._card_nao_efetivadas,
+        ):
             linha2.addWidget(card, 1)
         layout.addLayout(linha2)
 
@@ -76,9 +84,9 @@ class DashboardScreen(QWidget):
         layout.addWidget(subtitulo_status)
 
         legenda_status = QLabel(
-            "Qualquer status além de 'Negado' e 'Em Análise' conta como aprovado nas taxas acima. "
-            "Use esta tabela para ver onde as propostas aprovadas estão parando "
-            "(ex: aprovada mas nunca virou Nota Fiscal Anexada ou Garantia Assinada)."
+            "Aprovado, Pré-aprovado, Nota Fiscal Anexada, Garantia Assinada e Efetivado contam como aprovado "
+            "nas taxas acima. Use esta tabela para ver onde as propostas aprovadas estão parando "
+            "(ex: aprovada mas ainda não Efetivada)."
         )
         legenda_status.setProperty("role", "secundario")
         legenda_status.setWordWrap(True)
@@ -101,6 +109,13 @@ class DashboardScreen(QWidget):
         subtitulo_vendedor = QLabel("Desempenho por vendedor")
         subtitulo_vendedor.setProperty("role", "subtitulo")
         layout_secao_vendedor.addWidget(subtitulo_vendedor)
+
+        legenda_vendedor = QLabel(
+            "Não Efetivadas: propostas ainda em 'Aprovado', com a porcentagem sobre Aprovado + Efetivado."
+        )
+        legenda_vendedor.setProperty("role", "secundario")
+        legenda_vendedor.setWordWrap(True)
+        layout_secao_vendedor.addWidget(legenda_vendedor)
 
         self._modelo_vendedor = PandasTableModel()
         self._tabela_vendedor = QTableView()
@@ -143,6 +158,13 @@ class DashboardScreen(QWidget):
         self._card_taxa_aprovacao.definir_valor(f"{totais['taxa_aprovacao']:.1f}%")
         self._card_taxa_reprovacao.definir_valor(f"{totais['taxa_reprovacao']:.1f}%")
         self._card_valor_aprovado.definir_valor(formatar_reais(totais["valor_aprovado"]))
+        self._card_nao_efetivadas.definir_valor(str(totais["aprovadas_nao_efetivadas"]))
+        base = totais["aprovadas_nao_efetivadas"] + totais["efetivadas"]
+        self._card_nao_efetivadas.definir_detalhe(
+            f"{totais['pct_aprovadas_nao_efetivadas']:.1f}% de {base} (Aprovado + Efetivado)"
+            if base
+            else "Nenhuma proposta Aprovada ou Efetivada"
+        )
 
         avisos = []
         gap = totais["sem_status"] + totais["nao_identificado"]
@@ -167,6 +189,12 @@ class DashboardScreen(QWidget):
 
         if not sessao_mod.eh_vendedor():
             vendedor = dashboard_mod.por_vendedor(propostas).copy()
+            # uma coluna so pra "quebra" das nao efetivadas (numero + %), em vez
+            # de duas - a tabela ja tem muitas colunas
+            vendedor["Não Efetivadas"] = [
+                f"{n} ({pct:.1f}%)" for n, pct in zip(vendedor["Não Efetivadas"], vendedor["Não Efetivadas (%)"])
+            ]
+            vendedor = vendedor.drop(columns=["Não Efetivadas (%)"])
             vendedor["Valor Aprovado (R$)"] = vendedor["Valor Aprovado (R$)"].map(formatar_reais)
             self._modelo_vendedor.definir_dataframe(vendedor)
             self._tabela_vendedor.resizeColumnsToContents()

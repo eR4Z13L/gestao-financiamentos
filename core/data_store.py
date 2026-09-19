@@ -121,10 +121,16 @@ PROPOSTAS_COLUNAS = [
 # vez de manter a propria copia, pra nunca ficar dessincronizada daqui).
 PALAVRAS_STATUS_NEGADO = {"NEGADO", "NEGADA", "REPROVADO", "REPROVADA", "CANCELADO", "CANCELADA"}
 
+# "Efetivado" = aprovada pelo banco E a compra foi de fato concluida - e a etapa
+# que vem DEPOIS de "Aprovado" no fluxo (Aprovado -> Efetivado), nao um status
+# paralelo. core/propostas.py reaproveita esta lista.
+PALAVRAS_STATUS_EFETIVADO = {"EFETIVADO", "EFETIVADA"}
+
 # Status que fazem uma proposta parar de contar "N dias" e virar "Encerrado"
-# na coluna TEMPO - qualquer desfecho final (aprovado ou negado/cancelado),
-# nao so as duas grafias originais "APROVADO"/"NEGADO".
-STATUS_ENCERRADO = {"APROVADO"} | PALAVRAS_STATUS_NEGADO
+# na coluna TEMPO: os desfechos finais - a compra concluida (Efetivado) ou a
+# proposta perdida (negado/reprovado/cancelado). "Aprovado" NAO encerra: a
+# proposta segue "em aberto" (contando dias) ate virar Efetivado, ou ser revertida.
+STATUS_ENCERRADO = PALAVRAS_STATUS_EFETIVADO | PALAVRAS_STATUS_NEGADO
 
 _COLUNAS_DE_DATA = {
     ABA_CLIENTES: {"DATA CADASTRO", "NASCIMENTO"},
@@ -453,22 +459,50 @@ def _escrever_linhas_propostas(ws, registros: list[dict]) -> None:
         ws.cell(row=i, column=6, value=_limpar_valor(registro.get("MESES")))
         ws.cell(row=i, column=7, value=registro.get("EQUIPAMENTO"))
         ws.cell(row=i, column=8, value=registro.get("BANCO"))
-        # TEMPO: enquanto o status nao for um desfecho final (STATUS_ENCERRADO),
-        # mostra "N dias" desde o envio; depois disso mostra "Encerrado" (a
-        # proposta parou de "correr"). As condicoes sao geradas a partir do
-        # mesmo conjunto usado pelo app (_calcular_tempo), pra nunca ficar
-        # dessincronizada se um novo status "final" for adicionado.
-        condicoes_encerrado = ",".join(f'UPPER(J{i})="{palavra}"' for palavra in sorted(STATUS_ENCERRADO))
-        ws.cell(
-            row=i,
-            column=9,
-            value=(
-                f'=IF(A{i}="","",IF(OR({condicoes_encerrado}),'
-                f'"Encerrado",TODAY()-A{i}&" dias"))'
-            ),
-        )
+        ws.cell(row=i, column=9, value=_formula_tempo(i))
         ws.cell(row=i, column=10, value=registro.get("STATUS"))
         ws.cell(row=i, column=11, value=registro.get("OBSERVAÇÕES"))
+
+
+def _formula_tempo(linha: int) -> str:
+    """Formula da coluna TEMPO (I) da linha `linha` da aba PROPOSTAS: enquanto
+    o status nao for um desfecho final (STATUS_ENCERRADO), mostra "N dias" desde
+    o envio; depois disso mostra "Encerrado" (a proposta parou de "correr").
+    As condicoes saem do MESMO conjunto usado pelo app (_calcular_tempo), pra
+    nunca ficar dessincronizada se um status "final" for adicionado/removido."""
+    condicoes_encerrado = ",".join(f'UPPER(J{linha})="{palavra}"' for palavra in sorted(STATUS_ENCERRADO))
+    return (
+        f'=IF(A{linha}="","",IF(OR({condicoes_encerrado}),'
+        f'"Encerrado",TODAY()-A{linha}&" dias"))'
+    )
+
+
+def atualizar_formulas_tempo(caminho_xlsx: Path, gravar: bool = True) -> int:
+    """Regrava SO a formula da coluna TEMPO de cada proposta, com a regra de
+    "Encerrado" atual. Serve pra planilha que foi gravada com uma regra antiga
+    (o app so reescreve as formulas quando alguem grava uma proposta - ate la,
+    aberta direto no Excel, ela mostraria a regra velha). Nenhuma outra celula
+    e tocada. Devolve quantas formulas mudaram (0 = ja estava em dia); com
+    gravar=False so conta, sem salvar nada."""
+    wb = _carregar_planilha(caminho_xlsx)
+    try:
+        ws = wb[ABA_PROPOSTAS]
+        if _normalizar_texto(ws.cell(row=1, column=9).value) != "TEMPO":
+            raise ErroPlanilhaDesatualizada(
+                f"A aba {ABA_PROPOSTAS} de '{caminho_xlsx.name}' não tem a coluna TEMPO na posição esperada (I)."
+            )
+        alteradas = 0
+        for linha in range(2, ws.max_row + 1):
+            celula = ws.cell(row=linha, column=9)
+            # so mexe em quem ja e formula: uma celula digitada a mao fica como esta
+            if _eh_formula(celula.value) and celula.value != _formula_tempo(linha):
+                celula.value = _formula_tempo(linha)
+                alteradas += 1
+        if alteradas and gravar:
+            _salvar_planilha(wb, caminho_xlsx)
+        return alteradas
+    finally:
+        wb.close()
 
 
 def escrever_clientes(caminho_xlsx: Path, df: pd.DataFrame) -> None:
