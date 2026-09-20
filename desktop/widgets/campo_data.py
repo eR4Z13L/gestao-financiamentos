@@ -10,6 +10,7 @@ vazio = "nao informado".
 
 from __future__ import annotations
 
+import pandas as pd
 from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import QCalendarWidget, QHBoxLayout, QLineEdit, QMenu, QPushButton, QWidget, QWidgetAction
 
@@ -28,6 +29,9 @@ class CampoData(QWidget):
         pra nascimento); um filtro de periodo ("ate 31/12") precisa aceitar."""
         super().__init__(parent)
         self._permitir_futuro = permitir_futuro
+        # o QSS global pinta o fundo da janela em qualquer QWidget: dentro de um card (fundo
+        # mais claro) o campo apareceria numa faixa escura. Sem fundo proprio serve em qualquer lugar.
+        self.setProperty("role", "transparente")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -65,6 +69,15 @@ class CampoData(QWidget):
 
     def definir_data(self, data: QDate | None) -> None:
         self.campo.setText(data.toString(_FORMATO) if data is not None and data.isValid() else "")
+
+    def definir_somente_leitura(self, travar: bool) -> None:
+        """Travado: o texto continua selecionavel/copiavel, mas nao muda - e o botao do
+        calendario some (nao ha o que escolher)."""
+        self.campo.setReadOnly(travar)
+        self._botao_calendario.setVisible(not travar)
+
+    def somente_leitura(self) -> bool:
+        return self.campo.isReadOnly()
 
     def avaliar(self) -> tuple[QDate | None, str]:
         """(data, "") se estiver em branco (data=None, "nao informado") ou for
@@ -111,3 +124,22 @@ class CampoData(QWidget):
         self.definir_data(data)
         self._menu.close()
         self.campo.setFocus()
+
+
+def ler_periodo(campo_de: CampoData, campo_ate: CampoData) -> tuple[pd.Timestamp | None, pd.Timestamp | None, list[str]]:
+    """(inicio, fim, avisos) de um par de campos "de ... ate" usados como filtro
+    de periodo. Data incompleta (ainda digitando) simplesmente nao filtra;
+    completa mas invalida e IGNORADA com aviso (a borda vermelha do campo
+    tambem mostra) - nunca vira um filtro diferente do que a pessoa escreveu
+    sem dizer nada. Inicio maior que o fim tambem avisa (e filtra como digitado)."""
+    avisos: list[str] = []
+    valores: list[pd.Timestamp | None] = []
+    for campo, nome in ((campo_de, "inicial"), (campo_ate, "final")):
+        data, _erro = campo.avaliar()
+        if campo.esta_invalido():
+            avisos.append(f"data {nome} inválida (ignorada)")
+        valores.append(pd.Timestamp(data.year(), data.month(), data.day()) if data else None)
+    inicio, fim = valores
+    if inicio is not None and fim is not None and inicio > fim:
+        avisos.append("a data inicial é maior que a final")
+    return inicio, fim, avisos

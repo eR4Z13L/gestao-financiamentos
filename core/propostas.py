@@ -4,7 +4,10 @@ classificacao para o dashboard.
 
 from __future__ import annotations
 
+import unicodedata
+from collections import Counter
 from datetime import date
+from typing import Mapping
 
 import pandas as pd
 
@@ -12,6 +15,7 @@ from config import CAMINHO_XLSX
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
+from core.formatting import dias_do_tempo
 from core.validators import apenas_digitos
 
 STATUS_EM_ANALISE = "Em Análise"
@@ -71,6 +75,20 @@ ETAPA_EFETIVADO = "efetivado"
 ETAPA_NEGADO = "negado"
 ETAPA_DESCONHECIDA = "desconhecida"
 
+# Ordem do funil (do inicio ao fim, depois "negado", e por ultimo o que nao da
+# pra classificar) - usada na contagem por status do topo de Todas as Propostas.
+ETAPAS_EM_ORDEM = [
+    ETAPA_EM_ANALISE,
+    ETAPA_PRE_APROVADO,
+    ETAPA_APROVADO,
+    ETAPA_NF_ANEXADA,
+    ETAPA_GARANTIA_ASSINADA,
+    ETAPA_EFETIVADO,
+    ETAPA_NEGADO,
+    ETAPA_DESCONHECIDA,
+    ETAPA_SEM_STATUS,
+]
+
 
 class ErroProposta(Exception):
     pass
@@ -129,6 +147,47 @@ def eh_aprovado_nao_efetivado(status: str) -> bool:
     return (status or "").strip().upper() in _PALAVRAS_APROVADO_NAO_EFETIVADO
 
 
+def esta_em_aberto(status: str) -> bool:
+    """Proposta ainda NAO encerrada: tudo que nao e um desfecho final (Efetivado
+    ou Negado/Reprovado/Cancelado). "Aprovado" segue em aberto (continua contando
+    dias ate virar Efetivado, como na coluna TEMPO) e a sem status tambem: nao
+    esta encerrada."""
+    texto = status if isinstance(status, str) else ""
+    return texto.strip().upper() not in bd.STATUS_ENCERRADO
+
+
+# Uma proposta em aberto ha MAIS que isto (em dias) conta como "parada": e o limite do selo
+# na barra lateral e, depois, da lista "Precisa de atencao" do dashboard - um numero so, pros
+# dois nunca discordarem.
+DIAS_PROPOSTA_PARADA = 7
+
+
+def contar_paradas(propostas: pd.DataFrame, dias: int | None = None) -> int:
+    """Quantas das `propostas` (como listar_propostas devolve, com STATUS e TEMPO) estao em
+    aberto ha mais de `dias` dias (padrao: DIAS_PROPOSTA_PARADA, lido na hora da chamada).
+    Sem dias calculaveis na coluna TEMPO (vazia, "Encerrado", texto desconhecido) ou com a
+    data no futuro, a proposta nao conta: nunca se chuta."""
+    if dias is None:
+        dias = DIAS_PROPOSTA_PARADA
+    if propostas.empty:
+        return 0
+    em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool)
+    dias_parada = pd.to_numeric(propostas["TEMPO"].map(dias_do_tempo), errors="coerce")
+    return int((em_aberto & (dias_parada > dias)).sum())
+
+
+def cpfs_com_proposta_em_aberto() -> set[str]:
+    """CPF/CNPJ (so os digitos) de quem tem ao menos UMA proposta em aberto -
+    pra marcar, na lista de clientes, quem esta com processo ativo. Usa a mesma
+    fonte e o mesmo filtro de vendedor de listar_propostas (o VENDEDOR so ve os
+    proprios)."""
+    df = _ler_da_fonte_ativa()
+    # astype(bool): sem nenhuma proposta o map() devolve uma serie vazia SEM tipo
+    # booleano, e o pandas a trataria como selecao de COLUNAS (sumindo com o CPF)
+    em_aberto = df["STATUS"].map(esta_em_aberto).astype(bool)
+    return {digitos for digitos in df.loc[em_aberto, "CPF"].map(apenas_digitos) if digitos}
+
+
 def _ordenar_por_data_desc(df: pd.DataFrame) -> pd.DataFrame:
     """Ordena por DATA (mais recente primeiro) sem quebrar se a coluna tiver
     uma mistura de datas de verdade e texto (dado legado digitado errado na
@@ -183,6 +242,138 @@ def historico_por_cpf(cpf: str) -> pd.DataFrame:
     return _ordenar_por_data_desc(filtrado)
 
 
+ORDENACAO_DATA_RECENTE = "data_recente"
+ORDENACAO_DATA_ANTIGA = "data_antiga"
+ORDENACAO_VALOR_MAIOR = "valor_maior"
+ORDENACAO_VALOR_MENOR = "valor_menor"
+ORDENACAO_TEMPO_PARADO = "tempo_parado"
+# (chave, rotulo) na ordem em que a tela deve listar
+ORDENACAO_OPCOES = [
+    (ORDENACAO_DATA_RECENTE, "Data (mais recente primeiro)"),
+    (ORDENACAO_DATA_ANTIGA, "Data (mais antiga primeiro)"),
+    (ORDENACAO_VALOR_MAIOR, "Valor (maior primeiro)"),
+    (ORDENACAO_VALOR_MENOR, "Valor (menor primeiro)"),
+    (ORDENACAO_TEMPO_PARADO, "Tempo parado (mais dias em aberto primeiro)"),
+]
+
+
+def ordenar(df: pd.DataFrame, ordenacao: str = ORDENACAO_DATA_RECENTE) -> pd.DataFrame:
+    """Reordena `df` SEM mexer no indice (que e a posicao real da proposta no
+    arquivo - ver listar_propostas). Em qualquer ordenacao, o que nao tem o dado
+    (sem data, sem valor, sem TEMPO) vai pro fim, e o empate desempata pela
+    data mais recente (e, na mesma data, pela proposta cadastrada por ultimo)."""
+    if ordenacao not in {chave for chave, _ in ORDENACAO_OPCOES}:
+        raise ValueError(f"Ordenação desconhecida: {ordenacao!r}")
+
+    # colunas auxiliares so pra ordenar; as devolvidas continuam com os valores originais
+    auxiliar = df.assign(_DATA=pd.to_datetime(df["DATA"], errors="coerce"), _POSICAO=df.index)
+
+    if ordenacao in (ORDENACAO_DATA_RECENTE, ORDENACAO_DATA_ANTIGA):
+        recente = ordenacao == ORDENACAO_DATA_RECENTE
+        colunas, crescente = ["_DATA", "_POSICAO"], [not recente, not recente]
+    elif ordenacao in (ORDENACAO_VALOR_MAIOR, ORDENACAO_VALOR_MENOR):
+        colunas, crescente = ["VALOR (R$)", "_DATA", "_POSICAO"], [ordenacao == ORDENACAO_VALOR_MENOR, False, False]
+    else:
+        # tempo parado: primeiro quem tem dias em aberto (mais dias antes), depois
+        # os "Encerrado", por ultimo os sem TEMPO
+        dias = pd.to_numeric(df["TEMPO"].map(dias_do_tempo), errors="coerce")
+        sem_dias = dias.isna()
+        encerrado = df["TEMPO"].map(lambda t: isinstance(t, str) and t.strip().upper() == "ENCERRADO")
+        grupo = sem_dias.astype(int) + (sem_dias & ~encerrado).astype(int)  # 0 = com dias, 1 = Encerrado, 2 = sem TEMPO
+        auxiliar = auxiliar.assign(_DIAS=dias, _GRUPO=grupo)
+        colunas, crescente = ["_GRUPO", "_DIAS", "_DATA", "_POSICAO"], [True, False, False, False]
+
+    auxiliar = auxiliar.sort_values(colunas, ascending=crescente, na_position="last")
+    return df.loc[auxiliar.index]
+
+
+def _mesmo_texto(serie: pd.Series, valor: str) -> pd.Series:
+    """Igualdade sem diferenciar maiusculas nem espacos nas pontas (a planilha
+    tem o mesmo banco escrito "Hubcred BV" e "HUBCRED BV")."""
+    return serie.str.strip().str.upper() == valor.strip().upper()
+
+
+def filtrar_propostas(
+    df: pd.DataFrame,
+    termo: str = "",
+    *,
+    status: str | None = None,
+    vendedor: str | None = None,
+    banco: str | None = None,
+    equipamento: str | None = None,
+    data_de: date | pd.Timestamp | None = None,
+    data_ate: date | pd.Timestamp | None = None,
+    ordenacao: str = ORDENACAO_DATA_RECENTE,
+) -> pd.DataFrame:
+    """Aplica em `df` (as propostas ja lidas) a busca livre + os filtros que
+    vierem preenchidos, TODOS combinados (E), e devolve o resultado na
+    `ordenacao` pedida:
+    - termo: cliente, banco ou equipamento (contem, sem diferenciar maiusculas)
+      ou CPF/CNPJ (so os digitos);
+    - status: igualdade exata;
+    - vendedor / banco / equipamento: igualdade, sem diferenciar maiusculas;
+    - data_de / data_ate: periodo da DATA da proposta, com as duas pontas
+      INCLUIDAS; proposta sem data nunca entra num periodo.
+    Filtro None (ou "") = sem filtro. O indice do resultado continua sendo a
+    posicao real da proposta no arquivo."""
+    mascara = pd.Series(True, index=df.index)
+
+    termo = (termo or "").strip()
+    if termo:
+        # regex=False: o que a pessoa digita e texto, nao expressao regular
+        # ("(" ou "C++" estourariam um erro de regex)
+        termo_upper = termo.upper()
+        digitos = apenas_digitos(termo)
+        achou = (
+            df["CLIENTE"].str.upper().str.contains(termo_upper, na=False, regex=False)
+            | df["BANCO"].str.upper().str.contains(termo_upper, na=False, regex=False)
+            | df["EQUIPAMENTO"].str.upper().str.contains(termo_upper, na=False, regex=False)
+        )
+        if digitos:
+            achou = achou | df["CPF"].map(apenas_digitos).str.contains(digitos, na=False, regex=False)
+        mascara &= achou
+
+    if status:
+        mascara &= df["STATUS"] == status
+    if vendedor:
+        mascara &= _mesmo_texto(df["VENDEDOR"], vendedor)
+    if banco:
+        mascara &= _mesmo_texto(df["BANCO"], banco)
+    if equipamento:
+        mascara &= _mesmo_texto(df["EQUIPAMENTO"], equipamento)
+
+    if data_de is not None or data_ate is not None:
+        datas = pd.to_datetime(df["DATA"], errors="coerce").dt.normalize()
+        if data_de is not None:
+            mascara &= datas >= pd.Timestamp(data_de).normalize()
+        if data_ate is not None:
+            mascara &= datas <= pd.Timestamp(data_ate).normalize()
+
+    return ordenar(df[mascara], ordenacao)
+
+
+def _chave_alfabetica(texto: str) -> str:
+    """Maiusculas e SEM acento, pra listar como um dicionario ("ÁGUIA" junto
+    do "A", nao depois do "Z")."""
+    return "".join(c for c in unicodedata.normalize("NFD", texto.upper()) if unicodedata.category(c) != "Mn")
+
+
+def valores_distintos(df: pd.DataFrame, coluna: str) -> list[str]:
+    """Valores usados em `coluna` (ex.: "BANCO"), em ordem alfabetica e sem os
+    vazios, pra alimentar um filtro. Grafias que so diferem em maiusculas ou
+    espacos ("Hubcred BV" e "HUBCRED BV") viram UMA opcao - a mais usada (no
+    empate, a primeira em ordem alfabetica, que costuma ser a em maiusculas)."""
+    grafias: dict[str, Counter] = {}
+    for bruto in df[coluna]:
+        if not isinstance(bruto, str):
+            continue
+        texto = bruto.strip()
+        if texto:
+            grafias.setdefault(texto.upper(), Counter())[texto] += 1
+    escolhidas = [min(contagem, key=lambda t: (-contagem[t], t)) for contagem in grafias.values()]
+    return sorted(escolhidas, key=_chave_alfabetica)
+
+
 def _converter_valor(valor):
     """Aceita um numero ja pronto (vindo do QDoubleSpinBox) ou texto no
     formato brasileiro ("1.500,00") ou americano ("1500.00"). Devolve None se
@@ -235,9 +426,71 @@ def _validar_campos(campos: dict, *, valor_obrigatorio: bool = True) -> None:
         raise ErroProposta("Equipamento é obrigatório.")
 
 
-def adicionar_proposta(campos: dict) -> None:
+def dados_para_duplicar(proposta: Mapping, hoje: date | None = None) -> dict:
+    """Ponto de partida de uma proposta NOVA a partir de uma existente - o caso
+    comum e reenviar a mesma proposta a outro banco depois de uma negativa.
+    Leva cliente, equipamento, valor, meses e observacoes; a data e a de hoje, o
+    banco fica em branco (quem duplica escolhe o novo) e o status volta a "Em
+    Analise" (nunca herda Negado/Aprovado). Nao grava nada: quem salva e
+    adicionar_proposta, e a original continua como estava."""
+
+    def _texto(valor) -> str:
+        return valor if isinstance(valor, str) else ""
+
+    def _numero(valor):
+        return None if valor is None or pd.isna(valor) else valor
+
+    return {
+        "DATA": pd.Timestamp(hoje or date.today()),
+        "CPF": _texto(proposta.get("CPF")),
+        "VALOR (R$)": _numero(proposta.get("VALOR (R$)")),
+        "MESES": _numero(proposta.get("MESES")),
+        "EQUIPAMENTO": _texto(proposta.get("EQUIPAMENTO")),
+        "BANCO": "",
+        "STATUS": STATUS_EM_ANALISE,
+        "OBSERVAÇÕES": _texto(proposta.get("OBSERVAÇÕES")),
+    }
+
+
+def _normalizar_para_comparar(valor):
+    """Vazio (None, NaN, NaT, "" ou so espacos) vira None; texto perde os espacos das
+    pontas; numero vira float. Assim a mesma celula lida em momentos diferentes (ou
+    vinda de um DataFrame e de outro) compara igual."""
+    if valor is None:
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(valor, str):
+        return valor.strip() or None
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    return valor
+
+
+def linha_confere(atual: Mapping, esperado: Mapping) -> bool:
+    """A proposta gravada no arquivo ainda e a que a tela mostrava? Compara os campos
+    editaveis (o resto e calculado). Serve pra nao gravar/excluir por cima de OUTRA
+    proposta quando a posicao (indice) ficou velha - ex.: a tela ficou aberta com um
+    card em edicao enquanto outra tela excluiu uma proposta e as posicoes andaram."""
+    return all(
+        _normalizar_para_comparar(atual.get(coluna)) == _normalizar_para_comparar(esperado.get(coluna))
+        for coluna in bd.PROPOSTAS_COLUNAS_EDITAVEIS
+    )
+
+
+_MENSAGEM_PROPOSTA_MUDOU = (
+    "Esta proposta foi alterada ou excluída desde que foi aberta (por outra tela?). "
+    "Recarregue a lista e abra a proposta de novo antes de continuar."
+)
+
+
+def adicionar_proposta(campos: dict) -> int:
     """`campos` deve conter DATA, CPF, VALOR (R$), MESES, EQUIPAMENTO, BANCO,
-    STATUS, OBSERVAÇÕES. DATA e STATUS tem valor padrao se nao informados."""
+    STATUS, OBSERVAÇÕES. DATA e STATUS tem valor padrao se nao informados.
+    Devolve a posicao real da proposta nova no arquivo (a que editar/excluir usam)."""
     sessao_mod.exigir_admin()
     campos = dict(campos)
     campos.setdefault("DATA", pd.Timestamp(date.today()))
@@ -250,19 +503,25 @@ def adicionar_proposta(campos: dict) -> None:
     nova_linha = {col: campos.get(col, "") for col in bd.PROPOSTAS_COLUNAS_EDITAVEIS}
     df = pd.concat([df, pd.DataFrame([nova_linha])], ignore_index=True)
     bd.escrever_propostas(CAMINHO_XLSX, df)
+    return len(df) - 1
 
 
-def atualizar_proposta(indice: int, campos: dict) -> None:
+def atualizar_proposta(indice: int, campos: dict, esperado: Mapping | None = None) -> None:
     """`indice` e a posicao (0-based) da proposta na tabela retornada por
     listar_propostas()/historico_por_cpf() no momento em que a edicao foi
     aberta. Como o app sempre reescreve a aba inteira na mesma ordem, essa
     posicao continua valida entre a leitura e a escrita, desde que nada mais
     tenha mexido no arquivo nesse meio-tempo (uso individual e local).
+
+    `esperado`: a proposta como a tela a mostrava (ver `linha_confere`) - se a linha
+    gravada nesse indice for outra, recusa em vez de sobrescrever a errada.
     """
     sessao_mod.exigir_admin()
     df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
     if indice not in df.index:
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
+    if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
+        raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
 
     # `campos` pode vir parcial (so os campos que mudaram) - valida sempre o
     # estado FINAL da linha (valores atuais + alteracoes), nunca so o que foi
@@ -290,11 +549,14 @@ def atualizar_proposta(indice: int, campos: dict) -> None:
     bd.escrever_propostas(CAMINHO_XLSX, df)
 
 
-def remover_proposta(indice: int) -> None:
+def remover_proposta(indice: int, esperado: Mapping | None = None) -> None:
     """`indice` e a posicao real da proposta no arquivo (mesmo valor que
-    atualizar_proposta espera - ver o aviso na docstring dela)."""
+    atualizar_proposta espera - ver o aviso na docstring dela). `esperado`: ver
+    atualizar_proposta."""
     sessao_mod.exigir_admin()
     df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
     if indice not in df.index:
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
+    if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
+        raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
     bd.escrever_propostas(CAMINHO_XLSX, df.drop(index=indice).reset_index(drop=True))

@@ -1,5 +1,5 @@
-"""Tela Usuários - só o ADMIN acessa (nem aparece no menu lateral pra um
-VENDEDOR - ver desktop/main_window.py). Dois blocos:
+"""Tela Administração (antes "Usuários") - só o ADMIN acessa (nem aparece no menu lateral
+pra um VENDEDOR - ver desktop/main_window.py). Dois blocos:
 1. Trocar a própria senha do Administrador.
 2. Cadastrar vendedores e redefinir a senha de um vendedor existente - por
    decisão de produto, o vendedor nunca troca a própria senha, só o ADMIN
@@ -40,7 +40,7 @@ class UsuariosScreen(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        titulo = QLabel("👤 Usuários")
+        titulo = QLabel("⚙️ Administração")
         titulo.setProperty("role", "titulo")
         layout.addWidget(titulo)
 

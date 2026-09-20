@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
+from datetime import datetime
 
 import gspread
 import pandas as pd
@@ -35,6 +37,88 @@ _ESCOPOS = [
 
 _cliente_lock = threading.Lock()
 _cliente = None
+
+# -- estado da sincronizacao (pro indicador da barra lateral) ------------------------
+# So bookkeeping em memoria: quem le (a interface) nunca dispara rede, e as threads de
+# sincronizacao gravam aqui atras de um lock. O erro guardado e so um texto curto - o
+# detalhe completo continua no log.
+
+NIVEL_DESATIVADA = "desativada"
+NIVEL_AGUARDANDO = "aguardando"  # ligada, mas nenhuma sincronizacao tentada ainda nesta execucao
+NIVEL_SINCRONIZANDO = "sincronizando"
+NIVEL_OK = "ok"
+NIVEL_FALHOU = "falhou"
+
+_TAMANHO_MAXIMO_ERRO = 400
+
+_estado_lock = threading.Lock()
+_em_andamento = 0
+_ultimo_sucesso: datetime | None = None
+_ultima_falha: datetime | None = None
+_ultimo_erro = ""
+
+
+@dataclass(frozen=True)
+class EstadoSincronizacao:
+    ativada: bool
+    em_andamento: int  # sincronizacoes disparadas que ainda nao terminaram
+    ultimo_sucesso: datetime | None
+    ultima_falha: datetime | None
+    ultimo_erro: str  # texto da ultima falha ("" se nunca falhou)
+
+    @property
+    def nivel(self) -> str:
+        """Em que pe esta: desativada / aguardando / sincronizando / ok / falhou. "Falhou" so
+        vale enquanto a falha for mais recente que o ultimo sucesso - uma sincronizacao
+        boa depois dela volta pra "ok"."""
+        if not self.ativada:
+            return NIVEL_DESATIVADA
+        if self.em_andamento > 0:
+            return NIVEL_SINCRONIZANDO
+        if self.ultima_falha is not None and (self.ultimo_sucesso is None or self.ultima_falha >= self.ultimo_sucesso):
+            return NIVEL_FALHOU
+        if self.ultimo_sucesso is not None:
+            return NIVEL_OK
+        return NIVEL_AGUARDANDO
+
+
+def estado_atual() -> EstadoSincronizacao:
+    """Copia do estado de agora (seguro de chamar de qualquer thread, nao acessa a rede)."""
+    with _estado_lock:
+        return EstadoSincronizacao(
+            ativada=config.SINCRONIZACAO_GOOGLE_ATIVADA,
+            em_andamento=_em_andamento,
+            ultimo_sucesso=_ultimo_sucesso,
+            ultima_falha=_ultima_falha,
+            ultimo_erro=_ultimo_erro,
+        )
+
+
+def _registrar_inicio() -> None:
+    global _em_andamento
+    with _estado_lock:
+        _em_andamento += 1
+
+
+def _registrar_fim(erro: BaseException | None) -> None:
+    global _em_andamento, _ultimo_sucesso, _ultima_falha, _ultimo_erro
+    with _estado_lock:
+        _em_andamento = max(_em_andamento - 1, 0)
+        if erro is None:
+            _ultimo_sucesso = datetime.now()
+        else:
+            _ultima_falha = datetime.now()
+            _ultimo_erro = f"{type(erro).__name__}: {erro}"[:_TAMANHO_MAXIMO_ERRO]
+
+
+def _reiniciar_estado() -> None:
+    """So pros testes: volta ao estado de "nada aconteceu ainda"."""
+    global _em_andamento, _ultimo_sucesso, _ultima_falha, _ultimo_erro
+    with _estado_lock:
+        _em_andamento = 0
+        _ultimo_sucesso = None
+        _ultima_falha = None
+        _ultimo_erro = ""
 
 
 def _obter_cliente():
@@ -99,15 +183,26 @@ def sincronizar_em_background(nome_aba: str, df: pd.DataFrame) -> None:
         return
 
     def _tarefa() -> None:
+        erro: Exception | None = None
         try:
             _sincronizar_agora(nome_aba, df)
             _logger.info("Sincronizado com o Google Sheets: aba %s (%d linha(s)).", nome_aba, len(df))
-        except Exception:
+        except Exception as exc:
+            erro = exc
             _logger.warning(
                 "Falha ao sincronizar a aba %s com o Google Sheets - "
                 "a proxima escrita local tenta de novo.",
                 nome_aba,
                 exc_info=True,
             )
+        finally:
+            _registrar_fim(erro)
 
-    threading.Thread(target=_tarefa, daemon=True, name=f"sync-sheets-{nome_aba}").start()
+    # registra ANTES de iniciar a thread: assim o indicador ja mostra "sincronizando" e
+    # nunca ha uma janela em que a sincronizacao existe mas o estado diz que nao
+    _registrar_inicio()
+    try:
+        threading.Thread(target=_tarefa, daemon=True, name=f"sync-sheets-{nome_aba}").start()
+    except Exception as exc:  # sem thread nao ha sincronizacao: conta como falha, nunca em silencio
+        _registrar_fim(exc)
+        _logger.warning("Nao foi possivel iniciar a sincronizacao da aba %s.", nome_aba, exc_info=True)

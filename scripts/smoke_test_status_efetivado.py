@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import openpyxl
 import pandas as pd
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -38,8 +38,8 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf
-from desktop.dialogs.proposta_dialog import PropostaDialog
-from desktop.screens.dashboard_screen import DashboardScreen
+from desktop.widgets.formulario_proposta import FormularioProposta
+from desktop.screens.dashboard_screen import _COLUNAS_DE_VENDEDOR, DashboardScreen
 
 
 def linha(titulo: str) -> None:
@@ -163,9 +163,6 @@ def testar_dashboard_core() -> None:
     print("OK: a quebra por vendedor traz 'Não Efetivadas' (número e %); as demais colunas ficam como estavam.")
 
 
-def _texto_celula(modelo, linha_: int, coluna: str) -> str:
-    colunas = [modelo.headerData(c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole) for c in range(modelo.columnCount())]
-    return str(modelo.data(modelo.index(linha_, colunas.index(coluna)), Qt.ItemDataRole.DisplayRole))
 
 
 def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
@@ -195,7 +192,9 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
 
     linha("4) Formulário de proposta: 'Efetivado' na lista, grava e encerra o TEMPO")
     with _Stubs() as stubs:
-        dialogo = PropostaDialog(_cpf(0), "CLIENTE ANA")
+        dialogo = FormularioProposta(_cpf(0), "CLIENTE ANA")
+        gravou: list[str] = []  # a funcao ligada ao sinal captura so a lista, nunca o formulario (ciclo de referencias)
+        dialogo.gravada.connect(lambda: gravou.append("gravada"))
         assert [dialogo._status.itemText(i) for i in range(dialogo._status.count())] == propostas_mod.STATUS_OPCOES
         assert dialogo._status.findText("Efetivado") > dialogo._status.findText("Garantia Assinada")
         dialogo._valor.setValue(11111)
@@ -203,7 +202,7 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
         dialogo._banco.setCurrentText("Banco Teste")
         dialogo._status.setCurrentText("Efetivado")
         dialogo._salvar()
-        assert dialogo.result() == QDialog.DialogCode.Accepted, stubs.textos
+        assert gravou == ["gravada"], stubs.textos
     print("OK: 'Efetivado' está na lista do formulário (depois de Garantia Assinada) e a proposta grava.")
 
     # cenario do dashboard: ANA: Aprovado x2, Efetivado x1 (a de cima), NF x1 ; BIA: Efetivado x2, Em Analise x1
@@ -228,21 +227,19 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     print("OK: gravada, a proposta 'Efetivado' mostra TEMPO 'Encerrado' e as 'Aprovado' contam dias; "
           "a fórmula de cada linha do Excel é a da regra atual.")
 
-    linha("5) Dashboard (tela): card e tabela por vendedor")
+    linha("5) Dashboard (tela): 'Aprovadas a efetivar' e a tabela por vendedor")
     tela = DashboardScreen()
-    assert tela._card_nao_efetivadas._valor.text() == "2"
-    assert tela._card_nao_efetivadas._detalhe.text() == "40.0% de 5 (Aprovado + Efetivado)"
-    assert not tela._card_nao_efetivadas._detalhe.isHidden()
-    assert tela._card_taxa_aprovacao._valor.text() == "100.0%", "5 aprovadas + 3 efetivadas... só aprovadas/(aprovadas+negadas)"
-    colunas = [tela._modelo_vendedor.headerData(c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
-               for c in range(tela._modelo_vendedor.columnCount())]
-    assert "Não Efetivadas" in colunas and "Não Efetivadas (%)" not in colunas, "uma coluna só (número + %) pra não poluir"
-    linhas_por_vendedor = {_texto_celula(tela._modelo_vendedor, r, "Vendedor"): r for r in range(tela._modelo_vendedor.rowCount())}
-    assert _texto_celula(tela._modelo_vendedor, linhas_por_vendedor["ANA"], "Não Efetivadas") == "2 (66.7%)"
-    assert _texto_celula(tela._modelo_vendedor, linhas_por_vendedor["BIA"], "Não Efetivadas") == "0 (0.0%)"
+    assert tela._card_a_efetivar.valor() == "2", "so as de status exatamente 'Aprovado' estao a efetivar"
+    assert tela._card_a_efetivar.detalhe() == "3 efetivadas até agora"
+    assert not tela._card_a_efetivar.detalhe_em_aviso(), "com efetivadas o detalhe e normal (o aviso e pra 0 efetivadas)"
+    assert tela._card_taxa.valor() == "100,0%", "6 aprovadas de 6 decididas (so aprovadas/(aprovadas+negadas))"
+    assert tela._card_taxa.detalhe() == "6 de 6 decididas"
+    nomes = tela._tabela_vendedores.textos_da_coluna(0)
+    coluna_a_efetivar = _COLUNAS_DE_VENDEDOR.index("A efetivar")
+    por_vendedor = {n: tela._tabela_vendedores.texto_da_celula(i, coluna_a_efetivar) for i, n in enumerate(nomes)}
+    assert por_vendedor == {"ANA": "2", "BIA": "0"}, por_vendedor
     tela.close()
-    print("OK: card mostra '2' e '40.0% de 5 (Aprovado + Efetivado)'; a tabela por vendedor tem uma coluna 'Não Efetivadas' "
-          "('2 (66.7%)' / '0 (0.0%)').")
+    print("OK: 'Aprovadas a efetivar' mostra 2 e '3 efetivadas até agora'; a tabela por vendedor tem a coluna 'A efetivar' (2 / 0).")
 
     linha("5b) Dashboard sem nenhuma Aprovada/Efetivada")
     arquivo2 = pasta / "controle2.xlsx"
@@ -252,11 +249,12 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     clientes_mod.adicionar_cliente({"CPF/CNPJ": _cpf(0), "CLIENTE": "CLIENTE ANA", "TIPO": "Cliente", "VENDEDOR": "ANA"})
     _add(_cpf(0), "Em Análise", 1000)
     tela = DashboardScreen()
-    assert tela._card_nao_efetivadas._valor.text() == "0"
-    assert tela._card_nao_efetivadas._detalhe.text() == "Nenhuma proposta Aprovada ou Efetivada"
+    assert tela._card_a_efetivar.valor() == "0"
+    assert tela._card_a_efetivar.detalhe() == "0 efetivadas até agora" and tela._card_a_efetivar.detalhe_em_aviso()
+    assert tela._card_taxa.valor() == "—" and tela._card_taxa.detalhe() == "Nenhuma proposta decidida"
     tela.close()
     clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
-    print("OK: sem Aprovadas nem Efetivadas o card mostra 0 e um texto claro (sem divisão por zero).")
+    print("OK: sem Aprovadas nem Efetivadas o card mostra 0 e '0 efetivadas até agora' em aviso; sem decididas a taxa e '—' (sem divisão por zero).")
 
     linha("6) Planilha gravada com a regra antiga: atualizar só as fórmulas de TEMPO")
 

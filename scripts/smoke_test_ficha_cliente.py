@@ -1,8 +1,10 @@
 """Testa a Ficha de Cliente e o dialogo de cliente depois da separacao do
 endereco: nascimento digitavel (com calendario como alternativa), endereco em
-campos separados com botao de copiar, campos novos (pai/mae/profissao) e o
-aviso de "endereco a revisar". Tudo com clientes FICTICIOS numa copia
-temporaria da planilha - nao depende dos dados reais.
+campos separados com botao de copiar (retraido numa linha por padrao, expande
+nos 7 campos), campos novos (pai/mae/profissao), o aviso de "endereco a
+revisar" e o painel do cliente com barra de rolagem (campos sem espremer). Tudo
+com clientes FICTICIOS numa copia temporaria da planilha - nao depende dos
+dados reais.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cliente.py
 """
@@ -19,9 +21,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
-from PySide6.QtCore import QDate, QPoint
+from PySide6.QtCore import QDate, QPoint, Qt
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QMessageBox
 
 from config import CAMINHO_XLSX
 
@@ -31,9 +34,11 @@ from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
+from core.validators import _digito_verificador_cpf
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
+from desktop.widgets.lista_cartoes import ALTURA_CARTAO, ESPACO
 from desktop.theme import PALETAS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets import botao_copiar as botao_copiar_mod
 from desktop.widgets.botao_copiar import BotaoCopiar
@@ -217,8 +222,10 @@ def testar_dialogo(msgs: _Mensagens) -> None:
 
 
 def _botoes_de_copia(tela: FichaClienteScreen) -> list[BotaoCopiar]:
-    """Na ordem visual: CEP, Logradouro, Número, Bairro, Cidade."""
-    botoes = tela.findChildren(BotaoCopiar)
+    """Os botoes de copiar VISIVEIS, na ordem visual. Com o endereco expandido:
+    CEP, Logradouro, Numero, Complemento, Bairro, Cidade, UF; retraido: so o do
+    endereco inteiro."""
+    botoes = [b for b in tela.findChildren(BotaoCopiar) if b.isVisible()]
     return sorted(botoes, key=lambda b: (b.mapTo(tela, QPoint(0, 0)).y() // 20, b.mapTo(tela, QPoint(0, 0)).x()))
 
 
@@ -236,6 +243,9 @@ def testar_ficha(app: QApplication) -> None:
     app.processEvents()
 
     tela._selecionar_por_cpf(CPF_SEPARADO)
+    app.processEvents()
+    assert not tela._cabecalho_endereco.isChecked(), "o endereço abre retraído (o retraído é testado na seção 5)"
+    tela._cabecalho_endereco.setChecked(True)  # aqui interessam os 7 campos
     app.processEvents()
     # nascimento na mesma linha do CPF/CNPJ (topo), acima dos campos secundarios
     y = lambda campo: campo.mapTo(tela, QPoint(0, 0)).y()  # noqa: E731
@@ -310,6 +320,374 @@ def testar_ficha(app: QApplication) -> None:
     tela.close()
 
 
+def _cpf(n: int) -> str:
+    base = f"{300000000 + n:09d}"
+    return base + _digito_verificador_cpf(base)
+
+
+def _sem_invisiveis(rotulo: QLabel) -> str:
+    """Texto do QLabel sem os pontos de quebra invisiveis (texto_quebravel)."""
+    return rotulo.text().replace("​", "")
+
+
+def _cadastrar_clientes_de_endereco() -> dict[str, str]:
+    """Clientes FICTICIOS com o endereco completo, parcial, vazio e so 'a revisar'."""
+    cadastros = {
+        "completo": {"CLIENTE": "Cliente Endereco Completo", "LOGRADOURO": "Rua das Palmeiras", "NÚMERO": "211",
+                     "COMPLEMENTO": "Apto 301", "BAIRRO": "Centro", "CIDADE": "Curitiba", "UF": "PR", "CEP": "80000-000"},
+        "parcial": {"CLIENTE": "Cliente Endereco Parcial", "LOGRADOURO": "Avenida Central", "CIDADE": "Curitiba"},
+        "vazio": {"CLIENTE": "Cliente Sem Endereco"},
+        "pendente": {"CLIENTE": "Cliente Endereco Pendente", "ENDEREÇO (REVISAR)": "rua tal 12 apto 3"},
+        "longo": {"CLIENTE": "Cliente Endereco Longo", "LOGRADOURO": "Avenida Presidente Juscelino Kubitschek de Oliveira Filho",
+                  "NÚMERO": "1500", "COMPLEMENTO": "Bloco B, Sala 1203, Edificio Comercial Central", "BAIRRO": "Jardim das Acacias do Norte",
+                  "CIDADE": "Sao Jose dos Campos", "UF": "SP", "CEP": "12200-000"},
+    }
+    cpfs = {}
+    for n, (chave, campos) in enumerate(cadastros.items(), start=1):
+        cpfs[chave] = _cpf(n)
+        clientes_mod.adicionar_cliente({"CPF/CNPJ": cpfs[chave], "TIPO": "Cliente", **campos})
+    return cpfs
+
+
+def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
+    linha("5) Endereço retraído (uma linha por extenso) e expandido (7 campos)")
+    tela = FichaClienteScreen()
+    tela.resize(1300, 800)
+    tela.show()
+    app.processEvents()
+    cabecalho = tela._cabecalho_endereco
+    clipboard = QApplication.clipboard()
+    campos = (tela._campo_cep, tela._campo_logradouro, tela._campo_numero, tela._campo_complemento,
+              tela._campo_bairro, tela._campo_cidade, tela._campo_uf)
+    completo = "Rua das Palmeiras, 211, Apto 301 - Centro, Curitiba/PR - CEP 80000-000"
+
+    # -- retraido por padrao ------------------------------------------------------
+    tela._selecionar_por_cpf(cpfs["completo"])
+    app.processEvents()
+    assert not cabecalho.isChecked(), "por padrão o endereço vem retraído"
+    assert tela._endereco_resumo.isVisible() and not tela._endereco_campos.isVisible()
+    assert not any(c.isVisible() for c in campos), "retraído: os 7 campos individuais não aparecem"
+    assert _sem_invisiveis(tela._campo_endereco_completo) == completo
+    rotulo = tela._campo_endereco_completo
+    assert rotulo.heightForWidth(rotulo.width()) <= rotulo.fontMetrics().lineSpacing() + 2, "o endereço retraído cabe numa única linha"
+    botoes = _botoes_de_copia(tela)
+    assert len(botoes) == 1, f"retraído há um único botão de copiar (o do endereço inteiro), há {len(botoes)}"
+    botoes[0].click()
+    assert clipboard.text() == completo and botoes[0].estado == botao_copiar_mod.ESTADO_COPIADO
+    assert "​" not in clipboard.text(), "copia o endereço exato, sem caracteres invisíveis"
+    print(f"OK: abre retraído: uma linha ('{completo}') e um botão que copia o endereço inteiro.")
+
+    # -- expandir com um clique no titulo --------------------------------------
+    assert "Mostrar" in cabecalho.toolTip()
+    imagem_fechado = cabecalho.grab().toImage()
+    QTest.mouseClick(cabecalho, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert cabecalho.isChecked() and tela._endereco_campos.isVisible() and not tela._endereco_resumo.isVisible()
+    assert all(c.isVisible() for c in campos), "expandido: os 7 campos aparecem"
+    assert "Voltar" in cabecalho.toolTip(), "a dica muda: agora recolhe"
+    assert cabecalho.grab().toImage() != imagem_fechado, "a seta muda de direção"
+    botoes = _botoes_de_copia(tela)
+    assert len(botoes) == 7, f"expandido há um botão de copiar por campo (7), há {len(botoes)}"
+    esperado = ["80000-000", "Rua das Palmeiras", "211", "Apto 301", "Centro", "Curitiba", "PR"]
+    for botao, texto in zip(botoes, esperado):
+        clipboard.setText("")
+        botao.click()
+        assert clipboard.text() == texto and botao.estado == botao_copiar_mod.ESTADO_COPIADO, (texto, clipboard.text())
+    print("OK: um clique no título expande: os 7 campos, cada um com o seu botão (copia só o seu valor); a seta e a dica mudam.")
+
+    # -- recolher; a escolha vale pra qualquer cliente aberto depois -----------------
+    QTest.mouseClick(cabecalho, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert not cabecalho.isChecked() and tela._endereco_resumo.isVisible() and not tela._endereco_campos.isVisible()
+    cabecalho.setChecked(True)
+    tela._selecionar_por_cpf(cpfs["parcial"])
+    app.processEvents()
+    assert cabecalho.isChecked() and tela._endereco_campos.isVisible(), "expandido segue expandido ao abrir outro cliente"
+    assert (tela._campo_logradouro.text(), tela._campo_cidade.text(), tela._campo_cep.text()) == ("Avenida Central", "Curitiba", "—")
+    cabecalho.setChecked(False)
+    tela._selecionar_por_cpf(cpfs["completo"])
+    app.processEvents()
+    assert not cabecalho.isChecked() and tela._endereco_resumo.isVisible(), "retraído segue retraído ao abrir outro cliente"
+    print("OK: recolher volta à linha única; expandido/retraído continua assim ao trocar de cliente.")
+
+    # -- teclado: Tab foca o titulo e Espaco alterna --------------------------------
+    cabecalho.setFocus()
+    QTest.keyClick(cabecalho, Qt.Key.Key_Space)
+    assert cabecalho.isChecked(), "Espaço expande"
+    QTest.keyClick(cabecalho, Qt.Key.Key_Space)
+    assert not cabecalho.isChecked(), "Espaço recolhe"
+    print("OK: pelo teclado também: Espaço no título expande e recolhe.")
+
+    # -- o que falta fica de fora; vazio nao copia nada ---------------------------------
+    tela._selecionar_por_cpf(cpfs["parcial"])
+    app.processEvents()
+    assert _sem_invisiveis(tela._campo_endereco_completo) == "Avenida Central - Curitiba"
+    tela._selecionar_por_cpf(cpfs["vazio"])
+    app.processEvents()
+    assert _sem_invisiveis(tela._campo_endereco_completo) == "—", "sem endereço nenhum: '—', como os outros campos"
+    clipboard.setText("anterior")
+    botao_unico = _botoes_de_copia(tela)[0]
+    botao_unico.click()
+    assert clipboard.text() == "anterior" and botao_unico.estado == botao_copiar_mod.ESTADO_VAZIO, "vazio não copia '—'"
+    print("OK: 'Avenida Central - Curitiba' (só o que existe, sem sobras); sem endereço mostra '—' e o copiar não sobrescreve a área de transferência.")
+
+    # -- o aviso de 'endereco a revisar' aparece nos dois estados ------------------------
+    tela._selecionar_por_cpf(cpfs["pendente"])
+    app.processEvents()
+    assert _sem_invisiveis(tela._campo_endereco_completo) == "—"
+    assert tela._aviso_endereco_revisar.isVisible() and "rua tal 12 apto 3" in tela._aviso_endereco_revisar.text()
+    cabecalho.setChecked(True)
+    app.processEvents()
+    assert tela._aviso_endereco_revisar.isVisible(), "expandido, o aviso continua aparecendo"
+    cabecalho.setChecked(False)
+    tela._selecionar_por_cpf(cpfs["completo"])
+    assert not tela._aviso_endereco_revisar.isVisible()
+    print("OK: o aviso 'endereço a revisar' aparece retraído e expandido, só pro cliente que tem o texto pendente.")
+
+    # -- tema --------------------------------------------------------------------------
+    original_obter = settings_mod.obter_tema
+    try:
+        for tema in (TEMA_CLARO, TEMA_ESCURO, TEMA_CLARO):
+            settings_mod.obter_tema = lambda t=tema: t  # o app grava o tema antes de reaplicar o stylesheet
+            app.setStyleSheet(build_stylesheet(tema))
+            app.processEvents()
+            assert cabecalho._paleta is PALETAS[tema], f"o título deveria ter a paleta do tema {tema}"
+    finally:
+        settings_mod.obter_tema = original_obter
+        app.setStyleSheet("")
+    print("OK: a seta e o título refazem as cores ao trocar o tema com o app aberto.")
+    tela.close()
+
+
+def _mesma_fonte(a: QLabel, b: QLabel) -> bool:
+    fa, fb = a.font(), b.font()
+    return (fa.family(), fa.pixelSize(), fa.pointSizeF(), fa.weight(), fa.italic()) == (fb.family(), fb.pixelSize(), fb.pointSizeF(), fb.weight(), fb.italic())
+
+
+def _cor_do_texto(rotulo: QLabel) -> str:
+    return rotulo.palette().color(QPalette.ColorRole.WindowText).name()
+
+
+def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str]) -> None:
+    linha("5b) Endereço retraído com o MESMO visual dos outros campos (fonte, caixa, sem barra)")
+    original_obter = settings_mod.obter_tema
+    tela = None
+    try:
+        for tema in (TEMA_ESCURO, TEMA_CLARO):
+            settings_mod.obter_tema = lambda t=tema: t
+            app.setStyleSheet(build_stylesheet(tema))  # as fontes e cores dos campos vem do tema
+            tela = FichaClienteScreen()
+            tela.resize(1300, 800)
+            tela.show()
+            tela._selecionar_por_cpf(cpfs["completo"])
+            for _ in range(6):
+                app.processEvents()
+
+            legenda_outra = next(r for r in tela.findChildren(QLabel) if r.text() == "Nome do pai")
+            titulo = tela._cabecalho_endereco._rotulo
+            assert _mesma_fonte(titulo, legenda_outra) and _cor_do_texto(titulo) == _cor_do_texto(legenda_outra), \
+                f"{tema}: o título 'Endereço' tem a mesma fonte/cor das legendas dos outros campos"
+            assert titulo.property("role") == "campo_rotulo"
+
+            valor = tela._campo_endereco_completo
+            assert _mesma_fonte(valor, tela._campo_cpf) and _cor_do_texto(valor) == _cor_do_texto(tela._campo_cpf), \
+                f"{tema}: o endereço tem a mesma fonte/cor do valor dos outros campos"
+            assert abs(valor.height() - tela._campo_cpf.height()) <= 1, \
+                f"{tema}: caixa do endereço ({valor.height()} px) com a altura da dos outros campos ({tela._campo_cpf.height()} px)"
+            assert abs(titulo.height() - legenda_outra.height()) <= 1, f"{tema}: legenda com a altura das outras"
+
+            # nada de "barra": o valor ocupa so a largura do texto e o botao de copiar fica logo ao lado
+            botao = _botoes_de_copia(tela)[0]
+            largura_texto = valor.fontMetrics().horizontalAdvance(_sem_invisiveis(valor))
+            assert valor.width() <= largura_texto + 12, f"{tema}: valor de {valor.width()} px para um texto de {largura_texto} px (esticou)"
+            folga = botao.mapTo(tela, QPoint(0, 0)).x() - valor.mapTo(tela, QPoint(valor.width(), 0)).x()
+            assert 0 <= folga <= 8, f"{tema}: o botão de copiar deveria ficar colado ao valor (folga de {folga} px)"
+            assert tela._cabecalho_endereco.width() < 150, "o título ocupa só o próprio texto + a seta"
+
+            # ...e nenhum fundo diferente atras/ao lado do campo: as areas vazias sao a cor do card
+            card = PALETAS[tema]["bg_card"]
+            imagem = tela.grab().toImage()
+            y_meio = valor.mapTo(tela, QPoint(0, valor.height() // 2)).y()
+            x_apos_botao = botao.mapTo(tela, QPoint(botao.width() + 60, 0)).x()
+            assert imagem.pixelColor(x_apos_botao, y_meio).name() == QColor(card).name(), \
+                f"{tema}: depois do botão de copiar o fundo tem que ser o do card (não uma barra escura pela largura toda)"
+            # expandido: o contentor dos 7 campos tambem nao pode pintar uma faixa atras da grade
+            tela._cabecalho_endereco.setChecked(True)
+            for _ in range(6):
+                app.processEvents()
+            imagem = tela.grab().toImage()
+            botao_cep = _botoes_de_copia(tela)[0]
+            direita_col0 = botao_cep.mapTo(tela, QPoint(botao_cep.width(), 0)).x()
+            esquerda_col1 = tela._campo_logradouro.mapTo(tela, QPoint(0, 0)).x()
+            x_vao, y_linha = (direita_col0 + esquerda_col1) // 2, tela._campo_cep.mapTo(tela, QPoint(0, tela._campo_cep.height() // 2)).y()
+            assert imagem.pixelColor(x_vao, y_linha).name() == QColor(card).name(), \
+                f"{tema}: entre as colunas dos 7 campos o fundo tem que ser o do card ({imagem.pixelColor(x_vao, y_linha).name()})"
+            tela.close()
+            tela = None
+        print("OK (escuro e claro): o título 'Endereço' tem a fonte/cor das outras legendas; o valor tem a fonte, a cor e a "
+              "altura de caixa dos outros valores; ocupa só a largura do texto, com o botão de copiar colado; sem faixa "
+              "atrás do campo (retraído) nem da grade (expandido).")
+    finally:
+        if tela is not None:
+            tela.close()
+        settings_mod.obter_tema = original_obter
+        app.setStyleSheet("")
+
+    # janela estreita + endereco muito longo: quebra em mais linhas em vez de estourar o card
+    tela = FichaClienteScreen()
+    tela.setMinimumSize(100, 100)
+    tela.resize(820, 800)
+    tela.show()
+    tela._selecionar_por_cpf(cpfs["longo"])
+    for _ in range(6):
+        app.processEvents()
+    valor = tela._campo_endereco_completo
+    botao = _botoes_de_copia(tela)[0]
+    assert valor.heightForWidth(valor.width()) > valor.fontMetrics().lineSpacing() + 2, "endereço longo em janela estreita quebra em mais linhas"
+    cartao = tela._nome_label.parentWidget()
+    borda_cartao = cartao.mapTo(tela, QPoint(cartao.width(), 0)).x()
+    assert botao.mapTo(tela, QPoint(botao.width(), 0)).x() <= borda_cartao, "o botão de copiar não vaza do cartão"
+    assert valor.mapTo(tela, QPoint(valor.width(), 0)).x() <= borda_cartao
+    assert not tela._rolagem_ficha.horizontalScrollBar().isVisible()
+    assert _rotulos_espremidos(tela) == [], _rotulos_espremidos(tela)
+    assert _sem_invisiveis(valor).startswith("Avenida Presidente Juscelino") and "CEP 12200-000" in _sem_invisiveis(valor)
+    botao.click()
+    assert QApplication.clipboard().text() == _sem_invisiveis(valor), "copia o endereço inteiro mesmo quebrado em linhas"
+    tela.close()
+    print("OK: endereço longo numa janela estreita quebra em mais linhas, sem vazar do cartão nem espremer os campos; "
+          "o botão copia o endereço inteiro.")
+
+
+def _rotulos_espremidos(tela: FichaClienteScreen) -> list[tuple[str, int, int]]:
+    """Rotulos do painel do cliente com altura MENOR que a necessaria - o Qt os
+    espreme (e o texto se sobrepoe) quando o painel e forcado a caber num espaco
+    menor que o seu conteudo."""
+    ruins = []
+    for rotulo in tela._painel_stack.currentWidget().findChildren(QLabel):
+        if not rotulo.isVisible() or not rotulo.text():
+            continue
+        precisa = rotulo.heightForWidth(rotulo.width()) if rotulo.hasHeightForWidth() else rotulo.sizeHint().height()
+        if rotulo.height() < precisa:
+            ruins.append((rotulo.text()[:20], rotulo.height(), precisa))
+    return ruins
+
+
+def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
+    linha("6) Painel do cliente com barra de rolagem: campos com espaço normal (sem espremer)")
+    for n in range(5):  # 5 propostas pro cliente completo, 1 pro parcial (a lista de cards acompanha o numero)
+        propostas_mod.adicionar_proposta(
+            {"CPF": cpfs["completo"], "DATA": pd.Timestamp(2026, 3, 1 + n), "VALOR (R$)": 1000 * (n + 1), "MESES": 12,
+             "EQUIPAMENTO": f"Laser {n}", "BANCO": "Banco Teste", "STATUS": "Em Análise", "OBSERVAÇÕES": f"obs {n}"}
+        )
+    propostas_mod.adicionar_proposta(
+        {"CPF": cpfs["parcial"], "DATA": pd.Timestamp(2026, 3, 9), "VALOR (R$)": 500, "MESES": 6, "EQUIPAMENTO": "Mesa",
+         "BANCO": "Banco Teste", "STATUS": "Negado", "OBSERVAÇÕES": ""}
+    )
+
+    original_obter = settings_mod.obter_tema
+    settings_mod.obter_tema = lambda: TEMA_ESCURO
+    app.setStyleSheet(build_stylesheet(TEMA_ESCURO))  # a barra discreta vem do tema do app
+    tela = None
+    try:
+        tela = FichaClienteScreen()
+        minimo_pedido = tela.minimumSizeHint().height()
+        assert minimo_pedido < 500, f"o painel não pode exigir a altura toda do conteúdo (o layout pede {minimo_pedido} px)"
+        tela.setMinimumSize(100, 100)  # como numa janela maximizada em tela baixa: o Qt nao a impede de ficar menor
+        tela.resize(1150, 560)
+        tela.show()
+        tela._selecionar_por_cpf(cpfs["completo"])
+        for _ in range(6):
+            app.processEvents()
+
+        rolagem = tela._rolagem_ficha
+        barra = rolagem.verticalScrollBar()
+        assert barra.maximum() > 0 and barra.isVisible(), "janela baixa: o painel ganha barra de rolagem"
+        assert rolagem.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert not rolagem.horizontalScrollBar().isVisible(), "nunca rola pro lado"
+        assert barra.sizeHint().width() <= 12, f"barra discreta (do tema): {barra.sizeHint().width()} px de largura"
+        assert _rotulos_espremidos(tela) == [], f"campos espremidos: {_rotulos_espremidos(tela)}"
+        print(f"OK: janela de 560 px de altura: o layout pede só {minimo_pedido} px, o painel ganha barra fina "
+              f"({barra.sizeHint().width()} px) e nenhum campo fica espremido.")
+
+        # rolar mostra o fim (historico); a barra do topo/fim funciona
+        assert barra.value() == 0
+        barra.setValue(barra.maximum())
+        app.processEvents()
+        viewport = rolagem.viewport()
+        fim_historico = tela._lista_historico.mapTo(viewport, QPoint(0, tela._lista_historico.height())).y()
+        assert fim_historico <= viewport.height() + 1, "rolado até o fim, o histórico de propostas aparece inteiro"
+        topo_cartao = tela._nome_label.mapTo(viewport, QPoint(0, 0)).y()
+        assert topo_cartao < 0, "e o topo do cartão saiu pra cima (rolou de verdade)"
+
+        # os botoes de proposta ficam FIXOS embaixo, fora da rolagem
+        y_botao = tela._botao_nova_proposta.mapTo(tela, QPoint(0, 0)).y()
+        barra.setValue(0)
+        app.processEvents()
+        assert tela._botao_nova_proposta.mapTo(tela, QPoint(0, 0)).y() == y_botao, "os botões não rolam"
+        assert tela._botao_nova_proposta.isVisible() and tela._botao_excluir_proposta.isVisible()
+        assert y_botao + tela._botao_nova_proposta.height() <= tela.height()
+        print("OK: rolar até o fim mostra o histórico inteiro; 'Excluir Proposta Selecionada' e '+ Nova Proposta' ficam fixos embaixo.")
+
+        # alinhados com o cartao, com e sem a barra de rolagem
+        cartao = tela._nome_label.parentWidget()
+        borda = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
+        assert abs(borda(cartao) - borda(tela._botao_nova_proposta)) <= 1, (borda(cartao), borda(tela._botao_nova_proposta))
+        tela.resize(1150, 1300)
+        for _ in range(6):
+            app.processEvents()
+        assert barra.maximum() == 0 and not barra.isVisible(), "janela alta: cabe tudo, sem barra"
+        assert _rotulos_espremidos(tela) == []
+        assert abs(borda(cartao) - borda(tela._botao_nova_proposta)) <= 1, "sem a barra os botões seguem alinhados com o cartão"
+        tela.resize(1150, 560)
+        for _ in range(6):
+            app.processEvents()
+        assert abs(borda(cartao) - borda(tela._botao_nova_proposta)) <= 1, "com a barra de volta, alinhados de novo"
+        print("OK: os botões de baixo ficam alinhados com o cartão com a barra de rolagem e sem ela.")
+
+        # a lista de cards do historico tem a altura das linhas de cards (sem barra de rolagem propria)
+        colunas = tela._lista_historico.colunas()
+        altura_5 = tela._lista_historico.height()
+        assert altura_5 == -(-5 // colunas) * (ALTURA_CARTAO + ESPACO), (altura_5, colunas)
+        tela._selecionar_por_cpf(cpfs["parcial"])
+        app.processEvents()
+        altura_1 = tela._lista_historico.height()
+        assert altura_1 == ALTURA_CARTAO + ESPACO < altura_5, (altura_1, altura_5)
+        tela._selecionar_por_cpf(cpfs["vazio"])
+        app.processEvents()
+        assert not tela._contentor_historico.isVisible() and tela._historico_vazio.isVisible()
+        print(f"OK: o histórico em cards tem {altura_5} px com 5 propostas ({colunas} por linha) e {altura_1} px com 1; sem proposta aparece o aviso.")
+
+        # outro cliente: o painel volta pro topo
+        tela._selecionar_por_cpf(cpfs["completo"])
+        app.processEvents()
+        barra.setValue(barra.maximum())
+        assert barra.value() > 0
+        tela._selecionar_por_cpf(cpfs["parcial"])
+        app.processEvents()
+        assert barra.value() == 0, "trocar de cliente volta o painel pro topo"
+
+        # expandir o endereco com o painel rolado/janela baixa: rola ate os campos
+        tela.resize(1150, 470)
+        tela._selecionar_por_cpf(cpfs["completo"])
+        for _ in range(6):
+            app.processEvents()
+        tela._cabecalho_endereco.setChecked(False)
+        barra.setValue(0)
+        tela._cabecalho_endereco.setChecked(True)
+        for _ in range(6):
+            app.processEvents()
+        campos = tela._endereco_campos
+        fundo_campos = campos.mapTo(rolagem.viewport(), QPoint(0, campos.height())).y()
+        assert fundo_campos <= rolagem.viewport().height() + 1, "ao expandir, o painel rola pra mostrar os 7 campos"
+        assert _rotulos_espremidos(tela) == [], _rotulos_espremidos(tela)
+        print("OK: trocar de cliente volta ao topo; expandir o endereço numa janela baixa rola até mostrar os 7 campos.")
+    finally:
+        if tela is not None:
+            tela.close()
+        settings_mod.obter_tema = original_obter
+        app.setStyleSheet("")
+
+
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
@@ -325,6 +703,10 @@ def main() -> None:
         with _Mensagens() as msgs:
             testar_dialogo(msgs)
             testar_ficha(app)
+            cpfs = _cadastrar_clientes_de_endereco()
+            testar_endereco_retratil(app, cpfs)
+            testar_endereco_como_os_outros_campos(app, cpfs)
+            testar_rolagem(app, cpfs)
         linha("TUDO OK")
     finally:
         tmp.unlink(missing_ok=True)

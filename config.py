@@ -11,6 +11,9 @@ else:
 
 DIRETORIO_DADOS = DIRETORIO_BASE / "data"
 
+# Versao mostrada no rodape da barra lateral - o unico lugar a mudar a cada versao nova.
+VERSAO_APP = "1.0.0"
+
 # Arquivo .xlsx que funciona como banco de dados local.
 # Pode ser aberto no Excel a qualquer momento para conferencia manual.
 CAMINHO_XLSX = DIRETORIO_DADOS / "controle_financiamentos.xlsx"

@@ -15,12 +15,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import math
-import re
 
 import pandas as pd
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from core.formatting import formatar_data, formatar_meses, formatar_reais
+from core.formatting import dias_do_tempo, formatar_data, formatar_endereco, formatar_meses, formatar_reais, formatar_tempo
 from core.validators import email_valido
 from desktop.theme import PALETA_CLARA, PALETA_ESCURA, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
@@ -72,11 +71,11 @@ def testar_conectar_mascara() -> None:
     campo = QLineEdit()
     conectar_mascara(campo, formatar_cpf_cnpj_parcial)
 
-    for caractere in "00603687013280":  # simula digitacao, um caractere por vez
+    for caractere in "11222333000181":  # CNPJ ficticio; simula digitacao, um caractere por vez
         campo.setText(campo.text() + caractere)
 
-    assert campo.text() == "00.603.687/0132-80", campo.text()
-    print(f"  Digitado '00603687013280' um caractere por vez -> '{campo.text()}'")
+    assert campo.text() == "11.222.333/0001-81", campo.text()
+    print(f"  Digitado '11222333000181' um caractere por vez -> '{campo.text()}'")
     print("OK: conectar_mascara reformata em tempo real como esperado.")
 
 
@@ -118,6 +117,75 @@ def testar_formatacao_valor_ausente() -> None:
     assert formatar_data(pd.NaT) == "—"
     assert formatar_data(pd.Timestamp(2026, 9, 1)) == "01/09/2026"
     print("OK: formatar_data(ausente) -> '—', data válida formatada normalmente.")
+
+
+def testar_formatar_tempo() -> None:
+    linha("5b) Tempo da proposta (coluna TEMPO) em texto curto")
+    esperado = {
+        "7 dias": "há 7 dias", "15 dias": "há 15 dias", "1 dias": "há 1 dia", "1 dia": "há 1 dia", "0 dias": "hoje",
+        "Encerrado": "Encerrado", "ENCERRADO": "Encerrado", " encerrado ": "Encerrado",
+        "": "", "   ": "", "-3 dias": "data futura",
+        "formato estranho": "formato estranho",  # nunca inventa: o que nao reconhece, mostra como veio
+    }
+    for entrada, saida in esperado.items():
+        assert formatar_tempo(entrada) == saida, f"formatar_tempo({entrada!r}) = {formatar_tempo(entrada)!r}, esperado {saida!r}"
+    for ausente in (None, float("nan"), pd.NA):
+        assert formatar_tempo(ausente) == "", f"formatar_tempo({ausente!r}) deveria ser ''"
+    print("OK: '7 dias' -> 'há 7 dias', '1 dias' -> 'há 1 dia', '0 dias' -> 'hoje', 'Encerrado' mantido, vazio/ausente -> ''.")
+
+    # os dias "crus", pra ordenar por tempo parado
+    for entrada, dias in (("7 dias", 7), ("1 dia", 1), ("0 dias", 0), (" 15 DIAS ", 15), ("-3 dias", -3), ("9537 dias", 9537)):
+        assert dias_do_tempo(entrada) == dias, f"dias_do_tempo({entrada!r}) = {dias_do_tempo(entrada)!r}, esperado {dias}"
+    for sem_dias in ("Encerrado", "", "   ", "formato estranho", "7", "sete dias", None, float("nan"), pd.NA):
+        assert dias_do_tempo(sem_dias) is None, f"dias_do_tempo({sem_dias!r}) deveria ser None"
+    print("OK: dias_do_tempo('7 dias') = 7 (negativo pra data futura); 'Encerrado', vazio, ausente ou texto estranho = None.")
+
+
+def testar_formatar_endereco() -> None:
+    linha("6) Endereço por extenso numa linha (Ficha de Cliente, endereço retraído)")
+    completo = dict(logradouro="Rua das Palmeiras", numero="211", complemento="Apto 301", bairro="Centro",
+                    cidade="Curitiba", uf="PR", cep="80000-000")
+    assert formatar_endereco(**completo) == "Rua das Palmeiras, 211, Apto 301 - Centro, Curitiba/PR - CEP 80000-000"
+
+    # o que falta simplesmente fica de fora - nunca sobra virgula, barra ou traco
+    esperado = [
+        ({"complemento": ""}, "Rua das Palmeiras, 211 - Centro, Curitiba/PR - CEP 80000-000"),
+        ({"numero": ""}, "Rua das Palmeiras, Apto 301 - Centro, Curitiba/PR - CEP 80000-000"),
+        ({"numero": "", "complemento": ""}, "Rua das Palmeiras - Centro, Curitiba/PR - CEP 80000-000"),
+        ({"bairro": ""}, "Rua das Palmeiras, 211, Apto 301 - Curitiba/PR - CEP 80000-000"),
+        ({"cidade": ""}, "Rua das Palmeiras, 211, Apto 301 - Centro, PR - CEP 80000-000"),
+        ({"uf": ""}, "Rua das Palmeiras, 211, Apto 301 - Centro, Curitiba - CEP 80000-000"),
+        ({"cidade": "", "uf": ""}, "Rua das Palmeiras, 211, Apto 301 - Centro - CEP 80000-000"),
+        ({"cep": ""}, "Rua das Palmeiras, 211, Apto 301 - Centro, Curitiba/PR"),
+        ({"logradouro": ""}, "211, Apto 301 - Centro, Curitiba/PR - CEP 80000-000"),
+        ({"logradouro": "", "numero": "", "complemento": ""}, "Centro, Curitiba/PR - CEP 80000-000"),
+        ({"bairro": "", "cidade": "", "uf": "", "cep": ""}, "Rua das Palmeiras, 211, Apto 301"),
+    ]
+    for troca, texto in esperado:
+        obtido = formatar_endereco(**{**completo, **troca})
+        assert obtido == texto, f"{troca}: {obtido!r} != {texto!r}"
+        for sobra in (", ,", " - -", "- -", ",,", "//", " ,", " /", "/ "):
+            assert sobra not in obtido and not obtido.startswith((",", "-", "/", " ")) and not obtido.endswith((",", "-", "/", " "))
+    print("OK: completo -> 'Rua das Palmeiras, 211, Apto 301 - Centro, Curitiba/PR - CEP 80000-000'; "
+          "cada campo em branco (e várias combinações) fica de fora, sem vírgula/traço/barra sobrando.")
+
+    # so um pedaco
+    assert formatar_endereco(logradouro="Rua A") == "Rua A"
+    assert formatar_endereco(cidade="Curitiba") == "Curitiba"
+    assert formatar_endereco(uf="PR") == "PR"
+    assert formatar_endereco(cep="80000-000") == "CEP 80000-000"
+    assert formatar_endereco(bairro="Centro", cep="80000-000") == "Centro - CEP 80000-000"
+    assert formatar_endereco() == "" and formatar_endereco(logradouro="", numero="  ", cep=" ") == "", "tudo em branco = vazio"
+    print("OK: só um pedaço preenchido (rua, cidade, UF, CEP...) sai sozinho; tudo em branco devolve ''.")
+
+    # espacos, ausentes e CEP
+    assert formatar_endereco(logradouro="  Rua A  ", numero=" 12 ", cidade="  Recife ", uf=" PE ") == "Rua A, 12 - Recife/PE"
+    assert formatar_endereco(logradouro="Rua A", numero=None, complemento=float("nan"), bairro=pd.NA) == "Rua A"
+    assert formatar_endereco(logradouro="Rua A", cep="80000000") == "Rua A - CEP 80000-000", "8 dígitos sem hífen ganham o hífen"
+    assert formatar_endereco(cep="80.000-000") == "CEP 80000-000", "pontuação diferente do CEP é normalizada"
+    assert formatar_endereco(cep="8000") == "CEP 8000", "CEP incompleto é mostrado como está (não se adivinha)"
+    print("OK: espaços das pontas e valores ausentes (None/NaN) ignorados; CEP de 8 dígitos ganha o hífen e um "
+          "CEP incompleto aparece como está.")
 
 
 def testar_texto_quebravel() -> None:
@@ -209,22 +277,13 @@ def testar_zebra_tabela() -> None:
     print("OK: zebra do tema escuro segue idêntica a bg_secundario (não alterado).")
 
 
-def testar_sidebar_recolhida_quase_quadrada() -> None:
-    linha("9) Item da sidebar recolhida - altura maior, sem espremer o ícone")
+def testar_zebra_no_qss_do_tema_claro() -> None:
+    linha("9) Zebra da tabela realmente usada no QSS do tema claro")
 
-    # bug real ja visto nesta tela: padding horizontal alto (11px) nao cabe
-    # nos ~40px uteis da barra recolhida (60px de largura - 10px de padding
-    # do QListWidget de cada lado) e o emoji simplesmente some (Qt nao
-    # desenha nada, em vez de cortar). O padding horizontal tem que ficar
-    # baixo (2px); so o vertical pode subir livremente, pra aproximar a
-    # altura do icone aqui da altura dele no item expandido (padding
-    # vertical 11px). Nao mede geometria renderizada porque
-    # QT_QPA_PLATFORM=offscreen usa metricas de emoji diferentes do Qt real.
-    padrao = re.compile(r'QListWidget\[recolhido="true"\]::item \{[^}]*padding:\s*8px 2px;[^}]*margin:\s*2px 2px;', re.S)
-    assert padrao.search(build_stylesheet(TEMA_CLARO)), "padding esperado não encontrado no tema claro"
-    assert padrao.search(build_stylesheet(TEMA_ESCURO)), "padding esperado não encontrado no tema escuro"
-    print("OK: padding do ícone recolhido (8px vertical, 2px horizontal) presente nos dois temas.")
-
+    # (aqui ficava a checagem do padding do item da sidebar recolhida no QSS. O menu lateral passou
+    # a ser desenhado por um delegate proprio, sem regras de QSS por item, entao aquele padding nao
+    # existe mais; a mesma preocupacao - o icone nao pode sumir/ser espremido na barra estreita - e
+    # testada renderizando de verdade em smoke_test_barra_lateral.py, testar_recolher_e_tema)
     claro = build_stylesheet(TEMA_CLARO)
     assert f"alternate-background-color: {PALETA_CLARA['zebra']}" in claro
     print("OK: o QSS do tema claro realmente usa a nova cor de zebra.")
@@ -236,10 +295,12 @@ def main() -> None:
     testar_conectar_mascara()
     testar_email_valido()
     testar_formatacao_valor_ausente()
+    testar_formatar_tempo()
+    testar_formatar_endereco()
     testar_texto_quebravel()
     testar_tema_escuro_intocado()
     testar_zebra_tabela()
-    testar_sidebar_recolhida_quase_quadrada()
+    testar_zebra_no_qss_do_tema_claro()
     linha("TUDO OK")
 
 

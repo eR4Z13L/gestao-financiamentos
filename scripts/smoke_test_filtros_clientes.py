@@ -82,7 +82,7 @@ def _nomes(df: pd.DataFrame) -> list[str]:
 
 
 def _nomes_da_lista(tela: FichaClienteScreen) -> list[str]:
-    return [tela._lista.item(i).text().split(" — ")[0] for i in range(tela._lista.count())]
+    return [tela._lista.nome_da_linha(i) for i in range(tela._lista.count())]
 
 
 def testar_core() -> None:
@@ -233,12 +233,12 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
 
     linha("3b) Ficha aberta sobrevive a mudar ordenação/filtro (se o cliente continua na lista)")
     _escolher(tela._ordenacao, "Nome (A-Z)")
-    cpf_daniel = tela._lista.item(A_Z.index("DANIEL GAMA")).data(256)
+    cpf_daniel = tela._lista.cpf_da_linha(A_Z.index("DANIEL GAMA"))
     tela._selecionar_por_cpf(cpf_daniel)
     assert tela._painel_stack.currentIndex() == 1 and tela._nome_label.text() == "DANIEL GAMA"
     _escolher(tela._ordenacao, "Data de cadastro (mais recente primeiro)")
     assert tela._painel_stack.currentIndex() == 1 and tela._cpf_selecionado == cpf_daniel, "reordenar nao pode fechar a ficha"
-    assert tela._lista.currentRow() == MAIS_RECENTE.index("DANIEL GAMA") and tela._lista.currentRow() == 1
+    assert tela._lista.linha_atual() == MAIS_RECENTE.index("DANIEL GAMA") and tela._lista.linha_atual() == 1
     _escolher(tela._filtro_tipo, "Avalista")  # DANIEL e Avalista: continua
     assert tela._painel_stack.currentIndex() == 1 and tela._cpf_selecionado == cpf_daniel
     _escolher(tela._filtro_tipo, "Cliente")  # DANIEL nao e Cliente: sai da lista
@@ -314,7 +314,10 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
     linha("6) Perfil VENDEDOR: sem filtro de vendedor, só vê os próprios")
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario="ANA"))
     fonte_original = clientes_mod._ler_da_fonte_ativa
+    fonte_propostas_original = propostas_mod._ler_da_fonte_ativa
     clientes_mod._ler_da_fonte_ativa = lambda: bd.ler_clientes(arquivo)  # sem rede: le do arquivo de teste
+    # (a marca "Em aberto" dos cards tambem le as propostas: sem rede, e ja so as do vendedor logado)
+    propostas_mod._ler_da_fonte_ativa = lambda: sessao_mod.filtrar_por_vendedor_logado(bd.ler_propostas(arquivo))
     try:
         tela_v = FichaClienteScreen()
         assert tela_v._bloco_filtro_vendedor.isHidden(), "vendedor não filtra por vendedor"
@@ -328,6 +331,7 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
         tela_v.close()
     finally:
         clientes_mod._ler_da_fonte_ativa = fonte_original
+        propostas_mod._ler_da_fonte_ativa = fonte_propostas_original
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     print("OK: o vendedor não vê o filtro de vendedor nem clientes de outros; tipo e ordenação funcionam.")
 
