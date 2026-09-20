@@ -14,6 +14,8 @@ app.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
@@ -24,6 +26,14 @@ from core import data_store as bd
 _ESCOPOS_LEITURA = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 _cliente = None
+_ultima_leitura: datetime | None = None
+
+
+def ultima_leitura() -> datetime | None:
+    """Quando foi a ultima leitura bem-sucedida de uma aba do Sheets (None se nenhuma ainda):
+    o "dados de HH:MM" que o VENDEDOR ve na barra lateral. So consulta a memoria - nao
+    acessa a rede."""
+    return _ultima_leitura
 
 
 def _obter_cliente():
@@ -37,10 +47,12 @@ def _obter_cliente():
 
 
 def _ler_aba_bruta(nome_aba: str) -> pd.DataFrame:
+    global _ultima_leitura
     cliente = _obter_cliente()
     planilha = cliente.open_by_key(config.GOOGLE_SHEETS_ID)
     aba = planilha.worksheet(nome_aba)
     valores = aba.get_all_values()
+    _ultima_leitura = datetime.now()
     if len(valores) <= 1:
         return pd.DataFrame()
     cabecalho, *linhas = valores

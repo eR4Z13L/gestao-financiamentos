@@ -1,6 +1,7 @@
-"""Testa os dialogos de cadastro/edicao de cliente e lancamento de proposta,
-sem precisar abrir uma janela de verdade (QT_QPA_PLATFORM=offscreen) e sem
-mexer no arquivo real - tudo numa copia temporaria.
+"""Testa os dialogos de cadastro/edicao de cliente e o formulario de lancamento
+de proposta (o do card expandido), sem precisar abrir uma janela de verdade
+(QT_QPA_PLATFORM=offscreen) e sem mexer no arquivo real - tudo numa copia
+temporaria.
 
 Chama dialogo._salvar() diretamente (em vez de clicar no botao OK de
 verdade), simulando o clique sem precisar de QTest/interacao real.
@@ -30,11 +31,19 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
-from desktop.dialogs.proposta_dialog import PropostaDialog
+from desktop.widgets.formulario_proposta import FormularioProposta
 
 
 def linha(titulo: str) -> None:
     print(f"\n{'=' * 60}\n{titulo}\n{'=' * 60}")
+
+
+def _espiar_gravacao(formulario: FormularioProposta) -> list[str]:
+    """Lista que recebe "gravada" quando o formulario avisa que gravou (a funcao ligada ao
+    sinal captura so a lista, nunca o formulario: seria um ciclo de referencias)."""
+    avisos: list[str] = []
+    formulario.gravada.connect(lambda: avisos.append("gravada"))
+    return avisos
 
 
 def main() -> None:
@@ -112,24 +121,26 @@ def main() -> None:
         assert editado["EMAIL"] == "editado@teste.com"
         print(f"OK: edicao via dialogo persistiu -> EMAIL={editado['EMAIL']}")
 
-        linha("4) PropostaDialog - sem equipamento (deve rejeitar)")
-        dialogo = PropostaDialog(novo_cpf, "Cliente Dialogo Teste")
+        linha("4) FormularioProposta (card expandido) - sem equipamento (deve rejeitar)")
+        dialogo = FormularioProposta(novo_cpf, "Cliente Dialogo Teste")
+        gravou = _espiar_gravacao(dialogo)
         dialogo._valor.setValue(50000)
         dialogo._banco.setCurrentText("Banco Teste")
         dialogo._salvar()
-        assert dialogo.result() != QDialog.DialogCode.Accepted
+        assert gravou == [], "sem equipamento nao pode avisar que gravou"
         assert "quipamento" in mensagens_capturadas[-1]
         print(f"OK: proposta sem equipamento nao foi aceita -> \"{mensagens_capturadas[-1]}\"")
 
-        linha("5) PropostaDialog - lancamento valido")
+        linha("5) FormularioProposta (card expandido) - lancamento valido")
         historico_antes = propostas_mod.historico_por_cpf(novo_cpf)
-        dialogo = PropostaDialog(novo_cpf, "Cliente Dialogo Teste")
+        dialogo = FormularioProposta(novo_cpf, "Cliente Dialogo Teste")
+        gravou = _espiar_gravacao(dialogo)
         dialogo._valor.setValue(75000)
         dialogo._meses.setValue(36)
         dialogo._equipamento.setCurrentText("Equipamento Dialogo Teste")
         dialogo._banco.setCurrentText("Banco Dialogo Teste")
         dialogo._salvar()
-        assert dialogo.result() == QDialog.DialogCode.Accepted
+        assert gravou == ["gravada"]
 
         historico_depois = propostas_mod.historico_por_cpf(novo_cpf)
         assert len(historico_depois) == len(historico_antes) + 1

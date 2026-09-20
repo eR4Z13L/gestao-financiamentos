@@ -1,8 +1,10 @@
 """Testa os cards de "Todas as Propostas": cores por status e contraste nos dois
-temas, layout responsivo da grade, clique/Enter que abre a tela de leitura,
-desenho real (cor da faixa lateral de cada status, inclusive trocando o tema
-com o app aberto) e a tela em si (busca, filtro de status, botoes Editar/
-Excluir/Nova Proposta, perfil VENDEDOR). Dados FICTICIOS numa planilha temporaria.
+temas, layout responsivo da grade, clique (so seleciona) x duplo clique/Enter (abre
+a tela de leitura), desenho real (cor da faixa lateral de cada status e o
+destaque do card selecionado, inclusive trocando o tema com o app aberto) e a
+tela em si (busca, filtro de status, botoes Editar/Excluir/Nova Proposta agindo
+sobre o card selecionado com 1 clique, perfil VENDEDOR). Dados FICTICIOS numa
+planilha temporaria.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_cards_propostas.py
 """
@@ -21,10 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 import pandas as pd
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QModelIndex, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -36,16 +38,18 @@ from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf
 from desktop import settings as settings_mod
-from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.screens.propostas_screen import _FILTRO_TODOS, PropostasScreen
 from desktop.theme import CORES_STATUS, PALETAS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.lista_cartoes import (
+    _ALFA_SELECAO,
     ALTURA_CARTAO,
     LARGURA_MINIMA_CARTAO,
     ListaCartoes,
     ModeloCartoes,
     chave_cor_status,
 )
+from desktop.widgets.expansor_proposta import ExpansorDeProposta
+from desktop.widgets.formulario_proposta import FormularioProposta
 
 
 def linha(titulo: str) -> None:
@@ -74,6 +78,32 @@ def _cpf(n: int) -> str:
 def _ciclos(app: QApplication, n: int = 3) -> None:
     for _ in range(n):  # o layout da grade e adiado: precisa de mais de um ciclo de eventos
         app.processEvents()
+
+
+def _clicar(lista: ListaCartoes, linha_: int) -> QPoint:
+    """1 clique no card da linha `linha_`. Devolve o ponto clicado."""
+    retangulo = lista.visualRect(lista.model().index(linha_))
+    ponto = QPoint(retangulo.left() + 40, retangulo.top() + 30)
+    QTest.mouseClick(lista.viewport(), Qt.MouseButton.LeftButton, pos=ponto)
+    return ponto
+
+
+def _duplo_clique(widget, ponto: QPoint) -> None:
+    """Um duplo clique como o Windows o manda: press, release, press (que o Qt
+    entrega como "DblClick") e release. O QTest.mouseDClick sozinho manda so o
+    DblClick, sem os cliques do meio - nao serve pra testar a selecao."""
+    QTest.mousePress(widget, Qt.MouseButton.LeftButton, pos=ponto)
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=ponto)
+    evento = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, QPointF(ponto), QPointF(widget.mapToGlobal(ponto)),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(widget, evento)
+    QTest.mouseRelease(widget, Qt.MouseButton.LeftButton, pos=ponto)
+
+
+def _selecionados(lista: ListaCartoes) -> list[int]:
+    return [indice.row() for indice in lista.selectedIndexes()]
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +152,9 @@ def testar_modelo_e_layout(app: QApplication) -> None:
     modelo.definir_itens(_itens(["Aprovado", "Negado"], ["ANA", ""]))
     assert modelo.rowCount() == 2 and modelo.indice_real(1) == 101 and modelo.linha_do_indice_real(101) == 1
     assert modelo.linha_do_indice_real(999) is None
-    assert modelo.data(modelo.index(0)) == "ANA" and "Aprovado" in modelo.data(modelo.index(0), Qt.ItemDataRole.ToolTipRole)
+    dica = modelo.data(modelo.index(0), Qt.ItemDataRole.ToolTipRole)
+    assert modelo.data(modelo.index(0)) == "ANA" and "Aprovado" in dica
+    assert "Duplo clique para ver os detalhes" in dica, "a dica ensina que abrir é com duplo clique"
     assert "(cliente não encontrado)" in modelo.data(modelo.index(1), Qt.ItemDataRole.ToolTipRole)
     print("OK: modelo guarda a posição real da proposta e mostra tooltip com o nome inteiro.")
 
@@ -141,8 +173,8 @@ def testar_modelo_e_layout(app: QApplication) -> None:
         xs = sorted({lista.visualRect(grande.index(i)).x() for i in range(10)})
         assert len(xs) == lista.colunas(), f"largura {largura}: o Qt montou {len(xs)} coluna(s), o cálculo previa {lista.colunas()}"
         if lista.colunas() > 1:
-            assert lista._largura_atual >= LARGURA_MINIMA_CARTAO, f"largura {largura}: card de {lista._largura_atual}px"
-        assert xs[-1] + lista._largura_atual <= lista.viewport().width(), f"largura {largura}: card estoura a área visível"
+            assert lista.largura_do_cartao() >= LARGURA_MINIMA_CARTAO, f"largura {largura}: card de {lista.largura_do_cartao()}px"
+        assert xs[-1] + lista.largura_do_cartao() <= lista.viewport().width(), f"largura {largura}: card estoura a área visível"
         colunas_por_largura.append(len(xs))
     assert colunas_por_largura == sorted(colunas_por_largura), "mais largura nunca pode dar menos colunas"
     assert colunas_por_largura[0] == 1 and colunas_por_largura[-1] >= 5
@@ -154,22 +186,30 @@ def testar_modelo_e_layout(app: QApplication) -> None:
     _ciclos(app)
     retangulo = lista.visualRect(grande.index(0))
     assert lista.indexAt(QPoint(retangulo.left() + 20, retangulo.top() + 20)).row() == 0
-    assert not lista.indexAt(QPoint(retangulo.left() + lista._largura_atual + 5, retangulo.top() + 20)).isValid(), "vão horizontal"
+    assert not lista.indexAt(QPoint(retangulo.left() + lista.largura_do_cartao() + 5, retangulo.top() + 20)).isValid(), "vão horizontal"
     assert not lista.indexAt(QPoint(retangulo.left() + 20, retangulo.top() + ALTURA_CARTAO + 5)).isValid(), "vão vertical"
     acionados: list[int] = []
     lista.acionado.connect(acionados.append)
-    QTest.mouseClick(lista.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(retangulo.left() + 30, retangulo.top() + 30))
-    assert acionados == [0] and lista.linha_atual() == 0, "clicar no card seleciona e aciona"
-    QTest.mouseClick(lista.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(retangulo.left() + lista._largura_atual + 5, retangulo.top() + 20))
-    assert acionados == [0], "clicar no vão não aciona nada"
+    vao = QPoint(retangulo.left() + lista.largura_do_cartao() + 5, retangulo.top() + 20)
+
+    _clicar(lista, 0)
+    assert acionados == [] and _selecionados(lista) == [0] and lista.linha_atual() == 0, "1 clique só seleciona (não abre nada)"
+    ponto_1 = _clicar(lista, 1)
+    assert acionados == [] and _selecionados(lista) == [1], "outro clique só move a seleção (uma só de cada vez)"
+    _duplo_clique(lista.viewport(), ponto_1)
+    assert acionados == [1] and _selecionados(lista) == [1], "duplo clique aciona uma vez e o card segue selecionado"
+    QTest.mouseClick(lista.viewport(), Qt.MouseButton.LeftButton, pos=vao)
+    _duplo_clique(lista.viewport(), vao)
+    assert acionados == [1] and _selecionados(lista) == [1], "clique e duplo clique no vão não fazem nada (nem tiram a seleção)"
     lista.setCurrentIndex(grande.index(3))
     QTest.keyClick(lista, Qt.Key.Key_Return)
-    assert acionados == [0, 3], "Enter no card selecionado também aciona"
+    assert acionados == [1, 3], "Enter (o duplo clique do teclado) no card selecionado também aciona"
     lista.clearSelection()
     lista.setCurrentIndex(grande.index(-1))
     QTest.keyClick(lista, Qt.Key.Key_Return)
-    assert acionados == [0, 3], "Enter sem card selecionado não aciona nada"
-    print("OK: clique no card seleciona e aciona; clique no vão entre cards e Enter sem seleção não fazem nada; Enter aciona.")
+    assert acionados == [1, 3], "Enter sem card selecionado não aciona nada"
+    print("OK: 1 clique só seleciona (sem abrir); duplo clique aciona; clique/duplo clique no vão entre cards e Enter "
+          "sem seleção não fazem nada; Enter aciona.")
     lista.close()
 
 
@@ -177,6 +217,21 @@ def _pixel(lista: ListaCartoes, linha_: int, dx: int) -> QColor:
     retangulo = lista.visualRect(lista.model().index(linha_))
     imagem = lista.viewport().grab().toImage()
     return imagem.pixelColor(retangulo.left() + dx, retangulo.top() + ALTURA_CARTAO // 2)
+
+
+def _pixel_da_borda(lista: ListaCartoes, linha_: int) -> QColor:
+    """Pixel da borda de cima do card (no meio, longe dos cantos arredondados)."""
+    retangulo = lista.visualRect(lista.model().index(linha_))
+    return lista.viewport().grab().toImage().pixelColor(retangulo.left() + 120, retangulo.top())
+
+
+def _rgb(cor: QColor) -> tuple[int, int, int]:
+    return cor.red(), cor.green(), cor.blue()
+
+
+def _mistura(fundo_hex: str, topo_hex: str, alfa: float) -> tuple[int, int, int]:
+    fundo, topo = _rgb(QColor(fundo_hex)), _rgb(QColor(topo_hex))
+    return tuple(round(f * (1 - alfa) + t * alfa) for f, t in zip(fundo, topo))
 
 
 def testar_desenho(app: QApplication) -> None:
@@ -200,12 +255,31 @@ def testar_desenho(app: QApplication) -> None:
                 assert obtido.rgb() == esperado.rgb(), f"{tema}/{status!r}: faixa {obtido.name()} != {esperado.name()}"
             fundo_card = _pixel(lista, 0, 120)  # meio do card, longe do texto: cor do card
             assert fundo_card.rgb() == QColor(PALETAS[tema]["bg_card"]).rgb(), f"{tema}: fundo do card {fundo_card.name()}"
+            borda_normal = _pixel_da_borda(lista, 0)
+            assert borda_normal.rgb() == QColor(PALETAS[tema]["borda"]).rgb(), f"{tema}: borda do card {borda_normal.name()}"
+
+            # o clique so seleciona, entao o card selecionado precisa se destacar: fundo azulado + borda mais grossa
+            lista.setCurrentIndex(modelo.index(0))
+            _ciclos(app)
+            selecionado = _pixel(lista, 0, 120)
+            esperado_sel = _mistura(PALETAS[tema]["bg_card"], PALETAS[tema]["destaque"], _ALFA_SELECAO / 255)
+            assert all(abs(a - b) <= 2 for a, b in zip(_rgb(selecionado), esperado_sel)), \
+                f"{tema}: fundo do card selecionado {selecionado.name()} != {esperado_sel}"
+            assert selecionado.rgb() != fundo_card.rgb(), f"{tema}: selecionado igual ao card normal"
+            borda_sel = _pixel_da_borda(lista, 0)
+            assert all(abs(a - b) <= 3 for a, b in zip(_rgb(borda_sel), _rgb(QColor(PALETAS[tema]["destaque"])))), \
+                f"{tema}: borda do card selecionado {borda_sel.name()} deveria ser a cor de destaque"
+            assert _pixel(lista, 1, 120).rgb() == QColor(PALETAS[tema]["bg_card"]).rgb(), "os outros cards não mudam"
+            lista.setCurrentIndex(QModelIndex())
+            lista.clearSelection()
+            _ciclos(app)
+            assert _pixel(lista, 0, 120).rgb() == fundo_card.rgb(), f"{tema}: tirar a seleção volta o card ao normal"
     finally:
         settings_mod.obter_tema = original_obter
         app.setStyleSheet("")
     lista.close()
-    print("OK: os 8 status pintam a faixa na cor certa e o card no fundo do tema; trocar escuro→claro→escuro com o app "
-          "aberto repinta tudo.")
+    print("OK: os 8 status pintam a faixa na cor certa e o card no fundo do tema; o card selecionado ganha fundo "
+          "azulado e borda de destaque nos dois temas; trocar escuro→claro→escuro com o app aberto repinta tudo.")
 
 
 # ---------------------------------------------------------------------------
@@ -225,29 +299,45 @@ def _criar_planilha_vazia(caminho: Path) -> None:
 
 class _Stubs:
     def __enter__(self):
-        self.orig = (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question, PropostaDialog.exec)
+        self.orig = (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
+                     ExpansorDeProposta.alternar, ExpansorDeProposta.nova)
+        alternar_original, nova_original = ExpansorDeProposta.alternar, ExpansorDeProposta.nova
         self.textos: list[str] = []
-        self.dialogos: list[PropostaDialog] = []
-        self.acao_exec = None  # funcao(dialogo) chamada dentro do exec simulado
+        self.dialogos: list[FormularioProposta] = []
+        self.acao_exec = None  # funcao(formulario) chamada logo depois de o card expandir
 
         def _msg(*args, **kwargs):
             self.textos.append(str(args[2]) if len(args) > 2 else "")
             return QMessageBox.StandardButton.Ok
 
-        def _exec(dialogo):
-            self.dialogos.append(dialogo)
+        def _entregar(expansor):
+            # entrega o formulario do card expandido ao teste; depois recolhe (o mesmo que o exec() simulado de
+            # antes, que devolvia Rejected): nada fica expandido entre um passo e outro
+            formulario = expansor.formulario()
+            self.dialogos.append(formulario)
             if self.acao_exec:
-                self.acao_exec(dialogo)
-                return dialogo.result()
-            return QDialog.DialogCode.Rejected
+                self.acao_exec(formulario)
+            expansor.descartar()
+
+        def _alternar(expansor, linha):
+            antes = expansor.formulario()
+            alternar_original(expansor, linha)
+            if expansor.formulario() is not None and expansor.formulario() is not antes:
+                _entregar(expansor)
+
+        def _nova(expansor, cpf, nome_cliente=None):
+            nova_original(expansor, cpf, nome_cliente)
+            if expansor.formulario() is not None:
+                _entregar(expansor)
 
         QMessageBox.warning = QMessageBox.critical = QMessageBox.information = staticmethod(_msg)
         QMessageBox.question = staticmethod(lambda *a, **k: (self.textos.append(str(a[2])), QMessageBox.StandardButton.Yes)[1])
-        PropostaDialog.exec = _exec
+        ExpansorDeProposta.alternar, ExpansorDeProposta.nova = _alternar, _nova
         return self
 
     def __exit__(self, *_):
-        QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question, PropostaDialog.exec = self.orig
+        (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
+         ExpansorDeProposta.alternar, ExpansorDeProposta.nova) = self.orig
 
 
 def _nomes_dos_cards(tela: PropostasScreen) -> list[str]:
@@ -283,7 +373,6 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         tela.show()
         _ciclos(app)
         assert tela._modelo.rowCount() == 5 and tela._contador.text().startswith("5 proposta(s)")
-        assert "clique em um card" in tela._contador.text()
         # mais recente primeiro (como sempre foi na lista)
         primeiro = tela._modelo.data(tela._modelo.index(0), Qt.ItemDataRole.UserRole)
         assert (primeiro["cliente"], primeiro["status"], primeiro["data"]) == ("JOSE BIA", "Efetivado", "09/03/2026")
@@ -315,44 +404,51 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         print("OK: busca por cliente/banco/equipamento/CPF e filtro de status funcionam nos cards, combinados, "
               "com a contagem e a mensagem de vazio.")
 
-        linha("5) Clicar no card abre a tela de leitura com os detalhes e os botões de copiar")
-        retangulo = tela._lista.visualRect(tela._modelo.index(1))  # card 2: MARIA ANA / Garantia Assinada (07/03)
-        QTest.mouseClick(tela._lista.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(retangulo.left() + 40, retangulo.top() + 30))
-        assert len(stubs.dialogos) == 1
+        linha("5) 1 clique seleciona (sem abrir); duplo clique abre a leitura com os detalhes e os botões de copiar")
+        # card 2: MARIA ANA / Garantia Assinada (07/03)
+        ponto = _clicar(tela._lista, 1)
+        assert stubs.dialogos == [], "1 clique não abre tela nenhuma"
+        assert tela._indice_real_selecionado() == tela._modelo.indice_real(1) and _selecionados(tela._lista) == [1]
+        _clicar(tela._lista, 3)
+        assert stubs.dialogos == [] and tela._indice_real_selecionado() == tela._modelo.indice_real(3), "outro clique só troca a seleção"
+        _clicar(tela._lista, 1)
+        assert stubs.dialogos == []
+        print("OK: 1 clique num card só o seleciona (a leitura não abre; clicar em outro card troca a seleção).")
+
+        _duplo_clique(tela._lista.viewport(), ponto)
+        assert len(stubs.dialogos) == 1, "duplo clique abre a leitura uma vez só"
         d = stubs.dialogos[0]
         assert d._modo_leitura and d._cpf == _cpf(0)
         assert (d._banco.currentText(), d._equipamento.currentText(), d._status.currentText()) == ("Smart", "Cadeira V", "Garantia Assinada")
         assert d._valor.value() == 50000 and d._meses.value() == 24 and d._observacoes.toPlainText() == "obs 50000"
         assert len(d._botoes_copiar) == 7, "a mesma tela de leitura de sempre, com copiar em cada campo"
-        assert d._botao_habilitar_edicao.isHidden() is False, "ADMIN pode habilitar a edição"
-        assert tela._indice_real_selecionado() is not None
-        print("OK: o clique abre a leitura da proposta certa (valor, meses, equipamento, banco, observações) "
+        assert d._botao_editar.isHidden() is False and d._botao_duplicar.isHidden() is False, "ADMIN pode editar e duplicar"
+        assert tela._indice_real_selecionado() == tela._modelo.indice_real(1), "o card aberto segue selecionado"
+        print("OK: o duplo clique abre a leitura da proposta certa (valor, meses, equipamento, banco, observações) "
               "com os 7 botões de copiar.")
 
+        # Enter no card selecionado tambem abre (o teclado e o "duplo clique")
         stubs.dialogos.clear()
-        tela._lista.setCurrentIndex(tela._modelo.index(0))
-        tela._botao_editar.click()
-        assert len(stubs.dialogos) == 1 and stubs.dialogos[0]._banco.currentText() == "Santander"
         tela._lista.setCurrentIndex(tela._modelo.index(4))
         QTest.keyClick(tela._lista, Qt.Key.Key_Return)
-        assert len(stubs.dialogos) == 2 and stubs.dialogos[1]._equipamento.currentText() == "Laser X", "Enter no card também abre"
-        tela._lista.setCurrentIndex(tela._modelo.index(-1))
-        tela._botao_editar.click()
-        assert len(stubs.dialogos) == 2 and "Clique em um card" in stubs.textos[-1], "sem card selecionado: avisa"
-        print("OK: botão Editar e Enter abrem o card selecionado; sem seleção o app avisa em vez de quebrar.")
+        assert len(stubs.dialogos) == 1 and stubs.dialogos[0]._equipamento.currentText() == "Laser X", "Enter no card também abre"
+        assert not hasattr(tela, "_botao_editar"), "o botão Editar fixo embaixo saiu: a edição é dentro do card expandido"
+        assert [b.text() for b in tela.findChildren(QPushButton) if b.isVisible() and b.text() in ("Editar", "Excluir", "+ Nova Proposta")] \
+            == ["Excluir", "+ Nova Proposta"], "embaixo só ficam Excluir e + Nova Proposta"
+        print("OK: Enter abre o card selecionado; não há mais botão Editar fixo (a edição é dentro do card expandido).")
 
-        linha("6) Editar: o card continua selecionado depois de salvar")
+        linha("6) Editar (dentro do card): o card continua selecionado depois de salvar")
         stubs.dialogos.clear()
-        tela._lista.setCurrentIndex(tela._modelo.index(2))  # 05/03: MARIA ANA / Aprovado
+        _clicar(tela._lista, 2)  # 05/03: MARIA ANA / Aprovado (1 clique)
         indice_antes = tela._indice_real_selecionado()
 
-        def _editar_e_salvar(dialogo: PropostaDialog) -> None:
+        def _editar_e_salvar(dialogo: FormularioProposta) -> None:
             dialogo._habilitar_edicao()
             dialogo._status.setCurrentText("Efetivado")
             dialogo._salvar()
 
         stubs.acao_exec = _editar_e_salvar
-        tela._botao_editar.click()
+        tela._expansor.alternar(tela._lista.linha_atual())  # duplo clique no card selecionado
         stubs.acao_exec = None
         assert tela._indice_real_selecionado() == indice_antes, "mesmo card (mesma proposta) segue selecionado"
         linha_do_card = tela._lista.linha_atual()
@@ -362,14 +458,15 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         linha("7) Excluir e Nova Proposta")
         stubs.textos.clear()
         total = tela._modelo.rowCount()
-        tela._lista.setCurrentIndex(tela._modelo.index(0))
+        _clicar(tela._lista, 0)  # 1 clique no card: o Excluir age sobre ele, sem duplo clique
         tela._botao_excluir.click()
-        assert "Tem certeza" in stubs.textos[-1] and tela._modelo.rowCount() == total - 1
+        assert "Tem certeza" in stubs.textos[-1] and "JOSE BIA" in stubs.textos[-1] and "Santander" in stubs.textos[-1], stubs.textos[-1]
+        assert tela._modelo.rowCount() == total - 1
         assert tela._lista.linha_atual() is None, "depois de excluir nenhum card fica selecionado (os índices mudam)"
         tela._botao_excluir.click()
         assert "Clique em um card" in stubs.textos[-1] and tela._modelo.rowCount() == total - 1
 
-        def _nova(dialogo: PropostaDialog) -> None:
+        def _nova(dialogo: FormularioProposta) -> None:
             dialogo._cliente_combo.setCurrentText(f"MARIA ANA — {_cpf(0)}")
             dialogo._valor.setValue(77777)
             dialogo._equipamento.setCurrentText("Equip Novo")
@@ -380,10 +477,10 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         tela._botao_nova.click()
         stubs.acao_exec = None
         assert tela._modelo.rowCount() == total, "a proposta nova aparece como um card"
-        print("OK: Excluir remove o card selecionado (e avisa se não há nenhum); + Nova Proposta cria um card novo.")
+        print("OK: Excluir remove o card selecionado com 1 clique (e avisa se não há nenhum); + Nova Proposta cria um card novo.")
         tela.close()
 
-        linha("8) Perfil VENDEDOR: cards e leitura, sem editar/excluir/criar")
+        linha("8) Perfil VENDEDOR: cards e leitura, sem excluir/criar (nem editar/duplicar no card)")
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario="ANA"))
         fonte_original = propostas_mod._ler_da_fonte_ativa
         propostas_mod._ler_da_fonte_ativa = lambda: sessao_mod.filtrar_por_vendedor_logado(bd.ler_propostas(arquivo))  # sem rede
@@ -399,13 +496,14 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
             tela_v.resize(1100, 700)
             tela_v.show()
             _ciclos(app)
-            assert tela_v._botao_editar.isHidden() and tela_v._botao_excluir.isHidden() and tela_v._botao_nova.isHidden()
+            assert tela_v._botao_excluir.isHidden() and tela_v._botao_nova.isHidden()
             assert set(_nomes_dos_cards(tela_v)) == {"MARIA ANA"}, "vendedor só vê as próprias propostas"
-            retangulo = tela_v._lista.visualRect(tela_v._modelo.index(0))
-            QTest.mouseClick(tela_v._lista.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(retangulo.left() + 40, retangulo.top() + 30))
-            assert len(stubs.dialogos) == 1, "vendedor abre o card na leitura"
+            ponto_v = _clicar(tela_v._lista, 0)
+            assert stubs.dialogos == [] and _selecionados(tela_v._lista) == [0], "vendedor: 1 clique só seleciona"
+            _duplo_clique(tela_v._lista.viewport(), ponto_v)
+            assert len(stubs.dialogos) == 1, "vendedor abre o card na leitura (duplo clique)"
             dv = stubs.dialogos[0]
-            assert dv._modo_leitura and dv._botao_habilitar_edicao.isHidden(), "sem 'Habilitar edição' pro vendedor"
+            assert dv._modo_leitura and dv._botao_editar.isHidden() and dv._botao_duplicar.isHidden(), "sem 'Editar' nem 'Duplicar' pro vendedor"
             assert dv._banco.currentText() and dv._valor.value() > 0 and len(dv._botoes_copiar) == 7
             tela_v.close()
         finally:
@@ -413,7 +511,7 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
             equipamentos_mod.listar_nomes_equipamento = equip_original
             sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
         print("OK: o vendedor vê só os próprios cards e lê os detalhes (com copiar) mesmo sem o .xlsx local; "
-              "não vê editar/excluir/criar nem 'Habilitar edição'.")
+              "não vê excluir/criar nem 'Editar'/'Duplicar' no card.")
         assert not [t for t in stubs.textos if "Erro" in t], stubs.textos
 
 

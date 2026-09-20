@@ -20,7 +20,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
-from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import CAMINHO_XLSX
@@ -31,9 +30,8 @@ from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from desktop.dialogs.proposta_dialog import PropostaDialog
 from desktop.screens.dashboard_screen import DashboardScreen
-from desktop.screens.ficha_cliente_screen import _COLUNAS_HISTORICO, FichaClienteScreen
+from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 
 
 def linha(titulo: str) -> None:
@@ -45,22 +43,23 @@ def testar_dashboard_screen(app: QApplication) -> None:
 
     tela = DashboardScreen()
     propostas = propostas_mod.listar_propostas()
-    totais = dashboard_mod.totais_gerais(propostas)
+    topo = dashboard_mod.indicadores_do_topo(propostas)
 
-    assert tela._card_total._valor.text() == str(totais["total_propostas"])
-    assert tela._card_em_analise._valor.text() == str(totais["em_analise"])
-    assert tela._card_aprovadas._valor.text() == str(totais["aprovadas"])
-    assert tela._card_negadas._valor.text() == str(totais["negadas"])
-    print(f"Cards batem com totais_gerais(): {totais}")
+    assert tela._card_em_analise.valor() == str(topo["em_analise"]["quantidade"])
+    assert tela._card_a_efetivar.valor() == str(topo["a_efetivar"]["quantidade"])
+    print(f"Cards batem com indicadores_do_topo(): {topo['em_analise']['quantidade']} em análise, {topo['a_efetivar']['quantidade']} a efetivar")
 
-    detalhamento_esperado = dashboard_mod.detalhamento_por_status(propostas)
-    assert tela._modelo_status.rowCount() == len(detalhamento_esperado)
-    assert tela._modelo_status.columnCount() == len(detalhamento_esperado.columns)
-    print(f"Tabela de detalhamento por status: {tela._modelo_status.rowCount()} linhas (esperado {len(detalhamento_esperado)})")
+    funil_esperado = dashboard_mod.funil_por_etapa(propostas)
+    assert [(e.etapa, e.quantidade) for e in tela._funil.etapas()] == [(e.etapa, e.quantidade) for e in funil_esperado]
+    print(f"Funil por etapa: {len(funil_esperado)} linhas, as mesmas de core/dashboard.py")
+
+    bancos_esperados = dashboard_mod.por_banco(propostas)
+    assert tela._tabela_bancos.total_de_linhas() == len(bancos_esperados)
+    print(f"Tabela por banco: {tela._tabela_bancos.total_de_linhas()} linhas (esperado {len(bancos_esperados)})")
 
     vendedor_esperado = dashboard_mod.por_vendedor(propostas)
-    assert tela._modelo_vendedor.rowCount() == len(vendedor_esperado)
-    print(f"Tabela de desempenho por vendedor: {tela._modelo_vendedor.rowCount()} linhas (esperado {len(vendedor_esperado)})")
+    assert tela._tabela_vendedores.total_de_linhas() == len(vendedor_esperado)
+    print(f"Tabela de desempenho por vendedor: {tela._tabela_vendedores.total_de_linhas()} linhas (esperado {len(vendedor_esperado)})")
 
     print("\nOK: DashboardScreen exibe exatamente o que core/dashboard.py calcula.")
 
@@ -98,9 +97,9 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
 
     indice_na_lista = next(
         i for i in range(tela._lista.count())
-        if tela._lista.item(i).data(256) == cliente_com_proposta["CPF/CNPJ"]  # Qt.ItemDataRole.UserRole == 256
+        if tela._lista.cpf_da_linha(i) == cliente_com_proposta["CPF/CNPJ"]
     )
-    tela._lista.setCurrentRow(indice_na_lista)
+    tela._lista.definir_linha_atual(indice_na_lista)
 
     assert tela._painel_stack.currentIndex() == 1
     assert tela._nome_label.text() == cliente_com_proposta["CLIENTE"]
@@ -113,7 +112,7 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     # da pra verificar sem abrir uma janela de verdade.
     historico_esperado = propostas_mod.historico_por_cpf(cpf_com_proposta)
     assert tela._modelo_historico.rowCount() == len(historico_esperado)
-    assert tela._tabela_historico.isHidden() is False
+    assert tela._contentor_historico.isHidden() is False
     assert tela._historico_vazio.isHidden() is True
     print(
         f"Selecionar '{cliente_com_proposta['CLIENTE']}' preencheu a ficha e o historico "
@@ -129,11 +128,11 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     )
     indice_sem_proposta = next(
         i for i in range(tela._lista.count())
-        if tela._lista.item(i).data(256) == cliente_sem_proposta["CPF/CNPJ"]
+        if tela._lista.cpf_da_linha(i) == cliente_sem_proposta["CPF/CNPJ"]
     )
-    tela._lista.setCurrentRow(indice_sem_proposta)
+    tela._lista.definir_linha_atual(indice_sem_proposta)
     assert tela._modelo_historico.rowCount() == 0
-    assert tela._tabela_historico.isHidden() is True
+    assert tela._contentor_historico.isHidden() is True
     assert tela._historico_vazio.isHidden() is False
     print(f"Selecionar '{cliente_sem_proposta['CLIENTE']}' (sem propostas) mostrou o estado vazio corretamente.")
 
@@ -206,7 +205,7 @@ def testar_edicao_proposta(app: QApplication) -> None:
     # QMessageBox.warning/critical/question sao modais - se a edicao for
     # rejeitada por algum motivo (valor em branco na proposta escolhida,
     # etc.) ou disparar a confirmacao de "campo recomendado em branco"/
-    # "possivel duplicata" (PropostaDialog._salvar), elas travam esperando
+    # "possivel duplicata" (FormularioProposta._salvar), elas travam esperando
     # um clique que nunca vem em modo headless. Stub por garantia.
     mensagens: list[str] = []
     original_warning = QMessageBox.warning
@@ -269,40 +268,26 @@ def testar_edicao_proposta(app: QApplication) -> None:
         tela._selecionar_por_cpf(cpf_alvo)
         assert tela._cpf_selecionado == cpf_alvo
 
-        # seleciona a primeira linha visivel da tabela de historico
-        indice_visual = tela._modelo_historico.index(0, 0)
-        tela._tabela_historico.selectionModel().select(
-            indice_visual,
-            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
-        )
+        # seleciona (1 clique) o primeiro card do historico
+        tela._lista_historico.setCurrentIndex(tela._modelo_historico.index(0))
         indice_real = tela._modelo_historico.indice_real(0)
         status_original = historico_antes.loc[indice_real, "STATUS"]
 
-        # _editar_proposta_selecionada() cria um PropostaDialog e chama
-        # .exec() nele, que abre um loop de eventos modal de verdade - sob
-        # QT_QPA_PLATFORM=offscreen isso as vezes nao registra o dialogo como
-        # "janela modal ativa" (QApplication.activeModalWidget() volta None),
-        # entao nao da pra confiar em pegar o dialogo de fora enquanto ele
-        # esta aberto. Em vez disso, troca PropostaDialog.exec por uma
-        # versao que "clica OK" direto, sem depender de loop de eventos.
-        original_exec = PropostaDialog.exec
-
-        def _exec_simulando_edicao(self):
-            assert self._status.currentText() == status_original, (
-                f"dialogo veio com status {self._status.currentText()!r}, esperado {status_original!r}"
-            )
-            assert self._modo_leitura, "proposta existente deveria abrir em modo leitura"
-            self._habilitar_edicao()
-            self._status.setCurrentText(propostas_mod.STATUS_APROVADO)
-            self._observacoes.setPlainText("editado no smoke test")
-            self._salvar()
-            return self.result()
-
-        PropostaDialog.exec = _exec_simulando_edicao
-        try:
-            tela._editar_proposta_selecionada()
-        finally:
-            PropostaDialog.exec = original_exec
+        # o duplo clique no card EXPANDE o proprio card (nao trava esperando ninguem, ao
+        # contrario do popup que existia): o teste pega o formulario aberto e "clica OK"
+        # direto, chamando _salvar()
+        tela._expansor.alternar(0)
+        formulario = tela._expansor.formulario()
+        assert formulario._status.currentText() == status_original, (
+            f"card veio com status {formulario._status.currentText()!r}, esperado {status_original!r}"
+        )
+        assert formulario._modo_leitura, "proposta existente deveria abrir em modo leitura"
+        formulario._habilitar_edicao()
+        formulario._status.setCurrentText(propostas_mod.STATUS_APROVADO)
+        formulario._observacoes.setPlainText("editado no smoke test")
+        formulario._salvar()
+        assert tela._expansor.formulario() is not formulario, "gravar recarrega o card (volta a leitura com o que foi gravado)"
+        tela._expansor.descartar()
 
         historico_depois = propostas_mod.historico_por_cpf(cpf_alvo)
         linha_editada = historico_depois.loc[indice_real]
@@ -315,7 +300,7 @@ def testar_edicao_proposta(app: QApplication) -> None:
         if mensagens:
             raise AssertionError(f"nao deveria ter mostrado nenhuma mensagem de erro, mostrou: {mensagens}")
 
-        print("\nOK: edição de proposta existente funciona de ponta a ponta (seleção → diálogo → gravação).")
+        print("\nOK: edição de proposta existente funciona de ponta a ponta (seleção → card expandido → gravação).")
     finally:
         QMessageBox.warning = original_warning
         QMessageBox.critical = original_critical
@@ -370,10 +355,11 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         print("OK: a URL inteira continua visível na ficha (só quebrada em várias linhas), nada foi cortado.")
 
         if not historico.empty:
-            idx_observacoes = _COLUNAS_HISTORICO.index("OBSERVAÇÕES")
-            largura_coluna = tela._tabela_historico.columnWidth(idx_observacoes)
-            assert largura_coluna <= 280, f"coluna OBSERVAÇÕES ficou com {largura_coluna}px - deveria estar limitada"
-            print(f"OK: coluna OBSERVAÇÕES da tabela de histórico limitada a {largura_coluna}px (Qt trunca com '...' e mostra o resto no tooltip).")
+            # os cards do historico nao mostram as observacoes (ficam na tela de leitura da proposta):
+            # a URL longa la nao pode pesar no tamanho da lista
+            largura_lista = tela._lista_historico.minimumSizeHint().width()
+            assert largura_lista < 400, f"a lista de cards do historico pede {largura_lista}px de largura minima"
+            print(f"OK: a lista de cards do histórico pede só {largura_lista}px de largura mínima, mesmo com a URL longa nas observações.")
 
         print("\nOK: texto longo sem espaço não estica mais o layout da Ficha de Cliente.")
     finally:

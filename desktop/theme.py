@@ -88,6 +88,29 @@ CORES_STATUS = {
     },
 }
 
+# Tipo do cliente (badge na lista de clientes da Ficha). Cores PROPRIAS, fora do
+# conjunto de CORES_STATUS, pra ninguem confundir o Tipo com um status de
+# proposta: indigo/azul-marinho pra Cliente e fucsia pra Avalista - e badge
+# SOLIDO (fundo cheio + texto branco), enquanto o status e uma pilula de fundo
+# suave com contorno. Distancia de cor (CIE Lab) de qualquer faixa/fundo de status
+# >= 25 e texto branco >= 4.5:1, conferidos em scripts/smoke_test_ficha_cards.py.
+CORES_TIPO = {
+    TEMA_ESCURO: {
+        "cliente": {"fundo": "#4f46e5", "texto": "#ffffff"},
+        "avalista": {"fundo": "#a21caf", "texto": "#ffffff"},
+        "neutro": {"fundo": "#4b5563", "texto": "#ffffff"},  # tipo em branco/desconhecido
+    },
+    TEMA_CLARO: {
+        "cliente": {"fundo": "#1e3a8a", "texto": "#ffffff"},
+        "avalista": {"fundo": "#86198f", "texto": "#ffffff"},
+        "neutro": {"fundo": "#6b7280", "texto": "#ffffff"},
+    },
+}
+
+# Bolinha "tem proposta em aberto" nos cards de cliente: um verde-limao, a unica
+# cor que sobra fora das dos status (verde, vermelho, ambar, azul, roxo, ciano).
+COR_EM_ABERTO = {TEMA_ESCURO: "#a3e635", TEMA_CLARO: "#65a30d"}
+
 
 def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     p = PALETAS.get(tema, PALETA_ESCURA)
@@ -99,49 +122,65 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         font-size: 13px;
     }}
 
+    /* contentor so pra agrupar widgets dentro de um card: sem fundo proprio. Sem
+       isto, a regra acima pinta nele a cor de fundo da JANELA (mais escura que a
+       do card) e ele aparece como uma faixa escura atras do que guarda. */
+    QWidget[role="transparente"] {{
+        background-color: transparent;
+    }}
+
+    /* texto solto sobre um card (ou qualquer fundo que nao seja o da janela): sem fundo proprio.
+       Sem isto, a regra global la em cima pinta em CADA rotulo a cor de fundo da JANELA (mais escura
+       que a do card) e ele aparece como uma faixa escura atras do texto. Os rotulos de campo da
+       Ficha de Cliente TEM esse fundo de proposito (e o visual dos campos): ver a regra seguinte. */
+    QLabel {{
+        background-color: transparent;
+    }}
+    QLabel[role="campo_rotulo"], QLabel[role="campo_valor"] {{
+        background-color: {p['bg']};
+    }}
+    /* o tooltip e um QLabel por baixo dos panos: precisa de fundo proprio, senao a regra de QLabel
+       acima o deixaria transparente (texto solto sobre a tela) */
+    QToolTip {{
+        background-color: {p['bg']};
+        color: {p['texto']};
+        border: 1px solid {p['borda']};
+    }}
+
     QFrame[role="sidebar"] {{
         background-color: {p['bg_sidebar']};
         border: none;
         border-right: 1px solid {p['borda']};
     }}
 
-    QListWidget {{
+    /* o desenho de cada linha do menu (icone, rotulo, selo, hover, selecao) e do delegate em
+       desktop/widgets/menu_lateral.py; aqui so a lista em si */
+    QListWidget[role="menu_lateral"] {{
         background-color: transparent;
         border: none;
         padding: 6px 10px;
         outline: none;
     }}
-    QListWidget::item {{
-        padding: 11px 14px;
-        border-radius: 8px;
-        margin: 2px 0px;
-        color: {p['texto_secundario']};
-    }}
-    QListWidget[recolhido="true"]::item {{
-        /* padding horizontal tem que ficar bem baixo - a barra recolhida so
-        tem 60px de largura (menos o padding proprio do QListWidget, 10px de
-        cada lado): qualquer coisa alem de ~2px de padding horizontal aqui
-        espreme o emoji pra fora da area de desenho e ele some (bug real ja
-        visto). O padding vertical pode ser bem maior sem esse problema -
-        aumentado pra aproximar a altura do icone aqui da altura que ele tem
-        no item expandido (padding vertical 11px, ver ::item acima). */
-        padding: 8px 2px;
-        margin: 2px 2px;
-    }}
-    QListWidget::item:selected {{
-        background-color: {p['destaque']};
-        color: white;
-        font-weight: 600;
-    }}
-    QListWidget::item:hover:!selected {{
-        background-color: {p['bg_card']};
-        color: {p['texto']};
+
+    /* rodape da barra lateral (sincronizacao, tema, sair, versao): um filete em cima */
+    QFrame[role="rodape_lateral"] {{
+        background-color: transparent;
+        border: none;
+        border-top: 1px solid {p['borda']};
     }}
 
     QLabel[role="titulo_app"] {{
         font-size: 15px;
         font-weight: 700;
         color: {p['texto']};
+    }}
+    QLabel[role="nome_do_usuario"] {{
+        font-weight: 600;
+        color: {p['texto']};
+    }}
+    QLabel[role="versao"] {{
+        font-size: 11px;
+        color: {p['texto_secundario']};
     }}
 
     QPushButton[role="botao_icone"] {{
@@ -159,26 +198,6 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         background-color: {p['borda']};
     }}
 
-    QPushButton[role="botao_tema"] {{
-        background-color: transparent;
-        border: none;
-        border-top: 1px solid {p['borda']};
-        border-radius: 0px;
-        text-align: left;
-        padding: 16px 18px;
-        color: {p['texto_secundario']};
-        font-size: 13px;
-    }}
-    QPushButton[role="botao_tema"]:hover {{
-        background-color: {p['bg_card']};
-        color: {p['texto']};
-        border-top: 1px solid {p['borda']};
-    }}
-    QPushButton[role="botao_tema"]:pressed {{
-        background-color: {p['borda']};
-        border-top: 1px solid {p['borda']};
-    }}
-
     QLabel[role="titulo"] {{
         font-size: 22px;
         font-weight: 600;
@@ -193,6 +212,66 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QLabel[role="valor_metrica"] {{
         font-size: 26px;
         font-weight: 700;
+    }}
+    /* o que um numero sozinho esconde (ex.: "0 efetivadas ate agora"): ambar, o mesmo da etapa "Em analise" */
+    QLabel[role="aviso"] {{
+        color: {CORES_STATUS[tema if tema in CORES_STATUS else TEMA_ESCURO]['em_analise']['texto']};
+        font-weight: 600;
+    }}
+    /* mensagem boa ("tudo em dia") */
+    QLabel[role="positivo"] {{
+        color: {p['sucesso']};
+        font-weight: 600;
+    }}
+
+    /* seletor de periodo do dashboard: botoes colados, so um marcado */
+    QPushButton[role="segmento"] {{
+        background-color: {p['bg_card']};
+        border: 1px solid {p['borda']};
+        border-radius: 0px;
+        padding: 5px 14px;
+        color: {p['texto_secundario']};
+    }}
+    QPushButton[role="segmento"][posicao="primeiro"] {{
+        border-top-left-radius: 6px;
+        border-bottom-left-radius: 6px;
+    }}
+    QPushButton[role="segmento"][posicao="ultimo"] {{
+        border-top-right-radius: 6px;
+        border-bottom-right-radius: 6px;
+    }}
+    QPushButton[role="segmento"]:hover {{
+        color: {p['texto']};
+        border: 1px solid {p['destaque']};
+    }}
+    QPushButton[role="segmento"]:checked {{
+        background-color: {p['destaque']};
+        border: 1px solid {p['destaque']};
+        color: white;
+        font-weight: 600;
+    }}
+
+    /* botao que parece link (ex.: "Ver 22"): sem caixa, na cor de destaque */
+    QPushButton[role="botao_link"] {{
+        background-color: transparent;
+        border: none;
+        padding: 2px 0px;
+        color: {p['destaque']};
+        font-weight: 600;
+        text-align: left;
+    }}
+    QPushButton[role="botao_link"]:hover {{
+        text-decoration: underline;
+    }}
+    QPushButton[role="botao_link"]:disabled {{
+        color: {p['texto']};
+    }}
+
+    /* a faixa "Filtro do dashboard: ..." no topo de Todas as Propostas */
+    QFrame[role="chip_filtro"] {{
+        background-color: {p['bg_card']};
+        border: 1px solid {p['destaque']};
+        border-radius: 8px;
     }}
 
     /* par legenda/valor da ficha do cliente (CPF, Celular, Nascimento...) -
@@ -209,6 +288,21 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         background-color: {p['bg_card']};
         border: 1px solid {p['borda']};
         border-radius: 8px;
+    }}
+
+    /* legenda pequena de cada campo do card de proposta expandido
+       (desktop/widgets/formulario_proposta.py): sem fundo proprio, senao a regra global
+       pintaria o da janela (mais escuro) numa faixa atras do texto, sobre o card */
+    QLabel[role="rotulo_do_cartao"] {{
+        background-color: transparent;
+        color: {p['texto_secundario']};
+        font-size: 11px;
+    }}
+    /* ainda dentro desse card: os campos de numero e as observacoes, EDITANDO, usam o mesmo fundo
+       dos combos - senao a regra global lhes daria o da janela (cinza/escuro demais no card) */
+    QWidget[formulario_proposta="true"] QAbstractSpinBox,
+    QWidget[formulario_proposta="true"] QPlainTextEdit {{
+        background-color: {p['bg_card']};
     }}
 
     QLineEdit {{
@@ -236,8 +330,8 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         border: 1px solid {p['destaque']};
     }}
 
-    /* campos travados (dialogo de proposta em modo leitura, propriedade
-       "travado" - ver desktop/dialogs/proposta_dialog.py): todos com a mesma
+    /* campos travados (formulario de proposta em modo leitura, propriedade
+       "travado" - ver desktop/widgets/formulario_proposta.py): todos com a mesma
        caixa dos combos/QLineEdit. Data/valor/meses e observacoes so ganham
        caixa estilizada aqui, travados - editando, o QSS de borda quebraria as
        setas de subir/descer do QSpinBox (ficam ilegiveis), por isso la
@@ -320,6 +414,13 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         background-color: {p['destaque_hover']};
         border: 1px solid {p['destaque_hover']};
         color: white;
+    }}
+
+    /* o "+ Nova proposta" da barra lateral recolhida vira so o "+": sem o padding lateral um botao
+       normal, o "+" nao cabe nos ~32 px e aparece cortado */
+    QPushButton[role="botao_primario"][compacto="true"] {{
+        padding: 6px 0px;
+        font-size: 16px;
     }}
 
     /* acao destrutiva (excluir) - vermelho, pra nunca passar despercebida */

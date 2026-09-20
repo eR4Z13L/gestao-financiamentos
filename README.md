@@ -126,13 +126,22 @@ venv\Scripts\python.exe scripts\smoke_test_dialogs.py
 venv\Scripts\python.exe scripts\smoke_test_formatters.py
 venv\Scripts\python.exe scripts\smoke_test_propostas_screen.py
 venv\Scripts\python.exe scripts\smoke_test_proposta_leitura.py
+venv\Scripts\python.exe scripts\smoke_test_cartao_expansivel.py
 venv\Scripts\python.exe scripts\smoke_test_vendedores.py
 venv\Scripts\python.exe scripts\smoke_test_usuarios_screen.py
 venv\Scripts\python.exe scripts\smoke_test_migracao_endereco.py
 venv\Scripts\python.exe scripts\smoke_test_ficha_cliente.py
+venv\Scripts\python.exe scripts\smoke_test_ficha_cards.py
 venv\Scripts\python.exe scripts\smoke_test_filtros_clientes.py
 venv\Scripts\python.exe scripts\smoke_test_status_efetivado.py
 venv\Scripts\python.exe scripts\smoke_test_cards_propostas.py
+venv\Scripts\python.exe scripts\smoke_test_cards_melhorias.py
+venv\Scripts\python.exe scripts\smoke_test_filtros_propostas.py
+venv\Scripts\python.exe scripts\smoke_test_barra_lateral_regras.py
+venv\Scripts\python.exe scripts\smoke_test_sincronizacao_estado.py
+venv\Scripts\python.exe scripts\smoke_test_barra_lateral.py
+venv\Scripts\python.exe scripts\smoke_test_dashboard_core.py
+venv\Scripts\python.exe scripts\smoke_test_dashboard_screen.py
 venv\Scripts\python.exe scripts\smoke_test_fase2.py
 ```
 
@@ -140,6 +149,17 @@ venv\Scripts\python.exe scripts\smoke_test_fase2.py
 mesmo assim só faz leitura (nunca escreve lá). Os outros desligam a
 sincronização (`config.SINCRONIZACAO_GOOGLE_ATIVADA = False`) pra nunca
 mandar dado de teste pra planilha real.
+
+Os testes da barra lateral (`*_barra_lateral*.py` e
+`smoke_test_sincronizacao_estado.py`) e do Dashboard (`smoke_test_dashboard_*.py`)
+vão além: usam uma planilha 100% fictícia (`scripts/fixture_ficticia.py`,
+montada a partir de `exemplo/`; o Dashboard usa a versão volumosa) e mandam as
+preferências do app (tema, última tela, tamanho da janela) pra um `.ini`
+temporário, então não leem nem gravam nada do registro do Windows — o teste
+confere isso no fim. As caixas de mensagem falsas, o isolamento e o bloqueio
+da rede ficam em `scripts/ambiente_de_teste.py`. Vale a regra de sempre: depois de rodar os
+testes, procure `Traceback` na saída inteira, não só o código de saída (uma
+exceção dentro de um slot do Qt só é impressa, e o processo sai com código 0).
 
 ## Gerar o .exe
 
