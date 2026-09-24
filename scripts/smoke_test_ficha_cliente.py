@@ -375,10 +375,9 @@ def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     # NUNCA o `CAMINHO_XLSX` importado no topo deste arquivo - esse continua apontando pra
     # planilha REAL (so serviu pra montar o `tmp` no main()).
     caminho_teste = clientes_mod.CAMINHO_XLSX
-    # nunca openpyxl.load_workbook() direto - usa core.data_store._carregar_planilha
-    # (desliga o gc durante a leitura, ver o comentario la - evita um segfault real)
-    wb = bd._carregar_planilha(caminho_teste)
-    try:
+    # nunca openpyxl.load_workbook() direto - usa o "with" que desliga o gc por toda a
+    # duracao do uso do workbook (ver o comentario em core.data_store._carregar_planilha)
+    with bd._carregar_planilha(caminho_teste) as wb:
         ws = wb[bd.ABA_CLIENTES]
         coluna_email = bd.CLIENTES_COLUNAS.index("EMAIL") + 1
         for linha_planilha in range(2, ws.max_row + 1):
@@ -388,8 +387,6 @@ def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
         else:
             raise AssertionError("cliente de teste não encontrado na planilha pra injetar o e-mail duplo")
         wb.save(caminho_teste)
-    finally:
-        wb.close()
     propostas_mod.adicionar_proposta(
         {"CPF": cpf, "DATA": pd.Timestamp(2026, 4, 1), "VALOR (R$)": 2000, "MESES": 12,
          "EQUIPAMENTO": "Equipamento X", "BANCO": "Banco Teste", "STATUS": "Em Análise", "OBSERVAÇÕES": ""}
