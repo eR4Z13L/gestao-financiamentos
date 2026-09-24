@@ -25,21 +25,50 @@ from core import auth
 from core import data_store as bd
 from core import sessao as sessao_mod
 
+_PALAVRA_INATIVO = "NÃO"
+
+
+def esta_ativo(valor_ativo: str) -> bool:
+    """So "Não" (sem diferenciar maiusculas) desativa - vazio (planilha de antes desta
+    coluna existir, ou vendedor nunca desativado) conta como ATIVO. Nunca desativa
+    ninguem so por causa de um dado ausente."""
+    return (valor_ativo or "").strip().upper() != _PALAVRA_INATIVO
+
 
 class ErroVendedor(Exception):
     """Erro de validacao de negocio (nao de leitura/escrita de arquivo)."""
 
 
 def listar_vendedores() -> list[str]:
+    """TODOS os vendedores (ativos e inativos) - usado onde um nome precisa continuar
+    "reconhecido" mesmo desativado (ex.: core.dashboard.por_vendedor, pra nao jogar o
+    historico de quem foi desativado no balde "Não identificado"). Pra escolher um
+    vendedor para trabalho NOVO (cadastro de cliente), use listar_vendedores_ativos()."""
     df = bd.ler_vendedores(CAMINHO_XLSX)
     return sorted({nome for nome in df["NOME"].tolist() if nome}, key=str.upper)
 
 
+def listar_vendedores_ativos() -> list[str]:
+    """Só os ATIVOS, em ordem alfabética - para pickers de trabalho novo (o combo de
+    Vendedor no cadastro de cliente). Um vendedor desativado não pode receber cliente
+    novo, mas o nome dele continua valendo nos filtros e no histórico (listar_vendedores)."""
+    df = bd.ler_vendedores(CAMINHO_XLSX)
+    return sorted({nome for nome, ativo in zip(df["NOME"], df["ATIVO"]) if nome and esta_ativo(ativo)}, key=str.upper)
+
+
 def listar_vendedores_detalhado() -> pd.DataFrame:
-    """Como listar_vendedores(), mas devolve o DataFrame completo (NOME +
-    SENHA_HASH/SALT, sem a senha em texto puro - so pra saber se ja foi
-    definida) - usado pela tela de gestão de usuários (ADMIN)."""
+    """Como listar_vendedores(), mas devolve o DataFrame completo (NOME, SENHA_HASH/SALT
+    -sem a senha em texto puro, so pra saber se ja foi definida-, ATIVO) - usado pela
+    tela de Administração (ADMIN)."""
     return bd.ler_vendedores(CAMINHO_XLSX)
+
+
+def contar_carteira(nome: str) -> int:
+    """Quantos clientes (CLIENTES.VENDEDOR) estao com `nome` hoje - sem diferenciar
+    maiusculas/espacos. E a "carteira" que precisa estar vazia pra desativar."""
+    df = bd.ler_clientes(CAMINHO_XLSX)
+    alvo = nome.strip().upper()
+    return int((df["VENDEDOR"].str.strip().str.upper() == alvo).sum())
 
 
 def adicionar_vendedor(nome: str) -> str:
@@ -58,7 +87,7 @@ def adicionar_vendedor(nome: str) -> str:
     if nome.upper() in existentes:
         return existentes[nome.upper()]
 
-    nova_linha = {"NOME": nome, "SENHA_HASH": "", "SALT": ""}
+    nova_linha = {"NOME": nome, "SENHA_HASH": "", "SALT": "", "ATIVO": "Sim"}
     df = pd.concat([df, pd.DataFrame([nova_linha])], ignore_index=True)
     bd.escrever_vendedores(CAMINHO_XLSX, df)
     return nome
@@ -105,12 +134,107 @@ def redefinir_senha(nome: str) -> str:
     return senha
 
 
+def desativar_vendedor(nome: str) -> None:
+    """Desativa o vendedor: para de aparecer nos seletores de trabalho novo e não
+    consegue mais logar (ver verificar_login), mas o nome continua valendo no histórico
+    (propostas/clientes já lançados nunca mudam). Só funciona com a carteira VAZIA -
+    transfira os clientes dele antes (ver transferir_carteira)."""
+    sessao_mod.exigir_admin()
+    df = bd.ler_vendedores(CAMINHO_XLSX)
+    alvo = df.index[df["NOME"].str.upper() == nome.strip().upper()]
+    if len(alvo) == 0:
+        raise ErroVendedor(f"Vendedor '{nome}' não encontrado.")
+    nome_oficial = df.loc[alvo[0], "NOME"]
+    carteira = contar_carteira(nome_oficial)
+    if carteira:
+        raise ErroVendedor(
+            f"'{nome_oficial}' ainda tem {carteira} cliente(s) na carteira. "
+            "Transfira a carteira para outro vendedor antes de desativar."
+        )
+    df.loc[alvo[0], "ATIVO"] = "Não"
+    bd.escrever_vendedores(CAMINHO_XLSX, df)
+
+
+def reativar_vendedor(nome: str) -> None:
+    """Reativa um vendedor desativado - volta a aparecer nos seletores e a poder logar."""
+    sessao_mod.exigir_admin()
+    df = bd.ler_vendedores(CAMINHO_XLSX)
+    alvo = df.index[df["NOME"].str.upper() == nome.strip().upper()]
+    if len(alvo) == 0:
+        raise ErroVendedor(f"Vendedor '{nome}' não encontrado.")
+    df.loc[alvo[0], "ATIVO"] = "Sim"
+    bd.escrever_vendedores(CAMINHO_XLSX, df)
+
+
+def transferir_carteira(de: str, para: str) -> int:
+    """Passa todos os clientes de `de` para `para` (CLIENTES.VENDEDOR) - usado antes de
+    desativar `de`, ou só pra redistribuir carteira. `para` precisa ser um vendedor
+    cadastrado e ATIVO. Devolve quantos clientes foram movidos (0 não é erro: a carteira
+    já podia estar vazia)."""
+    sessao_mod.exigir_admin()
+    de = (de or "").strip()
+    para = (para or "").strip()
+    if not de or not para:
+        raise ErroVendedor("Informe o vendedor de origem e o de destino.")
+    if de.upper() == para.upper():
+        raise ErroVendedor("Origem e destino não podem ser o mesmo vendedor.")
+
+    vendedores_df = bd.ler_vendedores(CAMINHO_XLSX)
+    alvo_destino = vendedores_df[vendedores_df["NOME"].str.upper() == para.upper()]
+    if alvo_destino.empty:
+        raise ErroVendedor(f"Vendedor de destino '{para}' não encontrado.")
+    nome_destino = alvo_destino.iloc[0]["NOME"]
+    if not esta_ativo(alvo_destino.iloc[0]["ATIVO"]):
+        raise ErroVendedor(f"'{nome_destino}' está desativado - reative antes de transferir a carteira para ele(a).")
+
+    df = bd.ler_clientes(CAMINHO_XLSX)
+    mascara = df["VENDEDOR"].str.strip().str.upper() == de.upper()
+    quantidade = int(mascara.sum())
+    if quantidade:
+        df.loc[mascara, "VENDEDOR"] = nome_destino
+        bd.escrever_clientes(CAMINHO_XLSX, df)
+    return quantidade
+
+
+def renomear_vendedor(nome_atual: str, novo_nome: str) -> str:
+    """Renomeia o vendedor no cadastro E em todos os clientes que estavam com ele -
+    CLIENTES.VENDEDOR e texto solto (nao um id), entao sem essa cascata o nome antigo
+    ficaria "orfao" nos clientes ja cadastrados. Devolve o nome novo, ja normalizado."""
+    sessao_mod.exigir_admin()
+    novo_nome = (novo_nome or "").strip()
+    if not novo_nome:
+        raise ErroVendedor("O novo nome não pode ficar em branco.")
+
+    vendedores_df = bd.ler_vendedores(CAMINHO_XLSX)
+    alvo = vendedores_df.index[vendedores_df["NOME"].str.upper() == nome_atual.strip().upper()]
+    if len(alvo) == 0:
+        raise ErroVendedor(f"Vendedor '{nome_atual}' não encontrado.")
+    nome_oficial_atual = vendedores_df.loc[alvo[0], "NOME"]
+
+    if novo_nome.upper() != nome_oficial_atual.upper():
+        duplicado = vendedores_df[
+            (vendedores_df["NOME"].str.upper() == novo_nome.upper()) & (vendedores_df.index != alvo[0])
+        ]
+        if not duplicado.empty:
+            raise ErroVendedor(f"Já existe um vendedor chamado '{duplicado.iloc[0]['NOME']}'.")
+
+    vendedores_df.loc[alvo[0], "NOME"] = novo_nome
+    bd.escrever_vendedores(CAMINHO_XLSX, vendedores_df)
+
+    clientes_df = bd.ler_clientes(CAMINHO_XLSX)
+    mascara = clientes_df["VENDEDOR"].str.strip().str.upper() == nome_oficial_atual.upper()
+    if mascara.any():
+        clientes_df.loc[mascara, "VENDEDOR"] = novo_nome
+        bd.escrever_clientes(CAMINHO_XLSX, clientes_df)
+    return novo_nome
+
+
 def verificar_login(nome: str, senha: str) -> str | None:
     """Confere usuario+senha contra o cadastro de vendedores, lido do Google
     Sheets (nao do .xlsx local - o vendedor pode estar em outro computador).
     Devolve o nome com a grafia oficial cadastrada se a senha confere, ou
-    None caso contrario (usuario inexistente ou senha errada - nao
-    distinguimos os dois casos na mensagem, por seguranca)."""
+    None caso contrario (usuario inexistente, senha errada ou vendedor
+    DESATIVADO - nao distinguimos os casos na mensagem, por seguranca)."""
     from core import data_store_sheets as bd_sheets
 
     df = bd_sheets.ler_vendedores()
@@ -118,6 +242,8 @@ def verificar_login(nome: str, senha: str) -> str | None:
     if alvo.empty:
         return None
     linha = alvo.iloc[0]
+    if not esta_ativo(linha.get("ATIVO", "")):
+        return None
     if auth.senha_confere(senha, linha.get("SENHA_HASH", ""), linha.get("SALT", "")):
         return linha["NOME"]
     return None

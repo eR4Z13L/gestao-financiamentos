@@ -57,6 +57,18 @@ _ultimo_sucesso: datetime | None = None
 _ultima_falha: datetime | None = None
 _ultimo_erro = ""
 
+# -- fila de repeticao (E9) ---------------------------------------------------------
+# Toda vez que uma sincronizacao e disparada, a aba entra aqui (o ultimo df que se
+# tentou mandar) e so sai quando ESSA tentativa especifica confirma sucesso. Assim,
+# se a rede cair, a aba fica "pendente" ate uma proxima tentativa dar certo - seja a
+# proxima ESCRITA de verdade naquela aba (fluxo de sempre), o botao "Sincronizar
+# agora" (core.sincronizacao), ou o timer periodico que chama reenviar_pendentes()
+# (desktop/main_window.py). Guardar o df (nao so o nome da aba) evita reler o disco
+# aqui - quem quiser reler antes de tentar de novo (como "Sincronizar agora") so
+# chama sincronizar_em_background() com um df fresco, que substitui o pendente.
+_pendentes_lock = threading.Lock()
+_pendentes: dict[str, pd.DataFrame] = {}
+
 
 @dataclass(frozen=True)
 class EstadoSincronizacao:
@@ -119,6 +131,8 @@ def _reiniciar_estado() -> None:
         _ultimo_sucesso = None
         _ultima_falha = None
         _ultimo_erro = ""
+    with _pendentes_lock:
+        _pendentes.clear()
 
 
 def _obter_cliente():
@@ -178,20 +192,30 @@ def _sincronizar_agora(nome_aba: str, df: pd.DataFrame) -> None:
 def sincronizar_em_background(nome_aba: str, df: pd.DataFrame) -> None:
     """Dispara a sincronizacao de `df` (o estado JA COMPUTADO/completo da
     aba, do jeito que core.data_store.ler_* devolve) numa thread separada.
-    Nunca bloqueia quem chamou nem propaga erro - so registra no log."""
+    Nunca bloqueia quem chamou nem propaga erro - so registra no log.
+
+    Enquanto essa tentativa nao confirmar sucesso, a aba fica em _pendentes - se essa
+    tentativa falhar, reenviar_pendentes() (chamado periodicamente, ver
+    desktop/main_window.py) tenta de novo sozinho, sem esperar a proxima escrita
+    naquela aba."""
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         return
+
+    with _pendentes_lock:
+        _pendentes[nome_aba] = df
 
     def _tarefa() -> None:
         erro: Exception | None = None
         try:
             _sincronizar_agora(nome_aba, df)
+            with _pendentes_lock:
+                if _pendentes.get(nome_aba) is df:  # nao apaga um pendente mais novo (outra tentativa ja disparada)
+                    del _pendentes[nome_aba]
             _logger.info("Sincronizado com o Google Sheets: aba %s (%d linha(s)).", nome_aba, len(df))
         except Exception as exc:
             erro = exc
             _logger.warning(
-                "Falha ao sincronizar a aba %s com o Google Sheets - "
-                "a proxima escrita local tenta de novo.",
+                "Falha ao sincronizar a aba %s com o Google Sheets - fica na fila de repeticao.",
                 nome_aba,
                 exc_info=True,
             )
@@ -206,3 +230,14 @@ def sincronizar_em_background(nome_aba: str, df: pd.DataFrame) -> None:
     except Exception as exc:  # sem thread nao ha sincronizacao: conta como falha, nunca em silencio
         _registrar_fim(exc)
         _logger.warning("Nao foi possivel iniciar a sincronizacao da aba %s.", nome_aba, exc_info=True)
+
+
+def reenviar_pendentes() -> None:
+    """Tenta de novo cada aba que ainda esta pendente (a ultima tentativa falhou, ou
+    nunca terminou). Chamada periodicamente (desktop/main_window.py) - assim uma queda
+    de rede passageira se resolve sozinha, sem esperar a proxima edicao naquela aba
+    nem precisar clicar em "Sincronizar agora"."""
+    with _pendentes_lock:
+        pendentes = dict(_pendentes)
+    for nome_aba, df in pendentes.items():
+        sincronizar_em_background(nome_aba, df)

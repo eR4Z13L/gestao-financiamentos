@@ -842,9 +842,22 @@ def testar_fundo_dos_rotulos_e_tooltip(amb: Ambiente, msgs: Mensagens, tema: str
     def transparente(rotulo: QLabel) -> bool:
         return fundo_proprio(rotulo).alpha() == 0
 
+    # Administração agora tem um QTabWidget por dentro (aba "Usuários"/"Sincronização e
+    # backup") - diferente do QStackedWidget de `janela` (cujas paginas nao-atuais MESMO
+    # ASSIM ganham geometria real, herdada do proprio `_paginas`), o QTabWidget SO da
+    # geometria de verdade pra aba atual depois de passar por um show() de verdade -
+    # sem navegar pra ca pelo menos uma vez, os rotulos de dentro (ex.: "Minha senha")
+    # ficam com altura 0 (grab() de 0x0), mesmo com isVisibleTo(tela) dando True.
+    janela.ir_para(PAGINA_ADMINISTRACAO)
+    QApplication.processEvents()
+
     # Dashboard, Administração e a barra lateral: rotulos sem fundo (sem a faixa escura sobre o card)
+    # isVisibleTo(tela): visivel se SO se olhar pra dentro de `tela` (ignora se `tela` em si
+    # e a pagina atual do QStackedWidget - isso nao afeta o grab()). Um rotulo dentro de algo
+    # com .setVisible(False) DIRETO (ex.: "Minha senha" recolhida) fica de fora, e com razao:
+    # o Qt nunca da geometria de verdade pra ele, e ninguem ve uma faixa que nunca e desenhada
     for nome, tela in (("Dashboard", janela._tela_dashboard), ("Administração", janela._tela_administracao), ("barra lateral", janela._sidebar)):
-        rotulos = tela.findChildren(QLabel)
+        rotulos = [r for r in tela.findChildren(QLabel) if r.isVisibleTo(tela)]
         assert len(rotulos) >= 3, nome
         com_fundo = [r.text() for r in rotulos if not transparente(r)]
         assert not com_fundo, f"{nome}: rotulos com fundo proprio (faixa atras do texto): {com_fundo}"
@@ -861,18 +874,23 @@ def testar_fundo_dos_rotulos_e_tooltip(amb: Ambiente, msgs: Mensagens, tema: str
     assert imagem.pixelColor(ponto).name() == QColor(paleta["bg_card"]).name(), (imagem.pixelColor(ponto).name(), paleta["bg_card"])
     print("OK: no card, atras do texto aparece a cor do proprio card.")
 
-    # Ficha de Cliente: os rotulos de CAMPO mantem o fundo de proposito (o visual de sempre)
+    # Ficha de Cliente: os rotulos de CAMPO agora sao texto puro, sem caixa/campo por
+    # trás (pedido do usuário - a Ficha é só leitura, não um formulário) - mesma regra
+    # sem fundo do resto do app
     janela.ir_para(PAGINA_FICHA)
     ficha = janela._tela_ficha
     ficha._selecionar_por_cpf(fx.CPF_MARIA)
     QApplication.processEvents()
-    de_campo = [r for r in ficha.findChildren(QLabel) if r.property("role") in ("campo_rotulo", "campo_valor")]
-    assert len(de_campo) >= 20, f"a Ficha deveria ter dezenas de rotulos de campo, achei {len(de_campo)}"
-    esperado = QColor(paleta["bg"])
-    for rotulo in de_campo:
-        fundo = fundo_proprio(rotulo)
-        assert fundo.alpha() == 255 and fundo.name() == esperado.name(), (rotulo.text(), fundo.name(), esperado.name())
-    print(f"OK: os {len(de_campo)} rotulos de campo da Ficha continuam com o fundo proprio (o visual dos campos).")
+    # isVisibleTo(ficha): um rotulo escondido (ex.: os campos do endereço expandido, que
+    # começam retraídos) nunca ganha geometria real e fica de fora
+    de_campo = [
+        r for r in ficha.findChildren(QLabel)
+        if r.property("role") in ("campo_rotulo", "campo_valor") and r.isVisibleTo(ficha)
+    ]
+    assert len(de_campo) >= 8, f"a Ficha deveria ter vários rótulos de campo visíveis, achei {len(de_campo)}"
+    com_fundo = [r.text() for r in de_campo if not transparente(r)]
+    assert not com_fundo, f"rótulos de campo da Ficha com fundo próprio (deveriam ser texto puro): {com_fundo}"
+    print(f"OK: os {len(de_campo)} rótulos de campo da Ficha são texto puro, sem caixa/campo por trás.")
 
     # o tooltip e um QLabel por baixo dos panos: tem que continuar opaco (e legivel)
     QToolTip.showText(QPoint(300, 300), "texto de teste do tooltip", janela)

@@ -58,7 +58,8 @@ def descrever_sincronizacao(estado: sheets_sync.EstadoSincronizacao, agora: date
             "Falhou — clique para ver",
             f"A última sincronização com o Google Sheets falhou em {_data_e_hora(estado.ultima_falha)}.\n\n"
             f"{estado.ultimo_erro}\n\n"
-            "Os dados continuam salvos neste computador. A próxima gravação tenta enviar de novo.",
+            "Os dados continuam salvos neste computador. O aplicativo tenta de novo sozinho em "
+            "instantes - ou clique em \"Sincronizar agora\" em Administração > Sincronização e backup.",
         )
     if nivel == sheets_sync.NIVEL_OK:
         return DescricaoDoIndicador(

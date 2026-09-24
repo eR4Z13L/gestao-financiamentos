@@ -224,6 +224,108 @@ def testar_erro_comprido_e_nivel() -> None:
     print(f"OK: {len(tabela)} combinacoes de estado -> nivel.")
 
 
+def testar_fila_de_repeticao() -> None:
+    linha("7) Fila de repeticao (E9): reenviar_pendentes() tenta de novo o que falhou")
+
+    def sempre_falha(aba, df):
+        raise RuntimeError("sem internet (falso)")
+
+    with _Ambiente(sempre_falha):
+        sheets_sync.sincronizar_em_background("ABA", DF)
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
+        assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_FALHOU
+        assert "ABA" in sheets_sync._pendentes, "a aba que falhou fica pendente"
+    print("OK: uma sincronizacao que falha deixa a aba na fila de repeticao.")
+
+    tentativas = []
+
+    def conta_e_funciona(aba, df):
+        tentativas.append(aba)
+
+    with _Ambiente(conta_e_funciona):
+        sheets_sync._pendentes["ABA"] = DF  # simula que "ABA" ja estava pendente de uma falha anterior
+        sheets_sync.reenviar_pendentes()
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
+        assert tentativas == ["ABA"], "reenviar_pendentes tentou de novo a aba pendente"
+        assert "ABA" not in sheets_sync._pendentes, "sucesso tira a aba da fila"
+        assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
+    print("OK: reenviar_pendentes() tenta de novo e, com sucesso, tira a aba da fila.")
+
+    with _Ambiente(conta_e_funciona):
+        tentativas.clear()
+        sheets_sync.reenviar_pendentes()  # nada pendente
+        assert tentativas == [], "sem nada pendente, reenviar_pendentes nao dispara nenhuma tentativa"
+    print("OK: sem nada pendente, reenviar_pendentes() nao faz nada.")
+
+
+def testar_fila_varias_abas_independentes() -> None:
+    linha("8) Fila: cada aba e independente (uma falha nao prende as outras)")
+    resultado_por_aba = {"A": "falha", "B": "ok"}
+
+    def envio(aba, df):
+        if resultado_por_aba[aba] == "falha":
+            raise RuntimeError(f"falha em {aba} (falso)")
+
+    with _Ambiente(envio):
+        sheets_sync.sincronizar_em_background("A", DF)
+        sheets_sync.sincronizar_em_background("B", DF)
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
+        assert set(sheets_sync._pendentes) == {"A"}, "so a aba que falhou fica pendente"
+    print("OK: 'A' falhou e ficou pendente, 'B' teve sucesso e nao ficou.")
+
+    def tudo_ok(aba, df):
+        pass
+
+    with _Ambiente(tudo_ok):
+        sheets_sync._pendentes["A"] = DF
+        sheets_sync.reenviar_pendentes()
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
+        assert "A" not in sheets_sync._pendentes
+    print("OK: a fila zera depois que a aba pendente sincroniza com sucesso.")
+
+
+def testar_fila_pendente_mais_novo_nao_e_apagado_por_tentativa_antiga() -> None:
+    linha("9) Fila: SUCESSO tardio de uma tentativa ANTIGA nao apaga um pendente mais NOVO")
+    liberar_antiga = threading.Event()
+    chegou_na_antiga = threading.Event()
+    liberar_nova = threading.Event()
+    chegou_na_nova = threading.Event()
+
+    def envio(aba, df):
+        # as DUAS "tem sucesso" (nao levantam) - so terminam em ordens diferentes
+        if df is DF_ANTIGO:
+            chegou_na_antiga.set()
+            assert liberar_antiga.wait(5), "o teste nao liberou a tentativa antiga"
+        else:
+            chegou_na_nova.set()
+            assert liberar_nova.wait(5), "o teste nao liberou a tentativa nova"
+
+    DF_ANTIGO = pd.DataFrame({"A": [1]})
+    DF_NOVO = pd.DataFrame({"A": [2]})
+
+    with _Ambiente(envio):
+        sheets_sync.sincronizar_em_background("ABA", DF_ANTIGO)
+        assert chegou_na_antiga.wait(5)
+        assert sheets_sync._pendentes["ABA"] is DF_ANTIGO
+
+        # dispara a NOVA (registra o pendente novo) ANTES da antiga confirmar sucesso
+        sheets_sync.sincronizar_em_background("ABA", DF_NOVO)
+        assert chegou_na_nova.wait(5)
+        assert sheets_sync._pendentes["ABA"] is DF_NOVO
+
+        liberar_antiga.set()  # a ANTIGA agora "confirma sucesso" - tardiamente, DEPOIS da nova ja estar pendente
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 1)  # so a nova continua em andamento
+        assert sheets_sync._pendentes.get("ABA") is DF_NOVO, (
+            "o sucesso da tentativa ANTIGA nao pode ter apagado o pendente da tentativa NOVA, ainda em andamento"
+        )
+        print("OK: o sucesso 'tardio' da tentativa antiga não apagou o pendente mais novo, ainda em andamento.")
+
+        liberar_nova.set()  # agora a NOVA tambem confirma sucesso - essa sim pode limpar a fila
+        _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
+        assert "ABA" not in sheets_sync._pendentes, "com a tentativa NOVA confirmada, agora sim a fila esvazia"
+    print("OK: só o sucesso da tentativa que de fato está pendente tira a aba da fila.")
+
+
 def main() -> None:
     testar_desativada()
     testar_sincronizando_e_ok()
@@ -231,6 +333,9 @@ def main() -> None:
     testar_varias_ao_mesmo_tempo()
     testar_thread_que_nao_inicia()
     testar_erro_comprido_e_nivel()
+    testar_fila_de_repeticao()
+    testar_fila_varias_abas_independentes()
+    testar_fila_pendente_mais_novo_nao_e_apagado_por_tentativa_antiga()
     assert config.SINCRONIZACAO_GOOGLE_ATIVADA is False
     linha("TUDO OK")
 

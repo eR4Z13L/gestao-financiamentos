@@ -126,9 +126,12 @@ def testar_leitura_sheets_bate_com_local() -> None:
     print(f"OK: PROPOSTAS no Sheets bate com o local ({len(propostas_sheets)} linhas, tipos corretos).")
 
     vendedores_sheets = bd_sheets.ler_vendedores()
-    assert set(vendedores_sheets.columns) == {"NOME", "SENHA_HASH", "SALT"}
-    assert (vendedores_sheets["SENHA_HASH"] != "").all(), "todo vendedor deveria ter senha definida"
-    print(f"OK: VENDEDORES no Sheets tem {len(vendedores_sheets)} linha(s), todas com senha definida.")
+    assert set(vendedores_sheets.columns) == {"NOME", "SENHA_HASH", "SALT", "ATIVO"}
+    # nao exige TODOS com senha definida: um vendedor recem-importado/cadastrado fica
+    # "Pendente" ate o admin gerar a senha inicial pela tela (core.vendedores.
+    # gerar_senhas_iniciais_pendentes) - um estado valido, nao um erro de sincronizacao.
+    pendentes = int((vendedores_sheets["SENHA_HASH"] == "").sum())
+    print(f"OK: VENDEDORES no Sheets tem {len(vendedores_sheets)} linha(s) ({pendentes} com senha pendente).")
 
 
 def testar_login_vendedor_recusa_casos_invalidos() -> None:

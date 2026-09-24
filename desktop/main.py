@@ -6,6 +6,7 @@ Rodar a partir da raiz do projeto com:
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -13,11 +14,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
+from core import backup as backup_mod
 from core import sessao as sessao_mod
 from desktop import settings as settings_mod
 from desktop.dialogs.login_dialog import LoginDialog
 from desktop.main_window import MainWindow
 from desktop.theme import build_stylesheet
+
+_logger = logging.getLogger(__name__)
+
+
+def _fazer_backup_diario_sem_travar_entrada(janela) -> None:
+    """Backup automático (1x por dia) ao abrir o app. Roda DEPOIS da janela principal
+    já estar de pé - nunca atrasa nem impede a entrada por causa disso; se falhar,
+    avisa (nunca em silêncio) mas o app continua funcionando normalmente."""
+    try:
+        backup_mod.backup_diario_se_necessario()
+    except Exception as exc:  # nunca falhar em silencio
+        _logger.warning("Backup automático diário falhou: %s", exc)
+        QMessageBox.warning(
+            janela,
+            "Backup automático falhou",
+            f"Não foi possível fazer o backup automático de hoje:\n\n{type(exc).__name__}: {exc}\n\n"
+            "O aplicativo continua funcionando normalmente - você pode tentar de novo em "
+            "Administração > Sincronização e backup.",
+        )
 
 
 def entrar() -> bool:
@@ -81,6 +102,7 @@ def main() -> None:
     controlador = ControladorDaJanela(app)
     if not controlador.abrir():
         sys.exit(1)
+    _fazer_backup_diario_sem_travar_entrada(controlador.janela)
 
     sys.exit(app.exec())
 

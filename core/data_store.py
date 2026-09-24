@@ -83,8 +83,11 @@ EQUIPAMENTOS_COLUNAS = [
 
 # Cadastro proprio de vendedores - existe pra nao depender de "quem ja foi
 # usado em CLIENTES" (uma aba a mais). SENHA_HASH/SALT sao do login da Fase 2
-# (core/auth.py) - a senha em texto puro NUNCA e gravada em lugar nenhum.
-VENDEDORES_COLUNAS = ["NOME", "SENHA_HASH", "SALT"]
+# (core/auth.py) - a senha em texto puro NUNCA e gravada em lugar nenhum. ATIVO
+# e a coluna do desligamento (Administracao/Usuarios): "Não" desativa, QUALQUER
+# outra coisa (inclusive vazio, de planilha anterior a esta coluna existir) conta
+# como ativo - ver vendedores.esta_ativo().
+VENDEDORES_COLUNAS = ["NOME", "SENHA_HASH", "SALT", "ATIVO"]
 
 # Colunas realmente digitadas/gravadas na aba PROPOSTAS.
 PROPOSTAS_COLUNAS_EDITAVEIS = [
@@ -170,7 +173,7 @@ _EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
 _PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES"]
 _PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES"]
-_VENDEDORES_COLUNAS_TEXTO = ["NOME", "SENHA_HASH", "SALT"]
+_VENDEDORES_COLUNAS_TEXTO = ["NOME", "SENHA_HASH", "SALT", "ATIVO"]
 
 
 class ErroArquivoBloqueado(Exception):
@@ -354,10 +357,24 @@ def _garantir_aba_vendedores(wb) -> bool:
     return True
 
 
+def _garantir_coluna_ativo_vendedores(wb) -> bool:
+    """Escreve o titulo 'ATIVO' na 4a coluna da aba VENDEDORES se ainda nao tiver
+    (planilha de antes dessa coluna existir) - NUNCA mexe em nenhuma celula de dado,
+    so o cabecalho: um vendedor sem ATIVO preenchido ja conta como ativo (ver
+    vendedores.esta_ativo()), entao nao ha nada pra "migrar" nas linhas existentes."""
+    ws = wb[ABA_VENDEDORES]
+    celula = ws.cell(row=1, column=4)
+    if _normalizar_texto(celula.value) == "ATIVO":
+        return False
+    celula.value = "ATIVO"
+    return True
+
+
 def ler_vendedores(caminho_xlsx: Path) -> pd.DataFrame:
     wb = _carregar_planilha(caminho_xlsx)
     try:
         migrou = _garantir_aba_vendedores(wb)
+        migrou = _garantir_coluna_ativo_vendedores(wb) or migrou
         if migrou:
             _salvar_planilha(wb, caminho_xlsx)
         linhas = list(_linhas_da_aba(wb[ABA_VENDEDORES], len(VENDEDORES_COLUNAS)))

@@ -20,9 +20,30 @@ _ITERACOES_PBKDF2 = 200_000
 # gerada automaticamente e passada por mensagem
 _ALFABETO_SENHA = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
 
+SENHA_MINIMA = 8  # tamanho minimo pra senha do ADMIN escolhida a mao (a gerada pro vendedor ja nasce com 8)
+
 
 def gerar_senha_aleatoria(tamanho: int = 8) -> str:
     return "".join(secrets.choice(_ALFABETO_SENHA) for _ in range(tamanho))
+
+
+def forca_da_senha(senha: str) -> str:
+    """"fraca"/"média"/"forte" - so um indicador visual pra quem esta digitando, nunca
+    bloqueia nada alem do tamanho minimo (SENHA_MINIMA, conferido em quem chama). Leva em
+    conta o tamanho e a variedade de tipos de caractere (minuscula/maiuscula/numero/simbolo)."""
+    if len(senha) < SENHA_MINIMA:
+        return "fraca"
+    variedade = sum((
+        any(c.islower() for c in senha),
+        any(c.isupper() for c in senha),
+        any(c.isdigit() for c in senha),
+        any(not c.isalnum() for c in senha),
+    ))
+    if len(senha) >= 12 and variedade >= 3:
+        return "forte"
+    if variedade >= 2:
+        return "média"
+    return "fraca"
 
 
 def hash_senha(senha: str, salt_hex: str | None = None) -> tuple[str, str]:

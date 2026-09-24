@@ -2,6 +2,7 @@
 # valores) - NUNCA deve ir para o repositorio. Uma copia de exemplo com
 # dados ficticios fica em exemplo/controle_financiamentos_exemplo.xlsx.
 data/*.xlsx
+data/backups/
 !data/.gitkeep
 ~$*.xlsx
 

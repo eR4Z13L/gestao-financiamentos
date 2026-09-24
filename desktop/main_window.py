@@ -65,6 +65,7 @@ _MARGEM_LATERAL = 14
 _MARGEM_LATERAL_RECOLHIDA = 12  # (59 uteis - 34 do avatar) / 2: a barra tem 1 px de borda, e o avatar cabe inteiro
 _TAMANHO_INICIAL = (1200, 800)
 _INTERVALO_DO_INDICADOR_MS = 2000  # relê so a memoria (nunca a rede): barato
+_INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS = 60_000  # rede de verdade: nao martelar a API a cada 2s
 
 
 class MainWindow(QMainWindow):
@@ -99,6 +100,10 @@ class MainWindow(QMainWindow):
         # o Dashboard nao muda dado, mas mostra o que outras telas mudam: reler quando voltar a ele
         self._tela_propostas.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
         self._tela_ficha.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
+        # Administracao (Restaurar backup) so existe pro ADMIN - pode ter mudado TUDO
+        if hasattr(self, "_tela_administracao"):
+            self._tela_administracao.dados_atualizados.connect(self._atualizar_selo_propostas)
+            self._tela_administracao.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
         self._tela_dashboard.ficha_pedida.connect(self.abrir_ficha_do_cliente)
@@ -108,6 +113,12 @@ class MainWindow(QMainWindow):
         self._temporizador_do_indicador = QTimer(self)
         self._temporizador_do_indicador.timeout.connect(self._atualizar_indicador_de_sincronizacao)
         self._temporizador_do_indicador.start(_INTERVALO_DO_INDICADOR_MS)
+
+        # fila de repeticao (E9): reenvia sozinho o que falhou, sem esperar a proxima
+        # edicao daquela aba nem precisar clicar em "Sincronizar agora"
+        self._temporizador_da_fila = QTimer(self)
+        self._temporizador_da_fila.timeout.connect(sheets_sync.reenviar_pendentes)
+        self._temporizador_da_fila.start(_INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS)
 
         # abre na ultima tela usada (se ela existe pra este usuario); escolher() ja atualiza o selo
         # e o indicador, como qualquer troca de tela
