@@ -235,7 +235,7 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
     _escolher(tela._ordenacao, "Nome (A-Z)")
     cpf_daniel = tela._lista.cpf_da_linha(A_Z.index("DANIEL GAMA"))
     tela._selecionar_por_cpf(cpf_daniel)
-    assert tela._painel_stack.currentIndex() == 1 and tela._nome_label.text() == "DANIEL GAMA"
+    assert tela._painel_stack.currentIndex() == 1 and tela._campo_nome.text() == "DANIEL GAMA"
     _escolher(tela._ordenacao, "Data de cadastro (mais recente primeiro)")
     assert tela._painel_stack.currentIndex() == 1 and tela._cpf_selecionado == cpf_daniel, "reordenar nao pode fechar a ficha"
     assert tela._lista.linha_atual() == MAIS_RECENTE.index("DANIEL GAMA") and tela._lista.linha_atual() == 1
@@ -264,37 +264,31 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
         ClienteDialog.exec = _exec_cadastro
         tela._abrir_cadastro_cliente()
         assert tela._filtro_vendedor.currentIndex() == 0 and tela._filtro_tipo.currentIndex() == 0, "filtros limpos pra mostrar o novo"
-        assert tela._cpf_selecionado == cpf_novo and tela._nome_label.text() == "IRENE NOVA" and tela._painel_stack.currentIndex() == 1
+        assert tela._cpf_selecionado == cpf_novo and tela._campo_nome.text() == "IRENE NOVA" and tela._painel_stack.currentIndex() == 1
         assert tela._contador.text() == "9 cliente(s)"
         print("OK: cliente novo fora do filtro atual: filtros limpos e a ficha dele abre.")
 
         # editar mantendo o cliente dentro do filtro: filtro e ficha atualizada continuam
+        # (a edicao agora e INLINE - nao abre mais o ClienteDialog pra um cliente existente)
         _escolher(tela._filtro_vendedor, "BIA")
         tela._selecionar_por_cpf(cpf_novo)
 
-        def _exec_edicao_email(self):
-            clientes_mod.atualizar_cliente(cpf_novo, {"CPF/CNPJ": cpf_novo, "CLIENTE": "IRENE NOVA", "TIPO": "Cliente", "EMAIL": "irene@exemplo.com"})
-            self.cpf_salvo = cpf_novo
-            self.accept()
-            return QDialog.DialogCode.Accepted
-
-        ClienteDialog.exec = _exec_edicao_email
-        tela._abrir_edicao_cliente()
+        tela._alternar_edicao_cliente()
+        tela._campo_email.setText("irene@exemplo.com")
+        tela._salvar_edicao_cliente()
         assert tela._filtro_vendedor.currentText() == "BIA", "continua no filtro: nao precisa limpar"
         assert "irene@exemplo.com" in tela._campo_email.text(), "ficha aberta tem que mostrar o que acabou de ser salvo"
         print("OK: editar quem continua no filtro mantém o filtro e atualiza a ficha aberta.")
 
         # editar tirando o cliente do filtro (troca de vendedor)
-        def _exec_troca_vendedor(self):
-            clientes_mod.atualizar_cliente(cpf_novo, {"CPF/CNPJ": cpf_novo, "CLIENTE": "IRENE NOVA", "TIPO": "Cliente", "VENDEDOR": "ANA"})
-            self.cpf_salvo = cpf_novo
-            self.accept()
-            return QDialog.DialogCode.Accepted
-
-        ClienteDialog.exec = _exec_troca_vendedor
-        tela._abrir_edicao_cliente()
-        assert tela._filtro_vendedor.currentIndex() == 0 and tela._cpf_selecionado == cpf_novo
-        assert "Vendedor: ANA" in tela._sub_info.text()
+        tela._alternar_edicao_cliente()
+        tela._campo_vendedor.setCurrentText("ANA")
+        tela._salvar_edicao_cliente()
+        # o campo de CPF tem mascara (como o do ClienteDialog): salvar sem MUDAR o cpf de
+        # verdade ainda reescreve o valor com a formatacao ("123.456.830-66"), entao
+        # compara por DIGITOS (mesma logica que _salvar_edicao_cliente usa em cpf_mudou)
+        assert tela._filtro_vendedor.currentIndex() == 0 and apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
+        assert tela._campo_vendedor.currentText() == "ANA"
         print("OK: editar e sair do filtro atual: filtros limpos e a ficha continua na tela.")
     finally:
         ClienteDialog.exec = original_exec

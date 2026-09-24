@@ -817,7 +817,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
         via.tela._selecionar_por_cpf(via.cpfs["beta"])  # outro cliente: o card expandido era da ALFA
         _ciclos(app)
         assert not expansor.esta_expandido() and stubs.titulos == ["Alterações descartadas"], stubs.titulos
-        assert via.tela._nome_label.text() == "BETA AVALISTA" and via.modelo.total() == 1 and not via.modelo.tem_rascunho()
+        assert via.tela._campo_nome.text() == "BETA AVALISTA" and via.modelo.total() == 1 and not via.modelo.tem_rascunho()
         via.tela._selecionar_por_cpf(via.cpfs["alfa"])
         _ciclos(app)
         # o card 'Nova proposta' e DO cliente: trocar de cliente o descarta (senao apareceria no historico do outro)

@@ -35,7 +35,7 @@ from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
-from core.validators import _digito_verificador_cpf
+from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -253,7 +253,7 @@ def testar_ficha(app: QApplication) -> None:
     # ultimo - Contato nem aparece (este cliente nao tem celular/e-mail/rede social)
     assert y(tela._campo_cpf) < y(tela._resumo_label) < y(tela._campo_nascimento)
     assert tela._secao_contato.isHidden(), "sem celular/e-mail/rede social: a seção Contato nem aparece"
-    assert tela._campo_nascimento.text() == "20/07/1990"
+    assert tela._campo_nascimento.texto() == "20/07/1990"
     print("OK: CPF no cabeçalho, resumo logo abaixo, Nascimento em 'Pessoal'; 'Contato' some sem nenhum dado de contato.")
 
     # pai/mãe/profissão/vinculado (vazios neste cliente) comecam ESCONDIDOS atrás do
@@ -262,7 +262,10 @@ def testar_ficha(app: QApplication) -> None:
     assert tela._link_pessoal_vazios.text() == '<a href="#">+ 4 campos vazios</a>'
     tela._alternar_pessoal_vazios()
     assert not tela._pessoal_campos_opcionais[0].isHidden() and tela._link_pessoal_vazios.text() == '<a href="#">Ocultar campos vazios</a>'
-    assert [tela._campo_nome_pai.text(), tela._campo_nome_mae.text(), tela._campo_profissao.text()] == ["—"] * 3
+    # agora sao QLineEdit editaveis: vazio de verdade e SEM texto (o "—" e so o
+    # placeholder, pra nao virar um valor de verdade quando a pessoa for editar)
+    assert [tela._campo_nome_pai.text(), tela._campo_nome_mae.text(), tela._campo_profissao.text()] == [""] * 3
+    assert all(c.placeholderText() == "—" for c in (tela._campo_nome_pai, tela._campo_nome_mae, tela._campo_profissao))
     tela._alternar_pessoal_vazios()  # volta a esconder, pro resto do teste seguir no estado padrão
     assert tela._pessoal_campos_opcionais[0].isHidden()
     print("OK: campos vazios de 'Pessoal' ficam escondidos atrás de um link ('+N campos vazios' / 'Ocultar campos vazios').")
@@ -410,9 +413,11 @@ def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     print("OK: com só Nascimento e Vinculado visíveis, ficam lado a lado na mesma linha (sem buraco no meio).")
 
     # 2 e-mails digitados juntos (separados por espaço) viram 2 links de mailto, um em cada linha
-    assert tela._campo_email.text().count("mailto:") == 2
-    assert 'href="mailto:primeiro@exemplo.com"' in tela._campo_email.text()
-    assert 'href="mailto:segundo@exemplo.com"' in tela._campo_email.text()
+    # (em modo LEITURA quem mostra o link e _rotulo_email - _campo_email e o QLineEdit de edicao,
+    # que nao renderiza HTML)
+    assert tela._rotulo_email.text().count("mailto:") == 2
+    assert 'href="mailto:primeiro@exemplo.com"' in tela._rotulo_email.text()
+    assert 'href="mailto:segundo@exemplo.com"' in tela._rotulo_email.text()
     print("OK: dois e-mails digitados juntos no mesmo campo viram 2 links de mailto separados.")
 
     # caso real encontrado na planilha migrada: 2 e-mails + um TELEFONE (com espaço por
@@ -425,6 +430,86 @@ def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     # resumo com 0 aprovadas: sem o segmento redundante "nenhuma aprovada" (só "0 aprovadas" já diz)
     assert "aprovadas" in tela._resumo_label.text() and "nenhuma aprovada" not in tela._resumo_label.text()
     print(f"OK: resumo sem redundância quando 0 aprovadas: {tela._resumo_label.text()!r}")
+    tela.close()
+
+
+def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
+    linha("3c) Edição inline (Editar/OK/Cancelar): valida sem QMessageBox, salva, cancela descarta")
+    cpf = _cpf(77)
+    clientes_mod.adicionar_cliente({
+        "CPF/CNPJ": cpf, "CLIENTE": "OSCAR TESTE", "TIPO": "Cliente",
+        "EMAIL": "oscar@exemplo.com",
+    })
+    tela = FichaClienteScreen()
+    tela.resize(1300, 800)
+    tela.show()
+    tela._selecionar_por_cpf(cpf)
+    app.processEvents()
+
+    assert tela._botao_editar_cliente.isVisible() and not tela._botao_ok_cliente.isVisible()
+    tela._alternar_edicao_cliente()
+    assert not tela._campo_nome.isReadOnly() and tela._botao_ok_cliente.isVisible() and not tela._botao_editar_cliente.isVisible()
+    print("OK: 'Editar' destrava os campos e troca os botões por OK/Cancelar.")
+
+    # nome vazio: rejeitado, campo marcado invalido, SEM QMessageBox (diferente do ClienteDialog)
+    antes = len(msgs.textos)
+    tela._campo_nome.setText("")
+    tela._salvar_edicao_cliente()
+    assert tela._campo_nome.property("invalido") is True
+    assert not tela._modo_leitura_cliente, "continua em edição - não salvou"
+    assert len(msgs.textos) == antes, "erro de validação não deveria abrir QMessageBox"
+    assert clientes_mod.buscar_por_cpf(cpf)["CLIENTE"] == "OSCAR TESTE", "nada foi gravado"
+    print("OK: nome vazio é rejeitado (campo marcado, sem QMessageBox, nada gravado).")
+
+    # CPF invalido (mudou de verdade, e o novo não passa no dígito verificador)
+    tela._campo_nome.setText("OSCAR TESTE")
+    tela._campo_cpf.setText("111.111.111-11")
+    tela._salvar_edicao_cliente()
+    assert tela._campo_cpf.property("invalido") is True
+    assert not tela._modo_leitura_cliente
+    assert len(msgs.textos) == antes
+    print("OK: CPF inválido (dígito verificador não bate) é rejeitado do mesmo jeito.")
+
+    # e-mail invalido
+    tela._campo_cpf.setText(cpf)
+    tela._campo_email.setText("não é um e-mail")
+    tela._salvar_edicao_cliente()
+    assert tela._campo_email.property("invalido") is True
+    assert not tela._modo_leitura_cliente
+    assert len(msgs.textos) == antes
+    print("OK: e-mail inválido é rejeitado (campo marcado, sem QMessageBox).")
+
+    # corrige tudo: salva de verdade, volta pra leitura, grava no disco
+    tela._campo_email.setText("oscar.novo@exemplo.com")
+    tela._campo_celular.setText("11987654321")
+    tela._salvar_edicao_cliente()
+    assert tela._modo_leitura_cliente and tela._botao_editar_cliente.isVisible()
+    assert tela._campo_nome.isReadOnly()
+    gravado = clientes_mod.buscar_por_cpf(cpf)
+    # celular tem mascara ao vivo (como o CPF) - o que fica gravado e o texto JA formatado
+    assert gravado["EMAIL"] == "oscar.novo@exemplo.com" and apenas_digitos(gravado["CELULAR"]) == "11987654321"
+    print("OK: corrigido, salvar grava de verdade e volta pra leitura.")
+
+    # Cancelar descarta o que foi digitado e rele do disco
+    tela._alternar_edicao_cliente()
+    tela._campo_nome.setText("NOME RABISCADO NA EDICAO")
+    tela._cancelar_edicao_cliente()
+    assert tela._modo_leitura_cliente
+    assert tela._campo_nome.text() == "OSCAR TESTE", "cancelar deveria reler o nome de verdade do disco"
+    assert clientes_mod.buscar_por_cpf(cpf)["CLIENTE"] == "OSCAR TESTE", "cancelar nao pode ter gravado nada"
+    print("OK: 'Cancelar' descarta o que foi digitado (rele do disco), nada é gravado.")
+
+    # trocar de cliente no meio de uma edicao nao deixa o proximo destravado por engano
+    outro_cpf = _cpf(78)
+    clientes_mod.adicionar_cliente({"CPF/CNPJ": outro_cpf, "CLIENTE": "PAULA TESTE", "TIPO": "Cliente"})
+    tela._atualizar_lista()
+    tela._alternar_edicao_cliente()
+    assert not tela._modo_leitura_cliente
+    tela._selecionar_por_cpf(outro_cpf)
+    assert tela._modo_leitura_cliente, "trocar de cliente tem que voltar pra leitura sozinho"
+    assert tela._campo_nome.isReadOnly()
+    print("OK: selecionar outro cliente no meio de uma edição volta sozinho pra leitura.")
+
     tela.close()
 
 
@@ -572,14 +657,28 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
                 f"{tema}: o título 'Endereço' tem a mesma fonte/cor do título das outras seções"
             assert titulo.property("role") == "titulo_secao"
 
-            # o valor (endereço por extenso) compara com outro campo "campo_valor" que
-            # esta SEMPRE visivel (Nascimento nunca fica escondido, ao contrario dos
-            # opcionais de "Pessoal")
+            # o valor (endereço por extenso) compara com outro campo "campo_valor" - agora que
+            # Contato/Pessoal viraram widgets editaveis (QLineEdit/CampoData, sem o role
+            # "campo_valor"), a unica referencia que sobrou com a mesma fabrica
+            # (_criar_rotulo_valor) sao os proprios campos do endereco expandido. Usa uma
+            # tela EXTRA e descartavel pra pegar essa referencia, pra nao mexer no scroll/
+            # estado da tela principal (os proximos testes desta função dependem dela
+            # continuar exatamente como abriu, retraída).
             valor = tela._campo_endereco_completo
-            assert _mesma_fonte(valor, tela._campo_nascimento) and _cor_do_texto(valor) == _cor_do_texto(tela._campo_nascimento), \
+            tela_referencia = FichaClienteScreen()
+            tela_referencia.resize(1300, 800)
+            tela_referencia.show()
+            tela_referencia._selecionar_por_cpf(cpfs["completo"])
+            tela_referencia._cabecalho_endereco.setChecked(True)
+            app.processEvents()
+            referencia = tela_referencia._campo_cidade
+            assert _mesma_fonte(valor, referencia) and _cor_do_texto(valor) == _cor_do_texto(referencia), \
                 f"{tema}: o endereço tem a mesma fonte/cor do valor dos outros campos"
-            assert abs(valor.height() - tela._campo_nascimento.height()) <= 1, \
-                f"{tema}: caixa do endereço ({valor.height()} px) com a altura da dos outros campos ({tela._campo_nascimento.height()} px)"
+            tela_referencia.close()
+            # a altura e a de UMA LINHA DE TEXTO (nao a do botao de copiar do lado -
+            # e o que _linha_copiavel_compacta existe pra garantir, com AlignVCenter)
+            assert abs(valor.height() - valor.fontMetrics().lineSpacing()) <= 6, \
+                f"{tema}: o endereço deveria ter a altura de uma linha de texto, não a do botão de copiar ({valor.height()} px)"
             assert abs(titulo.height() - titulo_outra_secao.height()) <= 1, f"{tema}: título de seção com a altura das outras"
 
             # nada de "barra": o valor ocupa so a largura do texto e o botao de copiar fica logo ao lado
@@ -631,7 +730,7 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
     valor = tela._campo_endereco_completo
     botao = _botoes_de_copia(tela)[-1]  # [0] e o do CPF, no cabeçalho
     assert valor.heightForWidth(valor.width()) > valor.fontMetrics().lineSpacing() + 2, "endereço longo em janela estreita quebra em mais linhas"
-    cartao = tela._nome_label.parentWidget()
+    cartao = tela._campo_nome.parentWidget()
     borda_cartao = cartao.mapTo(tela, QPoint(cartao.width(), 0)).x()
     assert botao.mapTo(tela, QPoint(botao.width(), 0)).x() <= borda_cartao, "o botão de copiar não vaza do cartão"
     assert valor.mapTo(tela, QPoint(valor.width(), 0)).x() <= borda_cartao
@@ -703,7 +802,7 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         viewport = rolagem.viewport()
         fim_historico = tela._lista_historico.mapTo(viewport, QPoint(0, tela._lista_historico.height())).y()
         assert fim_historico <= viewport.height() + 1, "rolado até o fim, o histórico de propostas aparece inteiro"
-        topo_cartao = tela._nome_label.mapTo(viewport, QPoint(0, 0)).y()
+        topo_cartao = tela._campo_nome.mapTo(viewport, QPoint(0, 0)).y()
         assert topo_cartao < 0, "e o topo do cartão saiu pra cima (rolou de verdade)"
 
         # os botoes de proposta ficam FIXOS embaixo, fora da rolagem
@@ -716,7 +815,7 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         print("OK: rolar até o fim mostra o histórico inteiro; 'Excluir Proposta Selecionada' e '+ Nova Proposta' ficam fixos embaixo.")
 
         # alinhados com o cartao, com e sem a barra de rolagem
-        cartao = tela._nome_label.parentWidget()
+        cartao = tela._campo_nome.parentWidget()
         borda = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
         assert abs(borda(cartao) - borda(tela._botao_nova_proposta)) <= 1, (borda(cartao), borda(tela._botao_nova_proposta))
         tela.resize(1150, 1300)
@@ -802,6 +901,7 @@ def main() -> None:
             testar_dialogo(msgs)
             testar_ficha(app)
             testar_pessoal_sem_buraco_e_multiplos_emails(app)
+            testar_edicao_inline(app, msgs)
             cpfs = _cadastrar_clientes_de_endereco()
             testar_endereco_retratil(app, cpfs)
             testar_endereco_como_os_outros_campos(app, cpfs)

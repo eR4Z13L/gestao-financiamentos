@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 import pandas as pd
-from PySide6.QtCore import QModelIndex, QRect, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QModelIndex, QRect, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -46,13 +47,16 @@ from core.formatting import (
     formatar_tempo,
     iniciais_do_nome,
 )
-from core.validators import apenas_digitos
+from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
+from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
+from desktop.widgets.combo_travavel import ComboTravavel
 from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.expansor_proposta import ExpansorDeProposta
+from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 from desktop.widgets.identidade_usuario import _Avatar
 from desktop.widgets.lista_cartoes import ContentorDeListaAutomatica, ListaCartoes, ModeloCartoes, chave_cor_etapa
 from desktop.widgets.lista_clientes import ListaClientes, rotulo_do_tipo
@@ -160,6 +164,7 @@ class FichaClienteScreen(QWidget):
         super().__init__(parent)
 
         self._cpf_selecionado: str | None = None
+        self._modo_leitura_cliente = True  # False = dados do cliente (cabecalho/Contato/Pessoal) em edicao
         self._historico_atual: pd.DataFrame = pd.DataFrame()  # valores "crus" (indice = posicao real no arquivo)
         # CPFs (so digitos) de quem tem proposta em aberto - pinta a bolinha nos cards de cliente.
         # Fica em cache: a lista e refeita a cada tecla da busca, e reler as propostas a cada
@@ -410,28 +415,70 @@ class FichaClienteScreen(QWidget):
 
         coluna_nome = QVBoxLayout()
         coluna_nome.setSpacing(2)
-        self._nome_label = QLabel("")
-        self._nome_label.setProperty("role", "subtitulo")
-        coluna_nome.addWidget(self._nome_label)
+        # nome, CPF, Tipo e Vendedor sao campos DE VERDADE (nao QLabel) desde sempre - so
+        # ficam travados (somente leitura) fora do modo edicao, igual a proposta expandida
+        # (ver _aplicar_modo_edicao_cliente). Isso tambem tira o "espaco vazio" que a grade
+        # antiga deixava: os campos ocupam so a largura do proprio conteudo, lado a lado.
+        self._campo_nome = QLineEdit()
+        self._campo_nome.setProperty("role", "subtitulo")
+        self._campo_nome.setReadOnly(True)
+        coluna_nome.addWidget(self._campo_nome)
 
         linha_sub = QHBoxLayout()
         linha_sub.setSpacing(4)
-        self._campo_cpf = QLabel("")
+        self._campo_cpf = QLineEdit()
         self._campo_cpf.setProperty("role", "secundario")
+        self._campo_cpf.setReadOnly(True)
+        self._campo_cpf.setMaximumWidth(170)
+        conectar_mascara(self._campo_cpf, formatar_cpf_cnpj_parcial)
         linha_sub.addWidget(self._campo_cpf)
         self._botao_copiar_cpf = BotaoCopiar(lambda: self._cpf_selecionado or "")
         linha_sub.addWidget(self._botao_copiar_cpf)
-        self._sub_info = QLabel("")
-        self._sub_info.setProperty("role", "secundario")
-        linha_sub.addWidget(self._sub_info)
+
+        separador_tipo = QLabel("·")
+        separador_tipo.setProperty("role", "secundario")
+        linha_sub.addWidget(separador_tipo)
+        self._campo_tipo = ComboTravavel()
+        self._campo_tipo.addItems(clientes_mod.TIPO_OPCOES)
+        self._campo_tipo.definir_travado(True)
+        self._campo_tipo.setMaximumWidth(110)
+        linha_sub.addWidget(self._campo_tipo)
+
+        rotulo_vendedor = QLabel("· Vendedor:")
+        rotulo_vendedor.setProperty("role", "secundario")
+        linha_sub.addWidget(rotulo_vendedor)
+        self._campo_vendedor = ComboTravavel()
+        self._campo_vendedor.definir_travado(True)
+        self._campo_vendedor.setMaximumWidth(150)
+        linha_sub.addWidget(self._campo_vendedor)
+        self._botao_novo_vendedor_inline = QPushButton("+ Novo Vendedor")
+        self._botao_novo_vendedor_inline.setProperty("role", "botao_link")
+        self._botao_novo_vendedor_inline.clicked.connect(self._cadastrar_vendedor_inline)
+        self._botao_novo_vendedor_inline.setVisible(False)  # so faz sentido em edicao
+        linha_sub.addWidget(self._botao_novo_vendedor_inline)
+
+        self._rotulo_cadastro = QLabel("")  # "· Cliente desde DD/MM/AAAA" - nunca editavel
+        self._rotulo_cadastro.setProperty("role", "secundario")
+        linha_sub.addWidget(self._rotulo_cadastro)
         linha_sub.addStretch(1)
         coluna_nome.addLayout(linha_sub)
         cabecalho_ficha.addLayout(coluna_nome, 1)
 
         self._botao_editar_cliente = QPushButton("Editar")
         self._botao_editar_cliente.setProperty("role", "botao_primario")
-        self._botao_editar_cliente.clicked.connect(self._abrir_edicao_cliente)
+        self._botao_editar_cliente.clicked.connect(self._alternar_edicao_cliente)
         cabecalho_ficha.addWidget(self._botao_editar_cliente)
+
+        self._botao_ok_cliente = QPushButton("OK")
+        self._botao_ok_cliente.setProperty("role", "botao_primario")
+        self._botao_ok_cliente.clicked.connect(self._salvar_edicao_cliente)
+        self._botao_ok_cliente.setVisible(False)
+        cabecalho_ficha.addWidget(self._botao_ok_cliente)
+
+        self._botao_cancelar_cliente = QPushButton("Cancelar")
+        self._botao_cancelar_cliente.clicked.connect(self._cancelar_edicao_cliente)
+        self._botao_cancelar_cliente.setVisible(False)
+        cabecalho_ficha.addWidget(self._botao_cancelar_cliente)
 
         self._botao_menu_cliente = QPushButton("⋯")
         self._botao_menu_cliente.setFixedWidth(34)
@@ -463,24 +510,41 @@ class FichaClienteScreen(QWidget):
 
         linha_celular = QHBoxLayout()
         linha_celular.setSpacing(4)
-        self._campo_celular = self._criar_rotulo_valor()
-        linha_celular.addWidget(self._campo_celular)
-        self._botao_copiar_celular = BotaoCopiar(lambda: self._campo_celular.property("texto_cru") or "")
+        self._campo_celular = QLineEdit()
+        self._campo_celular.setReadOnly(True)
+        conectar_mascara(self._campo_celular, formatar_telefone_parcial)
+        linha_celular.addWidget(self._campo_celular, stretch=1)
+        self._botao_copiar_celular = BotaoCopiar(lambda: self._campo_celular.text())
         linha_celular.addWidget(self._botao_copiar_celular)
         self._botao_whatsapp = QPushButton("WhatsApp")
         self._botao_whatsapp.setProperty("role", "botao_link")
         self._botao_whatsapp.clicked.connect(self._abrir_whatsapp)
         linha_celular.addWidget(self._botao_whatsapp)
-        linha_celular.addStretch(1)
         coluna_contato.addLayout(linha_celular)
 
-        self._campo_email = self._criar_rotulo_valor()
-        self._preparar_rotulo_com_link(self._campo_email)
-        coluna_contato.addWidget(self._campo_email)
+        # e-mail e rede social: em LEITURA mostram um QLabel com link(s) clicavel(is) (o
+        # campo de e-mail pode ter mais de um endereco - ver _texto_com_link_de_email);
+        # em EDICAO viram QLineEdit comum. QLineEdit nao renderiza HTML/links, por isso os
+        # dois modos precisam de widgets diferentes (unico caso na ficha que nao e so
+        # travar/destravar o MESMO campo, como o resto) - trocados por um QStackedWidget.
+        self._pilha_email = QStackedWidget()
+        self._pilha_email.setProperty("role", "transparente")
+        self._rotulo_email = self._criar_rotulo_valor()
+        self._preparar_rotulo_com_link(self._rotulo_email)
+        self._campo_email = QLineEdit()
+        self._campo_email.textChanged.connect(self._validar_email_ao_vivo_cliente)
+        self._pilha_email.addWidget(self._rotulo_email)
+        self._pilha_email.addWidget(self._campo_email)
+        coluna_contato.addWidget(self._pilha_email)
 
-        self._campo_rede_social = self._criar_rotulo_valor()
-        self._preparar_rotulo_com_link(self._campo_rede_social)
-        coluna_contato.addWidget(self._campo_rede_social)
+        self._pilha_rede_social = QStackedWidget()
+        self._pilha_rede_social.setProperty("role", "transparente")
+        self._rotulo_rede_social = self._criar_rotulo_valor()
+        self._preparar_rotulo_com_link(self._rotulo_rede_social)
+        self._campo_rede_social = QLineEdit()
+        self._pilha_rede_social.addWidget(self._rotulo_rede_social)
+        self._pilha_rede_social.addWidget(self._campo_rede_social)
+        coluna_contato.addWidget(self._pilha_rede_social)
 
         layout_cartao.addWidget(self._secao_contato)
 
@@ -500,11 +564,25 @@ class FichaClienteScreen(QWidget):
         grade_pessoal = self._nova_grade()
         coluna_pessoal.addLayout(grade_pessoal)
         self._grade_pessoal = grade_pessoal
-        self._pessoal_wrap_nascimento, self._campo_nascimento = self._criar_campo_livre("Nascimento")
-        wrap_pai, self._campo_nome_pai = self._criar_campo_livre("Nome do pai")
-        wrap_mae, self._campo_nome_mae = self._criar_campo_livre("Nome da mãe")
-        wrap_profissao, self._campo_profissao = self._criar_campo_livre("Profissão")
-        wrap_vinculado, self._campo_vinculado = self._criar_campo_livre("Vinculado a")
+        self._campo_nascimento = CampoData()
+        self._campo_nascimento.definir_somente_leitura(True)
+        self._pessoal_wrap_nascimento = self._criar_campo_com_widget("Nascimento", self._campo_nascimento)
+        self._campo_nome_pai = QLineEdit()
+        self._campo_nome_pai.setReadOnly(True)
+        self._campo_nome_pai.setPlaceholderText("—")
+        wrap_pai = self._criar_campo_com_widget("Nome do pai", self._campo_nome_pai)
+        self._campo_nome_mae = QLineEdit()
+        self._campo_nome_mae.setReadOnly(True)
+        self._campo_nome_mae.setPlaceholderText("—")
+        wrap_mae = self._criar_campo_com_widget("Nome da mãe", self._campo_nome_mae)
+        self._campo_profissao = QLineEdit()
+        self._campo_profissao.setReadOnly(True)
+        self._campo_profissao.setPlaceholderText("—")
+        wrap_profissao = self._criar_campo_com_widget("Profissão", self._campo_profissao)
+        self._campo_vinculado = QLineEdit()
+        self._campo_vinculado.setReadOnly(True)
+        self._campo_vinculado.setPlaceholderText("—")
+        wrap_vinculado = self._criar_campo_com_widget("Vinculado a", self._campo_vinculado)
         # nascimento fica sempre visivel (e o campo mais comum de existir, ancora a
         # secao); so os outros 4 somem quando vazios. A grade so recebe os widgets de
         # verdade em _reordenar_grade_pessoal - remontada a cada mudanca, pra um campo
@@ -643,11 +721,12 @@ class FichaClienteScreen(QWidget):
         return valor
 
     @staticmethod
-    def _criar_campo_livre(titulo: str) -> tuple[QWidget, QLabel]:
-        """Cria um par legenda/valor dentro de um QWidget, SEM posicionar numa grade ainda -
-        pra poder esconder o par INTEIRO (legenda incluida) quando o valor estiver vazio, e
-        reposicionar os que sobraram sem deixar buraco (ver a seção "Pessoal" e
-        _reordenar_grade_pessoal). Devolve (o widget, o QLabel do valor, pra dar setText depois)."""
+    def _criar_campo_com_widget(titulo: str, widget: QWidget) -> QWidget:
+        """Legenda + um widget de valor JÁ PRONTO (QLineEdit, CampoData...) - usado pelos
+        campos editáveis da seção Pessoal (o valor edita e trava/destrava, a legenda nunca
+        muda). Devolve o wrapper INTEIRO (legenda incluída), pra poder esconder o par
+        quando o valor estiver vazio, e reposicionar os que sobraram sem deixar buraco
+        (ver a seção "Pessoal" e _reordenar_grade_pessoal)."""
         wrapper = QWidget()
         wrapper.setProperty("role", "transparente")
         caixa = QVBoxLayout(wrapper)
@@ -655,19 +734,9 @@ class FichaClienteScreen(QWidget):
         caixa.setSpacing(2)
         legenda = QLabel(titulo)
         legenda.setProperty("role", "campo_rotulo")
-        valor = FichaClienteScreen._criar_rotulo_valor()
         caixa.addWidget(legenda)
-        caixa.addWidget(valor)
-        return wrapper, valor
-
-    @staticmethod
-    def _criar_campo(grade: QGridLayout, row: int, col: int, titulo: str) -> tuple[QWidget, QLabel]:
-        """Como _criar_campo_livre, mas já posicionado numa posição FIXA da grade - pra
-        campos que não somem (ex.: o endereço expandido, onde os 7 campos são sempre
-        mostrados juntos)."""
-        wrapper, valor = FichaClienteScreen._criar_campo_livre(titulo)
-        grade.addWidget(wrapper, row, col)
-        return wrapper, valor
+        caixa.addWidget(widget)
+        return wrapper
 
     @staticmethod
     def _linha_copiavel() -> tuple[QHBoxLayout, QLabel]:
@@ -716,7 +785,9 @@ class FichaClienteScreen(QWidget):
 
     @staticmethod
     def _criar_campo_copiavel(grade: QGridLayout, row: int, col: int, titulo: str) -> QLabel:
-        """Como _criar_campo, mas com um botao Copiar ao lado do valor."""
+        """Legenda + valor + botão Copiar ao lado do valor, já posicionado numa posição
+        FIXA da grade (ver _caixa_copiavel/_linha_copiavel) - pra campos que não somem
+        (ex.: o endereço expandido, onde os 7 campos são sempre mostrados juntos)."""
         caixa, valor = FichaClienteScreen._caixa_copiavel(titulo)
         grade.addLayout(caixa, row, col)
         return valor
@@ -783,10 +854,10 @@ class FichaClienteScreen(QWidget):
     # -- Pessoal: campos vazios escondidos atras de um link -------------------
 
     @staticmethod
-    def _definir_campo_pessoal(wrapper: QWidget, rotulo: QLabel, texto: str) -> None:
+    def _definir_campo_pessoal(wrapper: QWidget, campo: QLineEdit, texto: str) -> None:
         limpo = (texto or "").strip()
         wrapper.setProperty("vazio", not limpo)
-        rotulo.setText(texto_quebravel(limpo) or "—")
+        campo.setText(limpo)
 
     def _alternar_pessoal_vazios(self, _href: str = "") -> None:
         self._pessoal_mostrar_vazios = not self._pessoal_mostrar_vazios
@@ -794,12 +865,14 @@ class FichaClienteScreen(QWidget):
 
     def _reordenar_grade_pessoal(self) -> None:
         """Remonta a grade só com os campos visíveis, em ordem (Nascimento primeiro,
-        sempre; os outros só quando têm valor, ou "mostrar vazios" estiver ligado),
+        sempre; os outros só quando têm valor, "mostrar vazios" estiver ligado, OU o
+        card estiver em EDIÇÃO - editar exige ver todos os campos, mesmo vazios),
         preenchendo 3 por linha sem pular posição - diferente de só chamar setVisible(),
         isso nunca deixa buraco onde um campo escondido estaria (ex.: "Vinculado a"
         flutuando sozinho, deslocado, quando os campos antes dele na grade estão vazios)."""
+        mostrar_tudo = self._pessoal_mostrar_vazios or not self._modo_leitura_cliente
         visiveis = [self._pessoal_wrap_nascimento] + [
-            w for w in self._pessoal_campos_opcionais if self._pessoal_mostrar_vazios or not w.property("vazio")
+            w for w in self._pessoal_campos_opcionais if mostrar_tudo or not w.property("vazio")
         ]
         for wrapper in self._pessoal_todos_campos:
             self._grade_pessoal.removeWidget(wrapper)
@@ -813,7 +886,7 @@ class FichaClienteScreen(QWidget):
     def _atualizar_visibilidade_pessoal(self) -> None:
         vazios = [w for w in self._pessoal_campos_opcionais if w.property("vazio")]
         self._reordenar_grade_pessoal()
-        if not vazios:
+        if not vazios or not self._modo_leitura_cliente:
             self._link_pessoal_vazios.setVisible(False)
             return
         self._link_pessoal_vazios.setVisible(True)
@@ -989,19 +1062,25 @@ class FichaClienteScreen(QWidget):
         lancar uma proposta) - o card de proposta selecionado e a pagina carregada
         do historico se mantem; abrindo outro cliente, o historico comeca limpo.
         `selecionar`: a proposta (indice real) que fica selecionada e visivel (padrao: a que ja estava)."""
+        # toda releitura do disco (outro cliente, ou o mesmo depois de salvar) comeca
+        # em modo leitura - evita ficar com campos "destravados" mostrando dado que ja nao bate
+        self._aplicar_modo_edicao_cliente(leitura=True)
         # guarda os valores "crus" (Timestamp/float, indice = posicao real no
         # arquivo) - os cards mostram uma versao formatada pra leitura, mas
         # editar uma proposta precisa dos valores originais
         self._historico_atual = historico
 
         self._avatar.definir_iniciais(iniciais_do_nome(cliente["CLIENTE"]))
-        self._nome_label.setText(texto_quebravel(cliente["CLIENTE"]))
+        # QLineEdit nao quebra linha - texto_quebravel (pontos de quebra invisiveis pra
+        # QLabel) nao se aplica mais aqui, e sujaria o texto de verdade do campo
+        self._campo_nome.setText(cliente["CLIENTE"])
         self._campo_cpf.setText(cliente["CPF/CNPJ"])
+
+        self._definir_texto_tipo(cliente["TIPO"])
+        self._recarregar_vendedores_do_cabecalho(cliente["VENDEDOR"] or "")
+
         cadastro = formatar_data(cliente.get("DATA CADASTRO"))
-        info = f"{rotulo_do_tipo(cliente['TIPO']) or 'Cliente'} · Vendedor: {cliente['VENDEDOR'] or '—'}"
-        if cadastro != "—":
-            info += f" · Cliente desde {cadastro}"
-        self._sub_info.setText(f"· {info}")
+        self._rotulo_cadastro.setText(f"· Cliente desde {cadastro}" if cadastro != "—" else "")
 
         resumo = _resumo_do_cliente(historico)
         if resumo["total"] == 0:
@@ -1018,23 +1097,26 @@ class FichaClienteScreen(QWidget):
             partes.append(f"última atividade {_formatar_ultima_atividade(resumo['ultima_atividade'])}")
             self._resumo_label.setText(" · ".join(partes))
 
-        # Contato: numero pra copiar/WhatsApp guardado como propriedade (o texto exibido
-        # pode ser so o valor cru mesmo, sem HTML)
         celular = cliente["CELULAR"] or ""
-        self._campo_celular.setProperty("texto_cru", celular)
-        self._campo_celular.setText(texto_quebravel(celular) or "—")
+        self._campo_celular.setText(celular)
         numero_whats = _numero_whatsapp(celular)
         self._botao_whatsapp.setProperty("numero_whatsapp", numero_whats)
         self._botao_whatsapp.setEnabled(bool(numero_whats))
         self._botao_whatsapp.setToolTip("" if numero_whats else "Celular sem DDD/dígitos suficientes para abrir o WhatsApp")
 
         email = cliente["EMAIL"] or ""
-        self._campo_email.setText(self._texto_com_link_de_email(email))
+        self._rotulo_email.setText(self._texto_com_link_de_email(email))
+        self._campo_email.setText(email)
         rede_social = cliente["REDE SOCIAL"] or ""
-        self._campo_rede_social.setText(self._texto_com_link_de_rede_social(rede_social))
+        self._rotulo_rede_social.setText(self._texto_com_link_de_rede_social(rede_social))
+        self._campo_rede_social.setText(rede_social)
         self._secao_contato.setVisible(bool(celular.strip() or email.strip() or rede_social.strip()))
 
-        self._campo_nascimento.setText(formatar_data(cliente.get("NASCIMENTO")))
+        nascimento_atual = cliente.get("NASCIMENTO")
+        if isinstance(nascimento_atual, pd.Timestamp) and not pd.isna(nascimento_atual):
+            self._campo_nascimento.definir_data(QDate(nascimento_atual.year, nascimento_atual.month, nascimento_atual.day))
+        else:
+            self._campo_nascimento.limpar()
         self._definir_campo_pessoal(self._pessoal_campos_opcionais[0], self._campo_nome_pai, cliente["NOME DO PAI"])
         self._definir_campo_pessoal(self._pessoal_campos_opcionais[1], self._campo_nome_mae, cliente["NOME DA MÃE"])
         self._definir_campo_pessoal(self._pessoal_campos_opcionais[2], self._campo_profissao, cliente["PROFISSÃO"])
@@ -1117,7 +1199,7 @@ class FichaClienteScreen(QWidget):
         """O que o card expandido precisa da proposta na posicao `indice_real`: (cpf, cliente, dict)."""
         if not self._cpf_selecionado or indice_real not in self._historico_atual.index:
             return None
-        return self._cpf_selecionado, self._nome_label.text(), self._historico_atual.loc[indice_real].to_dict()
+        return self._cpf_selecionado, self._campo_nome.text(), self._historico_atual.loc[indice_real].to_dict()
 
     def _recarregar_e_selecionar(self, indice: int | None) -> None:
         """Depois de gravar uma proposta: le a ficha de novo e deixa selecionado o card dela."""
@@ -1173,26 +1255,212 @@ class FichaClienteScreen(QWidget):
         self._atualizar_lista()
         self._mostrar_cliente(dialogo.cpf_salvo)
 
-    def _abrir_edicao_cliente(self) -> None:
+    # -- edicao INLINE do cliente (cabecalho/Contato/Pessoal) - "Editar" ja nao abre mais
+    # o ClienteDialog pra um cliente EXISTENTE (soh continua assim pra "+ Novo Cliente",
+    # ate o cadastro tambem virar inline) ------------------------------------------------
+
+    def _definir_texto_tipo(self, tipo_cru: str) -> None:
+        # tira qualquer item "fora do padrao" de uma rodada anterior, antes de adicionar o novo
+        while self._campo_tipo.count() > len(clientes_mod.TIPO_OPCOES):
+            self._campo_tipo.removeItem(self._campo_tipo.count() - 1)
+        tipo_atual = (tipo_cru or "").strip()
+        if not tipo_atual:
+            self._campo_tipo.setCurrentIndex(0)
+            return
+        correspondente = next((op for op in clientes_mod.TIPO_OPCOES if op.upper() == tipo_atual.upper()), None)
+        if correspondente:
+            self._campo_tipo.setCurrentText(correspondente)
+        else:
+            # valor fora do padrao (ex.: editado direto no Excel) - mostra como esta,
+            # em vez de trocar pro primeiro item da lista sem avisar
+            self._campo_tipo.addItem(tipo_atual)
+            self._campo_tipo.setCurrentText(tipo_atual)
+
+    def _recarregar_vendedores_do_cabecalho(self, selecionado: str = "") -> None:
+        self._campo_vendedor.blockSignals(True)
+        self._campo_vendedor.clear()
+        self._campo_vendedor.addItem("")  # vendedor e opcional
+        nomes = vendedores_mod.listar_vendedores()
+        self._campo_vendedor.addItems(nomes)
+        if selecionado and selecionado.upper() not in {n.upper() for n in nomes}:
+            # vendedor antigo que nao esta (mais) cadastrado - mostra o valor atual
+            # em vez de trocar silenciosamente pra vazio
+            self._campo_vendedor.addItem(selecionado)
+        self._campo_vendedor.setCurrentText(selecionado)
+        self._campo_vendedor.blockSignals(False)
+
+    def _cadastrar_vendedor_inline(self) -> None:
+        nome, ok = QInputDialog.getText(self, "Novo vendedor", "Nome do vendedor:")
+        if not ok:
+            return
+        try:
+            nome_salvo = vendedores_mod.adicionar_vendedor(nome)
+            senhas_geradas = vendedores_mod.gerar_senhas_iniciais_pendentes()
+        except vendedores_mod.ErroVendedor as exc:
+            QMessageBox.warning(self, "Não foi possível cadastrar", str(exc))
+            return
+        except sessao_mod.PermissaoNegada as exc:
+            QMessageBox.warning(self, "Ação não permitida", str(exc))
+            return
+        except bd.ErroArquivoBloqueado as exc:
+            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro inesperado ao cadastrar vendedor", str(exc))
+            return
+        self._recarregar_vendedores_do_cabecalho(nome_salvo)
+        self._recarregar_vendedores_filtro()  # a lista de filtros (esquerda) tambem precisa saber
+
+        senha_do_novo = senhas_geradas.get(nome_salvo)
+        if senha_do_novo:
+            QMessageBox.information(
+                self, "Senha inicial gerada",
+                f"Senha inicial de acesso para '{nome_salvo}': {senha_do_novo}\n\n"
+                "Anote/avise agora - essa senha não pode ser recuperada depois (só redefinida).",
+            )
+
+    def _aplicar_modo_edicao_cliente(self, leitura: bool) -> None:
+        """Trava/destrava o cabecalho + Contato + Pessoal (nao mexe no Endereco - esse
+        continua so leitura por enquanto). O mesmo padrao de FormularioProposta: o campo
+        e sempre o MESMO widget, so alterna somente-leitura; email/rede social sao
+        excecao (viram um QLabel com link em leitura - ver _pilha_email/_pilha_rede_social)."""
+        self._modo_leitura_cliente = leitura
+        for campo in (self._campo_email, self._campo_rede_social):
+            campo.setReadOnly(leitura)
+        # os de baixo, alem de travar, precisam de "travado" pro QSS: um QLineEdit ja
+        # tem caixa por padrao (bom pra editar), mas travado ele deve parecer um valor
+        # comum do card, sem caixa - ver QLineEdit[travado="true"] em desktop/theme.py
+        for campo in (
+            self._campo_nome, self._campo_cpf, self._campo_celular,
+            self._campo_nome_pai, self._campo_nome_mae, self._campo_profissao, self._campo_vinculado,
+        ):
+            campo.setReadOnly(leitura)
+            campo.setProperty("travado", leitura)
+            campo.style().unpolish(campo)
+            campo.style().polish(campo)
+        self._campo_nascimento.definir_somente_leitura(leitura)
+        self._campo_nascimento.campo.setProperty("travado", leitura)
+        self._campo_nascimento.campo.style().unpolish(self._campo_nascimento.campo)
+        self._campo_nascimento.campo.style().polish(self._campo_nascimento.campo)
+        self._campo_tipo.definir_travado(leitura)
+        self._campo_vendedor.definir_travado(leitura)
+
+        self._pilha_email.setCurrentIndex(0 if leitura else 1)
+        self._pilha_rede_social.setCurrentIndex(0 if leitura else 1)
+
+        self._botao_copiar_cpf.setVisible(leitura)
+        self._botao_copiar_celular.setVisible(leitura)
+        self._botao_novo_vendedor_inline.setVisible(not leitura)
+
+        self._botao_editar_cliente.setVisible(leitura)
+        self._botao_ok_cliente.setVisible(not leitura)
+        self._botao_cancelar_cliente.setVisible(not leitura)
+        self._botao_menu_cliente.setVisible(leitura)  # excluir cliente no meio de uma edicao nao faz sentido
+
+        if leitura:
+            for campo in (self._campo_nome, self._campo_cpf, self._campo_email):
+                limpar_invalido(campo)
+            limpar_invalido(self._campo_nascimento.campo)
+        self._atualizar_visibilidade_pessoal()  # editando, mostra TODOS os campos de Pessoal (mesmo vazios)
+
+    def _alternar_edicao_cliente(self) -> None:
+        if not self._cpf_selecionado:
+            return
+        self._aplicar_modo_edicao_cliente(leitura=False)
+        self._campo_nome.setFocus()
+        self._campo_nome.selectAll()
+
+    def _cancelar_edicao_cliente(self) -> None:
+        """Descarta o que foi digitado e volta pra leitura - rele o cliente do disco
+        (mais simples e sempre correto do que guardar um snapshot a parte; _preencher_ficha
+        ja volta pro modo leitura sozinho)."""
         if not self._cpf_selecionado:
             return
         cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
         if cliente is None:
-            QMessageBox.warning(self, "Cliente não encontrado", "Este cliente pode ter sido removido.")
-            self._cpf_selecionado = None
-            self._painel_stack.setCurrentIndex(0)
+            self._aplicar_modo_edicao_cliente(leitura=True)
             return
-        dialogo = ClienteDialog(cliente=cliente, parent=self)
-        aceito = dialogo.exec() == QDialog.DialogCode.Accepted
-        vendedor_escolhido_sumiu = self._recarregar_vendedores_filtro()
-        if not aceito:
-            if vendedor_escolhido_sumiu:
-                self._atualizar_lista()
+        self._preencher_ficha(cliente, self._historico_atual, mesmo_cliente=True)
+
+    def _validar_email_ao_vivo_cliente(self, texto: str) -> None:
+        """So um aviso visual enquanto digita - quem realmente impede salvar com
+        e-mail invalido e core.clientes (ver _salvar_edicao_cliente)."""
+        if not texto.strip() or email_valido(texto):
+            limpar_invalido(self._campo_email)
+        else:
+            marcar_invalido(self._campo_email, "E-mail inválido - confira o endereço digitado.")
+
+    def _salvar_edicao_cliente(self) -> None:
+        if not self._cpf_selecionado:
             return
+        for campo in (self._campo_nome, self._campo_cpf, self._campo_email):
+            limpar_invalido(campo)
+        limpar_invalido(self._campo_nascimento.campo)
+
+        # data invalida NUNCA vira "nao informado" em silencio - marca o campo e nao salva
+        nascimento, erro_nascimento = self._campo_nascimento.avaliar()
+        if erro_nascimento:
+            marcar_invalido(self._campo_nascimento.campo, erro_nascimento)
+            self._campo_nascimento.campo.setFocus()
+            return
+
+        cpf_texto = self._campo_cpf.text().strip()
+        nome_texto = self._campo_nome.text().strip()
+        email_texto = self._campo_email.text().strip()
+
+        if not cpf_texto:
+            marcar_invalido(self._campo_cpf, "CPF/CNPJ é obrigatório.")
+            self._campo_cpf.setFocus()
+            return
+        cpf_mudou = apenas_digitos(cpf_texto) != apenas_digitos(self._cpf_selecionado)
+        if cpf_mudou and not cpf_cnpj_valido(cpf_texto):
+            marcar_invalido(self._campo_cpf, "CPF/CNPJ inválido - confira os números digitados.")
+            self._campo_cpf.setFocus()
+            return
+        if not nome_texto:
+            marcar_invalido(self._campo_nome, "Nome do cliente é obrigatório.")
+            self._campo_nome.setFocus()
+            return
+        if email_texto and not email_valido(email_texto):
+            marcar_invalido(self._campo_email, "E-mail inválido - confira o endereço digitado.")
+            self._campo_email.setFocus()
+            return
+
+        campos = {
+            "CPF/CNPJ": cpf_texto,
+            "CLIENTE": nome_texto,
+            "TIPO": self._campo_tipo.currentText(),
+            "VENDEDOR": self._campo_vendedor.currentText().strip(),
+            "CELULAR": self._campo_celular.text().strip(),
+            "EMAIL": email_texto,
+            "REDE SOCIAL": self._campo_rede_social.text().strip(),
+            "NASCIMENTO": pd.Timestamp(nascimento.year(), nascimento.month(), nascimento.day()) if nascimento else "",
+            "VINCULADO": self._campo_vinculado.text().strip(),
+            "NOME DO PAI": self._campo_nome_pai.text().strip(),
+            "NOME DA MÃE": self._campo_nome_mae.text().strip(),
+            "PROFISSÃO": self._campo_profissao.text().strip(),
+        }
+        try:
+            clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)
+        except clientes_mod.ErroCliente as exc:
+            QMessageBox.warning(self, "Não foi possível salvar", str(exc))
+            return
+        except sessao_mod.PermissaoNegada as exc:
+            QMessageBox.warning(self, "Ação não permitida", str(exc))
+            return
+        except bd.ErroArquivoBloqueado as exc:
+            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro inesperado ao salvar", str(exc))
+            return
+
+        self._aplicar_modo_edicao_cliente(leitura=True)
         self._invalidar_em_aberto()  # o CPF pode ter mudado: as propostas em aberto sao ligadas a ele
+        self._recarregar_vendedores_filtro()
         self._busca.setText("")
         self._atualizar_lista()
-        self._mostrar_cliente(dialogo.cpf_salvo)
+        self._mostrar_cliente(cpf_texto)
 
     def _recarregar_ficha_atual(self, selecionar: int | None = None) -> bool:
         """Recarrega cliente + historico do CPF selecionado, com a mesma
@@ -1220,7 +1488,7 @@ class FichaClienteScreen(QWidget):
     def _abrir_nova_proposta(self) -> None:
         if not self._cpf_selecionado:
             return
-        self._expansor.nova(self._cpf_selecionado, self._nome_label.text())
+        self._expansor.nova(self._cpf_selecionado, self._campo_nome.text())
 
     def abrir_ficha_do_cliente(self, cpf: str) -> bool:
         """Abre a ficha de `cpf` (em qualquer formato); se os filtros da lista escondem o cliente, limpa-os.
@@ -1247,7 +1515,7 @@ class FichaClienteScreen(QWidget):
             )
             return False
         proposta = self._historico_atual.loc[indice_da_proposta].to_dict()
-        self._expansor.nova_a_partir_de(self._cpf_selecionado, self._nome_label.text(), proposta)
+        self._expansor.nova_a_partir_de(self._cpf_selecionado, self._campo_nome.text(), proposta)
         return True
 
     def _depois_de_mudar_propostas(self, selecionar: int | None = None) -> None:
@@ -1279,7 +1547,7 @@ class FichaClienteScreen(QWidget):
             return
 
         proposta = self._historico_atual.loc[indice_real].to_dict()
-        if not excluir_proposta_com_confirmacao(self, indice_real, self._nome_label.text(), proposta):
+        if not excluir_proposta_com_confirmacao(self, indice_real, self._campo_nome.text(), proposta):
             return
 
         # o card excluido nao existe mais; os indices dos seguintes mudam - nao ha o que "manter selecionado"
@@ -1291,7 +1559,7 @@ class FichaClienteScreen(QWidget):
         if not self._cpf_selecionado:
             return
 
-        nome = self._nome_label.text()
+        nome = self._campo_nome.text()
         try:
             historico = propostas_mod.historico_por_cpf(self._cpf_selecionado)
         except Exception as exc:  # nunca falhar em silencio

@@ -451,7 +451,7 @@ def testar_para_reenviar(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     primeira.botao_duplicar().click()
     assert janela.chave_atual() == "ficha"
     ficha = janela._tela_ficha
-    assert apenas_digitos(ficha._cpf_selecionado) == item.cpf and ficha._nome_label.text() == item.cliente
+    assert apenas_digitos(ficha._cpf_selecionado) == item.cpf and ficha._campo_nome.text() == item.cliente
     assert ficha._expansor.eh_rascunho() and ficha._modelo_historico.tem_rascunho()
     formulario = ficha._expansor.formulario()
     assert formulario._equipamento.currentText() == original["EQUIPAMENTO"] and formulario._banco.currentText() == "", "o banco fica em branco: quem duplica escolhe"
@@ -582,7 +582,7 @@ def testar_visao_do_vendedor(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         if linhas_clientes:
             janela.ir_para("dashboard")
             linhas_clientes[0].click()
-            assert janela.chave_atual() == "ficha" and janela._tela_ficha._nome_label.text() == sem_proposta[0][1]
+            assert janela.chave_atual() == "ficha" and janela._tela_ficha._campo_nome.text() == sem_proposta[0][1]
         print("OK: 'Ver todas' filtra por etapa (sem reler a 'rede'); uma linha abre a ficha do cliente.")
         janela.ir_para("dashboard")
     msgs.exigir_sem_erros("visao do vendedor")

@@ -229,11 +229,16 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         font-size: 22px;
         font-weight: 600;
     }}
-    QLabel[role="subtitulo"] {{
+    QLabel[role="subtitulo"], QLineEdit[role="subtitulo"] {{
         font-size: 15px;
         font-weight: 600;
     }}
     QLabel[role="secundario"] {{
+        color: {p['texto_secundario']};
+    }}
+    /* campos editaveis que reaproveitam o tamanho/cor de um rotulo (ex.: nome/CPF no
+       cabecalho da Ficha de Cliente, editaveis desde que o card virou "como a proposta") */
+    QLineEdit[role="secundario"] {{
         color: {p['texto_secundario']};
     }}
     QLabel[role="valor_metrica"] {{
@@ -376,6 +381,15 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QPlainTextEdit[travado="true"] {{
         padding: 1px 4px;  /* o texto ja tem uns 4px de margem propria */
     }}
+    /* QLineEdit travado (cabecalho/Contato/Pessoal da Ficha de Cliente em modo LEITURA -
+       ver desktop/screens/ficha_cliente_screen.py): ao contrario do bloco acima, aqui e o
+       INVERSO - o QLineEdit ja tem caixa por padrao (regra la em cima), e travado ele deve
+       parecer um valor comum do card, sem caixa; destravando pra editar, a caixa volta */
+    QLineEdit[travado="true"] {{
+        background-color: transparent;
+        border: 1px solid transparent;
+    }}
+
     /* combo travado (ver desktop/widgets/combo_travavel.py): sem a seta de
        abrir a lista - ela nao faria nada */
     QComboBox[travado="true"]::drop-down {{

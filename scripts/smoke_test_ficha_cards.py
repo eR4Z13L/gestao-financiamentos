@@ -490,7 +490,7 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
 
         # 1 clique num card abre a ficha (a selecao por clique unico que ja existia)
         _clicar_no_card(tela._lista, 1)
-        assert tela._painel_stack.currentIndex() == 1 and tela._nome_label.text() == "BETA AVALISTA"
+        assert tela._painel_stack.currentIndex() == 1 and tela._campo_nome.text() == "BETA AVALISTA"
         assert tela._cpf_selecionado == cpfs["beta"] and tela._lista.linha_atual() == 1
         tela._busca.setText("a")  # filtrar com a ficha aberta: o cliente segue na lista, selecionado
         assert tela._cpf_selecionado == cpfs["beta"] and tela._painel_stack.currentIndex() == 1
@@ -670,7 +670,7 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
 
     linha("6c) Histórico: alinhado com o cartão de dados, sem barra própria, rola junto com o painel")
     tela._selecionar_por_cpf(cpfs["beta"])
-    cartao = tela._nome_label.parentWidget()
+    cartao = tela._campo_nome.parentWidget()
     direita = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
     for largura in (1250, 900, 700):
         tela.resize(largura, 800)

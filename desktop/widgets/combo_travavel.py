@@ -35,6 +35,14 @@ class ComboTravavel(QComboBox):
                 self.setEditable(True)
             self.lineEdit().setReadOnly(True)
         else:
+            if not self._era_editavel:
+                # setEditable(False) descarta o texto do lineEdit e volta a mostrar o
+                # item do currentIndex - quem chamou pode ter usado setCurrentText()
+                # (que nao mexe no currentIndex) enquanto estava travado; sincroniza
+                # antes de desligar, senao esse valor se perderia ao destravar
+                indice = self.findText(self.currentText())
+                if indice >= 0:
+                    self.setCurrentIndex(indice)
             self.lineEdit().setReadOnly(False)
             if not self._era_editavel:
                 self.setEditable(False)

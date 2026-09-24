@@ -102,9 +102,9 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     tela._lista.definir_linha_atual(indice_na_lista)
 
     assert tela._painel_stack.currentIndex() == 1
-    assert tela._nome_label.text() == cliente_com_proposta["CLIENTE"]
+    assert tela._campo_nome.text() == cliente_com_proposta["CLIENTE"]
     assert tela._campo_cpf.text() == cliente_com_proposta["CPF/CNPJ"]
-    assert f"Vendedor: {cliente_com_proposta['VENDEDOR'] or '—'}" in tela._sub_info.text()
+    assert tela._campo_vendedor.currentText() == (cliente_com_proposta["VENDEDOR"] or "")
 
     # isVisible() so reflete a realidade quando a janela foi de fato mostrada
     # na tela (nao e o caso aqui, em modo headless) - isHidden() reflete o
@@ -350,7 +350,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         # a Rede Social agora mostra um LINK CURTO (domínio + seta), nunca a URL crua -
         # isso já evita a URL comprida esticar o layout sozinha; mas o link precisa
         # continuar levando pro endereço INTEIRO (nada cortado no href)
-        html_rede_social = tela._campo_rede_social.text()
+        html_rede_social = tela._rotulo_rede_social.text()
         assert "maapp.com.br ↗" in html_rede_social, "rede social deveria mostrar um link curto, não a URL crua"
         assert url_longa in html_rede_social, "o link precisa continuar apontando pro endereço completo (href)"
         print("OK: a Rede Social mostra um link curto ('maapp.com.br ↗'), mas continua apontando pro endereço completo.")
