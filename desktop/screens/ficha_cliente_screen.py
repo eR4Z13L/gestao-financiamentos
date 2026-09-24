@@ -47,7 +47,6 @@ from core.formatting import (
     iniciais_do_nome,
 )
 from core.validators import apenas_digitos
-from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
@@ -59,7 +58,6 @@ from desktop.widgets.lista_cartoes import ContentorDeListaAutomatica, ListaCarto
 from desktop.widgets.lista_clientes import ListaClientes, rotulo_do_tipo
 from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.rotulo_uma_linha import RotuloUmaLinha
-from desktop.widgets.shadow import aplicar_sombra_suave
 
 _TEXTO_PADRAO_PAINEL = "Selecione um cliente na lista ao lado, ou cadastre um novo."
 
@@ -389,16 +387,18 @@ class FichaClienteScreen(QWidget):
         conteudo = QWidget()
         layout = QVBoxLayout(conteudo)
         layout.setContentsMargins(_MARGEM_PAINEL, _MARGEM_PAINEL, _MARGEM_PAINEL, _MARGEM_PAINEL)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         self._rolagem_ficha.setWidget(conteudo)
         layout_pagina.addWidget(self._rolagem_ficha, stretch=1)
 
         cartao = QFrame()
         cartao.setProperty("role", "card")
-        aplicar_sombra_suave(cartao, settings_mod.obter_tema())
+        # sem sombra: o card segue o mesmo visual FLAT (borda + cantos arredondados, sem
+        # "flutuar") dos cards de proposta em Todas as Propostas (DelegateCartao) - lá
+        # tambem nao ha sombra, so contorno.
         layout_cartao = QVBoxLayout(cartao)
-        layout_cartao.setContentsMargins(16, 16, 16, 16)
-        layout_cartao.setSpacing(14)
+        layout_cartao.setContentsMargins(16, 14, 16, 14)
+        layout_cartao.setSpacing(10)
 
         # -- cabecalho: avatar + nome + CPF/tipo/vendedor/cadastro numa linha pequena,
         # Editar em destaque e "..." com Excluir (menos facil de clicar sem querer que
