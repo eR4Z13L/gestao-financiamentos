@@ -256,19 +256,19 @@ def testar_ficha(app: QApplication) -> None:
     assert tela._campo_nascimento.texto() == "20/07/1990"
     print("OK: CPF no cabeçalho, resumo logo abaixo, Nascimento em 'Pessoal'; 'Contato' some sem nenhum dado de contato.")
 
-    # pai/mãe/profissão/vinculado (vazios neste cliente) comecam ESCONDIDOS atrás do
-    # link "+N campos vazios"; clicar nele mostra os 4 com "—"
+    # pai/mãe/profissão/vinculado (vazios neste cliente) comecam ESCONDIDOS atrás da
+    # seta de "Pessoal" (mesmo CabecalhoRetratil de "Endereço"); clicar mostra os 4 com "—"
     assert tela._pessoal_campos_opcionais[0].isHidden(), "pai vazio: começa escondido"
-    assert tela._link_pessoal_vazios.text() == '<a href="#">+ 4 campos vazios</a>'
-    tela._alternar_pessoal_vazios()
-    assert not tela._pessoal_campos_opcionais[0].isHidden() and tela._link_pessoal_vazios.text() == '<a href="#">Ocultar campos vazios</a>'
+    assert not tela._cabecalho_pessoal.isChecked()
+    tela._cabecalho_pessoal.setChecked(True)
+    assert not tela._pessoal_campos_opcionais[0].isHidden() and tela._cabecalho_pessoal.isChecked()
     # agora sao QLineEdit editaveis: vazio de verdade e SEM texto (o "—" e so o
     # placeholder, pra nao virar um valor de verdade quando a pessoa for editar)
     assert [tela._campo_nome_pai.text(), tela._campo_nome_mae.text(), tela._campo_profissao.text()] == [""] * 3
     assert all(c.placeholderText() == "—" for c in (tela._campo_nome_pai, tela._campo_nome_mae, tela._campo_profissao))
-    tela._alternar_pessoal_vazios()  # volta a esconder, pro resto do teste seguir no estado padrão
+    tela._cabecalho_pessoal.setChecked(False)  # volta a esconder, pro resto do teste seguir no estado padrão
     assert tela._pessoal_campos_opcionais[0].isHidden()
-    print("OK: campos vazios de 'Pessoal' ficam escondidos atrás de um link ('+N campos vazios' / 'Ocultar campos vazios').")
+    print("OK: campos vazios de 'Pessoal' ficam escondidos atrás da seta do título da seção (igual 'Endereço').")
     assert (tela._campo_logradouro.text(), tela._campo_numero.text(), tela._campo_bairro.text(), tela._campo_cidade.text(),
             tela._campo_uf.text()) == ("Rua das Flores", "SN", "Centro", "Curitiba", "PR")
     assert tela._campo_cep.text() == "—" and tela._campo_complemento.text() == "—" and not tela._aviso_endereco_revisar.isVisible()
@@ -279,10 +279,10 @@ def testar_ficha(app: QApplication) -> None:
     print("OK: endereço em 7 campos (CEP vazio e complemento vazio mostram '—'); UF ao lado da cidade; sem aviso de revisar.")
 
     botoes = _botoes_de_copia(tela)
-    # 7 do endereço + 1 do CPF (no cabeçalho, sempre visível) - sem celular/e-mail
-    # neste cliente, a seção Contato (e o copiar do celular) nem aparece
-    assert len(botoes) == 8, f"deveria haver 8 botões de copiar (CPF + endereço), há {len(botoes)}"
-    cpf_copiar, cep, logr, num, compl, bairro, cidade, uf = botoes
+    # 7 do endereço + o do CPF (cabeçalho) + o do Nascimento (Pessoal, sempre visível
+    # mesmo com valor) - sem celular/e-mail neste cliente, a seção Contato nem aparece
+    assert len(botoes) == 9, f"deveria haver 9 botões de copiar (CPF + Nascimento + endereço), há {len(botoes)}"
+    cpf_copiar, nascimento_copiar, cep, logr, num, compl, bairro, cidade, uf = botoes
     clipboard = QApplication.clipboard()
     for botao, esperado in ((logr, "Rua das Flores"), (num, "SN"), (bairro, "Centro"), (cidade, "Curitiba"), (uf, "PR")):
         botao.click()
@@ -298,7 +298,7 @@ def testar_ficha(app: QApplication) -> None:
     clientes_mod.atualizar_cliente(CPF_SEPARADO, {"CPF/CNPJ": CPF_SEPARADO, "CLIENTE": "Cliente Separado", "TIPO": "Cliente", "LOGRADOURO": longo})
     tela._selecionar_por_cpf(CPF_SEPARADO)
     tela._recarregar_ficha_atual()
-    _botoes_de_copia(tela)[2].click()  # [0]=CPF, [1]=CEP, [2]=Logradouro
+    _botoes_de_copia(tela)[3].click()  # [0]=CPF, [1]=Nascimento, [2]=CEP, [3]=Logradouro
     assert clipboard.text() == longo and "​" not in clipboard.text()
     print("OK: logradouro longo é copiado exatamente como foi digitado.")
 
@@ -408,7 +408,10 @@ def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     x = lambda campo: campo.mapTo(tela, QPoint(0, 0)).x()  # noqa: E731
     assert tela._pessoal_wrap_nascimento.isVisible() and tela._campo_vinculado.parentWidget().isVisible()
     assert tela._pessoal_campos_opcionais[0].isHidden(), "pai vazio continua escondido"
-    assert y(tela._campo_nascimento) == y(tela._campo_vinculado), "Nascimento e Vinculado na mesma linha, sem buraco"
+    # tolerancia de poucos pixels: CampoData (24px) e QLineEdit (22px) tem altura NATURAL
+    # levemente diferente, entao o centro de cada HBox (legenda + campo + botao de copiar)
+    # arredonda de um jeito ligeiramente diferente - continuam na mesma LINHA da grade
+    assert abs(y(tela._campo_nascimento) - y(tela._campo_vinculado)) <= 2, "Nascimento e Vinculado na mesma linha, sem buraco"
     assert x(tela._campo_nascimento) < x(tela._campo_vinculado)
     print("OK: com só Nascimento e Vinculado visíveis, ficam lado a lado na mesma linha (sem buraco no meio).")
 
@@ -447,9 +450,18 @@ def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
     app.processEvents()
 
     assert tela._botao_editar_cliente.isVisible() and not tela._botao_ok_cliente.isVisible()
+    assert tela._botao_copiar_email.isVisible() and tela._botao_copiar_nascimento.isVisible()
     tela._alternar_edicao_cliente()
     assert not tela._campo_nome.isReadOnly() and tela._botao_ok_cliente.isVisible() and not tela._botao_editar_cliente.isVisible()
-    print("OK: 'Editar' destrava os campos e troca os botões por OK/Cancelar.")
+    # os botoes de copiar (novos: e-mail/rede social/Pessoal, e os antigos: CPF/celular)
+    # so fazem sentido em LEITURA - editando, some todo mundo
+    for botao in (
+        tela._botao_copiar_cpf, tela._botao_copiar_celular, tela._botao_copiar_email,
+        tela._botao_copiar_rede_social, tela._botao_copiar_nascimento, tela._botao_copiar_pai,
+        tela._botao_copiar_mae, tela._botao_copiar_profissao, tela._botao_copiar_vinculado,
+    ):
+        assert not botao.isVisible(), "botão de copiar não deveria aparecer em modo de edição"
+    print("OK: 'Editar' destrava os campos, troca os botões por OK/Cancelar, e some com os botões de copiar.")
 
     # nome vazio: rejeitado, campo marcado invalido, SEM QMessageBox (diferente do ClienteDialog)
     antes = len(msgs.textos)
@@ -535,8 +547,9 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     rotulo = tela._campo_endereco_completo
     assert rotulo.heightForWidth(rotulo.width()) <= rotulo.fontMetrics().lineSpacing() + 2, "o endereço retraído cabe numa única linha"
     botoes = _botoes_de_copia(tela)
-    # retraído: o do CPF (cabeçalho, sempre visível) + o do endereço inteiro
-    assert len(botoes) == 2, f"retraído deveriam haver 2 botões de copiar (CPF + endereço), há {len(botoes)}"
+    # retraído: o do CPF (cabeçalho) + o do Nascimento (Pessoal, sempre visível mesmo
+    # vazio - este cliente não tem nascimento) + o do endereço inteiro
+    assert len(botoes) == 3, f"retraído deveriam haver 3 botões de copiar (CPF + Nascimento + endereço), há {len(botoes)}"
     botao_endereco = botoes[-1]
     botao_endereco.click()
     assert clipboard.text() == completo and botao_endereco.estado == botao_copiar_mod.ESTADO_COPIADO
@@ -553,9 +566,9 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     assert "Voltar" in cabecalho.toolTip(), "a dica muda: agora recolhe"
     assert cabecalho.grab().toImage() != imagem_fechado, "a seta muda de direção"
     botoes = _botoes_de_copia(tela)
-    assert len(botoes) == 8, f"expandido: CPF + um botão de copiar por campo de endereço (7), há {len(botoes)}"
+    assert len(botoes) == 9, f"expandido: CPF + Nascimento + um botão de copiar por campo de endereço (7), há {len(botoes)}"
     esperado = ["80000-000", "Rua das Palmeiras", "211", "Apto 301", "Centro", "Curitiba", "PR"]
-    for botao, texto in zip(botoes[1:], esperado):  # botoes[0] é o do CPF, no cabeçalho
+    for botao, texto in zip(botoes[2:], esperado):  # botoes[0]=CPF, [1]=Nascimento
         clipboard.setText("")
         botao.click()
         assert clipboard.text() == texto and botao.estado == botao_copiar_mod.ESTADO_COPIADO, (texto, clipboard.text())
@@ -702,7 +715,7 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
             for _ in range(6):
                 app.processEvents()
             imagem = tela.grab().toImage()
-            botao_cep = _botoes_de_copia(tela)[1]  # [0] e o do CPF, no cabeçalho
+            botao_cep = _botoes_de_copia(tela)[2]  # [0]=CPF, [1]=Nascimento (Pessoal)
             direita_col0 = botao_cep.mapTo(tela, QPoint(botao_cep.width(), 0)).x()
             esquerda_col1 = tela._campo_logradouro.mapTo(tela, QPoint(0, 0)).x()
             x_vao, y_linha = (direita_col0 + esquerda_col1) // 2, tela._campo_cep.mapTo(tela, QPoint(0, tela._campo_cep.height() // 2)).y()
