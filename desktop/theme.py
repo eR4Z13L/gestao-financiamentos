@@ -356,6 +356,9 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QComboBox:focus {{
         border: 1px solid {p['destaque']};
     }}
+    QComboBox[invalido="true"] {{
+        border: 1px solid {p['erro']};
+    }}
 
     /* campos travados (formulario de proposta em modo leitura, propriedade
        "travado" - ver desktop/widgets/formulario_proposta.py): todos com a mesma
