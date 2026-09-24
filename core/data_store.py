@@ -25,6 +25,7 @@ import gc
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -199,19 +200,26 @@ def arquivo_esta_bloqueado(caminho_xlsx: Path) -> bool:
     return _caminho_arquivo_bloqueio(caminho_xlsx).exists()
 
 
+@contextmanager
 def _carregar_planilha(caminho_xlsx: Path):
     # o coletor de lixo CICLICO do Python (gc.collect(), automatico por contagem de
-    # alocacoes) pode disparar NO MEIO do parser XML em C do openpyxl - encontramos
-    # isso travando o app (Windows fatal exception: access violation) quando a janela
-    # ja tinha criado/destruido varios widgets (Qt/PySide6 tambem usa ciclos de
-    # referencia, o que deixa mais lixo ciclico pendente). Desligar o coletor so
-    # durante a leitura evita a reentrancia sem perder memoria de verdade: os objetos
-    # continuam sendo liberados por contagem de referencia normal, so a VARREDURA de
-    # ciclos fica pra depois.
+    # alocacoes) pode disparar tanto NO MEIO do parser XML em C do openpyxl quanto logo
+    # DEPOIS, num simples wb[nome_aba] (o coletor pode disparar em QUALQUER alocacao
+    # seguinte, nao so as de dentro do parser em si) - encontramos os dois casos travando
+    # o app (Windows fatal exception: access violation) quando a janela ja tinha criado/
+    # destruido varios widgets (Qt/PySide6 tambem usa ciclos de referencia, o que deixa
+    # mais lixo ciclico pendente). Por isso o coletor fica desligado durante TODO o uso
+    # do workbook (o bloco "with" inteiro), nao so durante o load_workbook() - desligar
+    # evita a reentrancia sem perder memoria de verdade: os objetos continuam sendo
+    # liberados por contagem de referencia normal, so a VARREDURA de ciclos fica pra depois.
     coletor_estava_ligado = gc.isenabled()
     gc.disable()
     try:
-        return openpyxl.load_workbook(caminho_xlsx, data_only=False)
+        wb = openpyxl.load_workbook(caminho_xlsx, data_only=False)
+        try:
+            yield wb
+        finally:
+            wb.close()
     finally:
         if coletor_estava_ligado:
             gc.enable()
@@ -293,14 +301,11 @@ def _conferir_cabecalho(ws, nome_aba: str, colunas: list[str], nome_arquivo: str
 def ler_aba(
     caminho_xlsx: Path, nome_aba: str, colunas: list[str], conferir_cabecalho: bool = False
 ) -> pd.DataFrame:
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         ws = wb[nome_aba]
         if conferir_cabecalho:
             _conferir_cabecalho(ws, nome_aba, colunas, caminho_xlsx.name)
         linhas = list(_linhas_da_aba(ws, len(colunas)))
-    finally:
-        wb.close()
     return pd.DataFrame(linhas, columns=colunas)
 
 
@@ -371,15 +376,12 @@ def _garantir_coluna_ativo_vendedores(wb) -> bool:
 
 
 def ler_vendedores(caminho_xlsx: Path) -> pd.DataFrame:
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         migrou = _garantir_aba_vendedores(wb)
         migrou = _garantir_coluna_ativo_vendedores(wb) or migrou
         if migrou:
             _salvar_planilha(wb, caminho_xlsx)
         linhas = list(_linhas_da_aba(wb[ABA_VENDEDORES], len(VENDEDORES_COLUNAS)))
-    finally:
-        wb.close()
     df = pd.DataFrame(linhas, columns=VENDEDORES_COLUNAS)
     for col in _VENDEDORES_COLUNAS_TEXTO:
         df[col] = df[col].map(_normalizar_texto)
@@ -531,8 +533,7 @@ def atualizar_formulas_tempo(caminho_xlsx: Path, gravar: bool = True) -> int:
     aberta direto no Excel, ela mostraria a regra velha). Nenhuma outra celula
     e tocada. Devolve quantas formulas mudaram (0 = ja estava em dia); com
     gravar=False so conta, sem salvar nada."""
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         ws = wb[ABA_PROPOSTAS]
         if _normalizar_texto(ws.cell(row=1, column=9).value) != "TEMPO":
             raise ErroPlanilhaDesatualizada(
@@ -548,50 +549,36 @@ def atualizar_formulas_tempo(caminho_xlsx: Path, gravar: bool = True) -> int:
         if alteradas and gravar:
             _salvar_planilha(wb, caminho_xlsx)
         return alteradas
-    finally:
-        wb.close()
 
 
 def escrever_clientes(caminho_xlsx: Path, df: pd.DataFrame) -> None:
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
         _escrever_linhas_simples(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
-    finally:
-        wb.close()
     sheets_sync.sincronizar_em_background(ABA_CLIENTES, ler_clientes(caminho_xlsx))
 
 
 def escrever_equipamentos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         _escrever_linhas_simples(wb[ABA_EQUIPAMENTOS], ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS, df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
-    finally:
-        wb.close()
     sheets_sync.sincronizar_em_background(ABA_EQUIPAMENTOS, ler_equipamentos(caminho_xlsx))
 
 
 def escrever_vendedores(caminho_xlsx: Path, df: pd.DataFrame) -> None:
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         _garantir_aba_vendedores(wb)
         _escrever_linhas_simples(wb[ABA_VENDEDORES], ABA_VENDEDORES, VENDEDORES_COLUNAS, df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
-    finally:
-        wb.close()
     sheets_sync.sincronizar_em_background(ABA_VENDEDORES, ler_vendedores(caminho_xlsx))
 
 
 def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     """`df` deve conter apenas as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS)."""
-    wb = _carregar_planilha(caminho_xlsx)
-    try:
+    with _carregar_planilha(caminho_xlsx) as wb:
         _escrever_linhas_propostas(wb[ABA_PROPOSTAS], df.to_dict("records"))
         _salvar_planilha(wb, caminho_xlsx)
-    finally:
-        wb.close()
     # sincroniza a VISAO COMPLETA (com VENDEDOR/CLIENTE/TEMPO ja calculados,
     # nao formulas) - e o formato que a leitura remota (Fase 2) espera, sem
     # precisar reimplementar as formulas do Excel do outro lado.
