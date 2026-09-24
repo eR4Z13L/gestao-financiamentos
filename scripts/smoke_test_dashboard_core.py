@@ -155,20 +155,31 @@ def testar_atencao() -> None:
         dict(DATA=pd.Timestamp(2020, 1, 1), STATUS="Negado"),  # 11: limite: ok
         dict(DATA=_dias_atras(-365), STATUS="Negado"),  # 12: daqui a 1 ano: ok
         dict(DATA=_dias_atras(-366), STATUS="Negado"),  # 13: alem de 1 ano no futuro
+        # mesma venda (mesmo cliente+equipamento) em 2 bancos: um ja efetivou, o outro
+        # ainda esta em aberto - so o 15 e sinalizado (o 14, efetivado, nao esta "em aberto")
+        dict(DATA=_dias_atras(1), STATUS="Efetivado", CPF="44444444444", EQUIPAMENTO="EQ MESMA VENDA", BANCO="Banco X"),  # 14
+        dict(DATA=_dias_atras(1), STATUS="Em Análise", CPF="44444444444", EQUIPAMENTO="EQ MESMA VENDA", BANCO="Banco Y"),  # 15
     )
     itens = {i.chave: i for i in dash.precisa_de_atencao(df)}
-    assert set(itens) == {dash.ATENCAO_PARADAS, dash.ATENCAO_A_EFETIVAR, dash.ATENCAO_SEM_VALOR, dash.ATENCAO_DUPLICADAS, dash.ATENCAO_DATA_ESTRANHA}
+    assert set(itens) == {
+        dash.ATENCAO_PARADAS, dash.ATENCAO_A_EFETIVAR, dash.ATENCAO_MESMA_VENDA, dash.ATENCAO_SEM_VALOR,
+        dash.ATENCAO_DUPLICADAS, dash.ATENCAO_DATA_ESTRANHA,
+    }
     assert itens[dash.ATENCAO_PARADAS].indices == (0, 2), "paradas: em aberto ha MAIS de 7 dias (7 exatos nao conta; encerrada nunca)"
     assert itens[dash.ATENCAO_A_EFETIVAR].indices == (2,)
+    assert itens[dash.ATENCAO_MESMA_VENDA].indices == (15,), "so a que AINDA esta em aberto; a efetivada (14) nao entra"
     assert itens[dash.ATENCAO_SEM_VALOR].indices == (4,)
     assert itens[dash.ATENCAO_DUPLICADAS].indices == (5, 6), "mesmo cliente + equipamento + banco + dia (ignorando caixa/espacos)"
     assert itens[dash.ATENCAO_DATA_ESTRANHA].indices == (10, 13), "antes de 2020 ou alem de 1 ano no futuro"
     assert itens[dash.ATENCAO_PARADAS].tom == dash.TOM_PROCESSO and itens[dash.ATENCAO_SEM_VALOR].tom == dash.TOM_DADOS
-    assert [i.chave for i in dash.precisa_de_atencao(df)] == ["paradas", "a_efetivar", "sem_valor", "duplicadas", "data_estranha"], "ordem fixa: o que esta parado no processo antes dos problemas de cadastro"
-    print("OK: cada grupo com as propostas certas (limites exatos: 7 dias, 2020-01-01, +365 dias).")
+    assert [i.chave for i in dash.precisa_de_atencao(df)] == [
+        "paradas", "a_efetivar", "mesma_venda", "sem_valor", "duplicadas", "data_estranha",
+    ], "ordem fixa: o que esta parado no processo antes dos problemas de cadastro"
+    print("OK: cada grupo com as propostas certas (limites exatos: 7 dias, 2020-01-01, +365 dias; mesma venda em 2 bancos).")
 
     assert itens[dash.ATENCAO_PARADAS].texto == "2 propostas em aberto há mais de 7 dias"
     assert itens[dash.ATENCAO_A_EFETIVAR].texto == "1 proposta aprovada ainda sem efetivar", itens[dash.ATENCAO_A_EFETIVAR].texto
+    assert itens[dash.ATENCAO_MESMA_VENDA].texto == "1 proposta em aberto de um cliente que já efetivou o mesmo equipamento em outro banco"
     assert itens[dash.ATENCAO_SEM_VALOR].texto == "1 proposta sem valor"
     assert itens[dash.ATENCAO_DUPLICADAS].texto == "2 propostas que parecem duplicadas"
     assert itens[dash.ATENCAO_PARADAS].rotulo_do_filtro == "Em aberto há mais de 7 dias"
@@ -215,15 +226,16 @@ def testar_funil() -> None:
     assert [(e.etapa, e.quantidade) for e in f] == [
         (propostas_mod.ETAPA_EM_ANALISE, 2), (propostas_mod.ETAPA_PRE_APROVADO, 1), (propostas_mod.ETAPA_APROVADO, 1),
         (propostas_mod.ETAPA_NF_ANEXADA, 0), (propostas_mod.ETAPA_GARANTIA_ASSINADA, 0), (propostas_mod.ETAPA_EFETIVADO, 1),
-        (propostas_mod.ETAPA_NEGADO, 3),
+        (propostas_mod.ETAPA_NAO_EFETIVADO, 0), (propostas_mod.ETAPA_PROPOSTA_ENCERRADA, 0), (propostas_mod.ETAPA_NEGADO, 3),
     ], [(e.etapa, e.quantidade) for e in f]
     assert f[0].valor == 100.0 and f[0].com_valor == 1 and f[-1].rotulo == "Negado" and f[3].rotulo == "Nota fiscal"
-    print("OK: as 6 etapas do funil em ordem e 'Negado' por ultimo (separado), com valor e quantas tem valor.")
+    print("OK: as 6 etapas do funil em ordem, depois 'Não efetivado'/'Encerrada'/'Negado' (fora do funil, separados), "
+          "com valor e quantas tem valor.")
 
     com_estranhas = montar(dict(STATUS=""), dict(STATUS="coisa esquisita"), dict(STATUS="Em Análise"))
     extras = [e for e in dash.funil_por_etapa(com_estranhas) if e.etapa in (propostas_mod.ETAPA_SEM_STATUS, propostas_mod.ETAPA_DESCONHECIDA)]
     assert [(e.rotulo, e.quantidade) for e in extras] == [("Sem status", 1), ("Status não reconhecido", 1)]
-    assert len(dash.funil_por_etapa(df)) == 7 and len(dash.funil_por_etapa(vazio())) == 7
+    assert len(dash.funil_por_etapa(df)) == 9 and len(dash.funil_por_etapa(vazio())) == 9
     assert all(e.quantidade == 0 for e in dash.funil_por_etapa(vazio()))
     print("OK: 'sem status' e 'nao reconhecido' so aparecem se houver (nada some da conta); vazio = tudo 0.")
 

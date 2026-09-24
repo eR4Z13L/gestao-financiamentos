@@ -31,6 +31,7 @@ from config import CAMINHO_XLSX
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import clientes as clientes_mod
+from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
@@ -247,16 +248,24 @@ def testar_ficha(app: QApplication) -> None:
     assert not tela._cabecalho_endereco.isChecked(), "o endereço abre retraído (o retraído é testado na seção 5)"
     tela._cabecalho_endereco.setChecked(True)  # aqui interessam os 7 campos
     app.processEvents()
-    # nascimento na mesma linha do CPF/CNPJ (topo), acima dos campos secundarios
     y = lambda campo: campo.mapTo(tela, QPoint(0, 0)).y()  # noqa: E731
-    assert y(tela._campo_nascimento) == y(tela._campo_cpf), "nascimento na mesma linha do CPF/CNPJ"
-    assert y(tela._campo_nascimento) < y(tela._campo_rede_social) < y(tela._campo_nome_pai) < y(tela._campo_cep)
-    assert y(tela._campo_celular) < y(tela._campo_rede_social), "celular/e-mail (principais) acima de rede social"
-    assert y(tela._campo_nome_pai) == y(tela._campo_nome_mae) == y(tela._campo_profissao)
+    # cabecalho (CPF) no topo, o resumo logo abaixo, "Pessoal" (com o Nascimento) por
+    # ultimo - Contato nem aparece (este cliente nao tem celular/e-mail/rede social)
+    assert y(tela._campo_cpf) < y(tela._resumo_label) < y(tela._campo_nascimento)
+    assert tela._secao_contato.isHidden(), "sem celular/e-mail/rede social: a seção Contato nem aparece"
     assert tela._campo_nascimento.text() == "20/07/1990"
-    print("OK: Nascimento na linha do CPF/CNPJ (topo); pai/mãe/profissão na área secundária, acima do endereço.")
+    print("OK: CPF no cabeçalho, resumo logo abaixo, Nascimento em 'Pessoal'; 'Contato' some sem nenhum dado de contato.")
 
+    # pai/mãe/profissão/vinculado (vazios neste cliente) comecam ESCONDIDOS atrás do
+    # link "+N campos vazios"; clicar nele mostra os 4 com "—"
+    assert tela._pessoal_campos_opcionais[0].isHidden(), "pai vazio: começa escondido"
+    assert tela._link_pessoal_vazios.text() == '<a href="#">+ 4 campos vazios</a>'
+    tela._alternar_pessoal_vazios()
+    assert not tela._pessoal_campos_opcionais[0].isHidden() and tela._link_pessoal_vazios.text() == '<a href="#">Ocultar campos vazios</a>'
     assert [tela._campo_nome_pai.text(), tela._campo_nome_mae.text(), tela._campo_profissao.text()] == ["—"] * 3
+    tela._alternar_pessoal_vazios()  # volta a esconder, pro resto do teste seguir no estado padrão
+    assert tela._pessoal_campos_opcionais[0].isHidden()
+    print("OK: campos vazios de 'Pessoal' ficam escondidos atrás de um link ('+N campos vazios' / 'Ocultar campos vazios').")
     assert (tela._campo_logradouro.text(), tela._campo_numero.text(), tela._campo_bairro.text(), tela._campo_cidade.text(),
             tela._campo_uf.text()) == ("Rua das Flores", "SN", "Centro", "Curitiba", "PR")
     assert tela._campo_cep.text() == "—" and tela._campo_complemento.text() == "—" and not tela._aviso_endereco_revisar.isVisible()
@@ -267,8 +276,10 @@ def testar_ficha(app: QApplication) -> None:
     print("OK: endereço em 7 campos (CEP vazio e complemento vazio mostram '—'); UF ao lado da cidade; sem aviso de revisar.")
 
     botoes = _botoes_de_copia(tela)
-    assert len(botoes) == 7, f"deveria haver 7 botões de copiar (um por campo de endereço), há {len(botoes)}"
-    cep, logr, num, compl, bairro, cidade, uf = botoes
+    # 7 do endereço + 1 do CPF (no cabeçalho, sempre visível) - sem celular/e-mail
+    # neste cliente, a seção Contato (e o copiar do celular) nem aparece
+    assert len(botoes) == 8, f"deveria haver 8 botões de copiar (CPF + endereço), há {len(botoes)}"
+    cpf_copiar, cep, logr, num, compl, bairro, cidade, uf = botoes
     clipboard = QApplication.clipboard()
     for botao, esperado in ((logr, "Rua das Flores"), (num, "SN"), (bairro, "Centro"), (cidade, "Curitiba"), (uf, "PR")):
         botao.click()
@@ -284,7 +295,7 @@ def testar_ficha(app: QApplication) -> None:
     clientes_mod.atualizar_cliente(CPF_SEPARADO, {"CPF/CNPJ": CPF_SEPARADO, "CLIENTE": "Cliente Separado", "TIPO": "Cliente", "LOGRADOURO": longo})
     tela._selecionar_por_cpf(CPF_SEPARADO)
     tela._recarregar_ficha_atual()
-    _botoes_de_copia(tela)[1].click()
+    _botoes_de_copia(tela)[2].click()  # [0]=CPF, [1]=CEP, [2]=Logradouro
     assert clipboard.text() == longo and "​" not in clipboard.text()
     print("OK: logradouro longo é copiado exatamente como foi digitado.")
 
@@ -349,6 +360,74 @@ def _cadastrar_clientes_de_endereco() -> dict[str, str]:
     return cpfs
 
 
+def testar_pessoal_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
+    linha("3b) 'Pessoal' sem buraco quando campos do meio estão vazios; e-mails múltiplos e resumo sem redundância")
+    cpf = "232.002.423-96"
+    clientes_mod.adicionar_cliente(
+        {"CPF/CNPJ": cpf, "CLIENTE": "Cliente Vinculado", "TIPO": "Cliente",
+         "NASCIMENTO": pd.Timestamp(1985, 3, 10), "VINCULADO": "Fulano de Tal",
+         "EMAIL": "primeiro@exemplo.com"}
+    )
+    # o formulario nunca deixaria digitar 2 e-mails grudados (adicionar_cliente valida) - mas o
+    # campo pode ter vindo assim de uma edicao direta na planilha, ou de antes dessa validacao
+    # existir; grava direto no arquivo (bypassa o core) pra simular esse dado ja existente.
+    # IMPORTANTE: usa clientes_mod.CAMINHO_XLSX (redirecionado pro `tmp` isolado em main()),
+    # NUNCA o `CAMINHO_XLSX` importado no topo deste arquivo - esse continua apontando pra
+    # planilha REAL (so serviu pra montar o `tmp` no main()).
+    caminho_teste = clientes_mod.CAMINHO_XLSX
+    # nunca openpyxl.load_workbook() direto - usa o "with" que desliga o gc por toda a
+    # duracao do uso do workbook (ver o comentario em core.data_store._carregar_planilha)
+    with bd._carregar_planilha(caminho_teste) as wb:
+        ws = wb[bd.ABA_CLIENTES]
+        coluna_email = bd.CLIENTES_COLUNAS.index("EMAIL") + 1
+        for linha_planilha in range(2, ws.max_row + 1):
+            if str(ws.cell(row=linha_planilha, column=2).value or "").strip() == cpf:
+                ws.cell(row=linha_planilha, column=coluna_email, value="primeiro@exemplo.com segundo@exemplo.com")
+                break
+        else:
+            raise AssertionError("cliente de teste não encontrado na planilha pra injetar o e-mail duplo")
+        wb.save(caminho_teste)
+    propostas_mod.adicionar_proposta(
+        {"CPF": cpf, "DATA": pd.Timestamp(2026, 4, 1), "VALOR (R$)": 2000, "MESES": 12,
+         "EQUIPAMENTO": "Equipamento X", "BANCO": "Banco Teste", "STATUS": "Em Análise", "OBSERVAÇÕES": ""}
+    )
+    tela = FichaClienteScreen()
+    tela.resize(1150, 780)
+    tela.show()
+    app.processEvents()
+    tela._selecionar_por_cpf(cpf)
+    app.processEvents()
+
+    # Pai/Mãe/Profissão vazios (escondidos): Nascimento e Vinculado são os 2 únicos
+    # visíveis em "Pessoal" - têm que ficar lado a lado na MESMA linha, sem o "buraco"
+    # que as posições fixas antigas ((0,0) e (1,1)) deixariam com os do meio escondidos
+    y = lambda campo: campo.mapTo(tela, QPoint(0, 0)).y()  # noqa: E731
+    x = lambda campo: campo.mapTo(tela, QPoint(0, 0)).x()  # noqa: E731
+    assert tela._pessoal_wrap_nascimento.isVisible() and tela._campo_vinculado.parentWidget().isVisible()
+    assert tela._pessoal_campos_opcionais[0].isHidden(), "pai vazio continua escondido"
+    assert y(tela._campo_nascimento) == y(tela._campo_vinculado), "Nascimento e Vinculado na mesma linha, sem buraco"
+    assert x(tela._campo_nascimento) < x(tela._campo_vinculado)
+    print("OK: com só Nascimento e Vinculado visíveis, ficam lado a lado na mesma linha (sem buraco no meio).")
+
+    # 2 e-mails digitados juntos (separados por espaço) viram 2 links de mailto, um em cada linha
+    assert tela._campo_email.text().count("mailto:") == 2
+    assert 'href="mailto:primeiro@exemplo.com"' in tela._campo_email.text()
+    assert 'href="mailto:segundo@exemplo.com"' in tela._campo_email.text()
+    print("OK: dois e-mails digitados juntos no mesmo campo viram 2 links de mailto separados.")
+
+    # caso real encontrado na planilha migrada: 2 e-mails + um TELEFONE (com espaço por
+    # dentro) grudados no mesmo campo - o telefone vira texto puro intacto (não um mailto:
+    # quebrado, nem fragmentado nos espaços internos dele)
+    misto = FichaClienteScreen._texto_com_link_de_email("a@b.com\nc@d.com\n+55 77 9208-1246")
+    assert misto.count("mailto:") == 2 and "+55 77 9208-1246" in misto and "mailto:+55" not in misto
+    print("OK: um trecho que não é e-mail (ex.: telefone colado junto) vira texto puro intacto, sem virar mailto: nem se fragmentar.")
+
+    # resumo com 0 aprovadas: sem o segmento redundante "nenhuma aprovada" (só "0 aprovadas" já diz)
+    assert "aprovadas" in tela._resumo_label.text() and "nenhuma aprovada" not in tela._resumo_label.text()
+    print(f"OK: resumo sem redundância quando 0 aprovadas: {tela._resumo_label.text()!r}")
+    tela.close()
+
+
 def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     linha("5) Endereço retraído (uma linha por extenso) e expandido (7 campos)")
     tela = FichaClienteScreen()
@@ -371,9 +450,11 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     rotulo = tela._campo_endereco_completo
     assert rotulo.heightForWidth(rotulo.width()) <= rotulo.fontMetrics().lineSpacing() + 2, "o endereço retraído cabe numa única linha"
     botoes = _botoes_de_copia(tela)
-    assert len(botoes) == 1, f"retraído há um único botão de copiar (o do endereço inteiro), há {len(botoes)}"
-    botoes[0].click()
-    assert clipboard.text() == completo and botoes[0].estado == botao_copiar_mod.ESTADO_COPIADO
+    # retraído: o do CPF (cabeçalho, sempre visível) + o do endereço inteiro
+    assert len(botoes) == 2, f"retraído deveriam haver 2 botões de copiar (CPF + endereço), há {len(botoes)}"
+    botao_endereco = botoes[-1]
+    botao_endereco.click()
+    assert clipboard.text() == completo and botao_endereco.estado == botao_copiar_mod.ESTADO_COPIADO
     assert "​" not in clipboard.text(), "copia o endereço exato, sem caracteres invisíveis"
     print(f"OK: abre retraído: uma linha ('{completo}') e um botão que copia o endereço inteiro.")
 
@@ -387,9 +468,9 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     assert "Voltar" in cabecalho.toolTip(), "a dica muda: agora recolhe"
     assert cabecalho.grab().toImage() != imagem_fechado, "a seta muda de direção"
     botoes = _botoes_de_copia(tela)
-    assert len(botoes) == 7, f"expandido há um botão de copiar por campo (7), há {len(botoes)}"
+    assert len(botoes) == 8, f"expandido: CPF + um botão de copiar por campo de endereço (7), há {len(botoes)}"
     esperado = ["80000-000", "Rua das Palmeiras", "211", "Apto 301", "Centro", "Curitiba", "PR"]
-    for botao, texto in zip(botoes, esperado):
+    for botao, texto in zip(botoes[1:], esperado):  # botoes[0] é o do CPF, no cabeçalho
         clipboard.setText("")
         botao.click()
         assert clipboard.text() == texto and botao.estado == botao_copiar_mod.ESTADO_COPIADO, (texto, clipboard.text())
@@ -426,9 +507,9 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     app.processEvents()
     assert _sem_invisiveis(tela._campo_endereco_completo) == "—", "sem endereço nenhum: '—', como os outros campos"
     clipboard.setText("anterior")
-    botao_unico = _botoes_de_copia(tela)[0]
-    botao_unico.click()
-    assert clipboard.text() == "anterior" and botao_unico.estado == botao_copiar_mod.ESTADO_VAZIO, "vazio não copia '—'"
+    botao_endereco_vazio = _botoes_de_copia(tela)[-1]  # [0] é o do CPF; o do endereço (vazio) é o último
+    botao_endereco_vazio.click()
+    assert clipboard.text() == "anterior" and botao_endereco_vazio.estado == botao_copiar_mod.ESTADO_VAZIO, "vazio não copia '—'"
     print("OK: 'Avenida Central - Curitiba' (só o que existe, sem sobras); sem endereço mostra '—' e o copiar não sobrescreve a área de transferência.")
 
     # -- o aviso de 'endereco a revisar' aparece nos dois estados ------------------------
@@ -483,21 +564,27 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
             for _ in range(6):
                 app.processEvents()
 
-            legenda_outra = next(r for r in tela.findChildren(QLabel) if r.text() == "Nome do pai")
+            # o titulo "Endereço" agora e uma SECAO (como "Contato"/"Pessoal"), nao mais uma
+            # legenda de campo solta - compara com a outra secao, "Pessoal"
+            titulo_outra_secao = next(r for r in tela.findChildren(QLabel) if r.text() == "Pessoal")
             titulo = tela._cabecalho_endereco._rotulo
-            assert _mesma_fonte(titulo, legenda_outra) and _cor_do_texto(titulo) == _cor_do_texto(legenda_outra), \
-                f"{tema}: o título 'Endereço' tem a mesma fonte/cor das legendas dos outros campos"
-            assert titulo.property("role") == "campo_rotulo"
+            assert _mesma_fonte(titulo, titulo_outra_secao) and _cor_do_texto(titulo) == _cor_do_texto(titulo_outra_secao), \
+                f"{tema}: o título 'Endereço' tem a mesma fonte/cor do título das outras seções"
+            assert titulo.property("role") == "titulo_secao"
 
+            # o valor (endereço por extenso) compara com outro campo "campo_valor" que
+            # esta SEMPRE visivel (Nascimento nunca fica escondido, ao contrario dos
+            # opcionais de "Pessoal")
             valor = tela._campo_endereco_completo
-            assert _mesma_fonte(valor, tela._campo_cpf) and _cor_do_texto(valor) == _cor_do_texto(tela._campo_cpf), \
+            assert _mesma_fonte(valor, tela._campo_nascimento) and _cor_do_texto(valor) == _cor_do_texto(tela._campo_nascimento), \
                 f"{tema}: o endereço tem a mesma fonte/cor do valor dos outros campos"
-            assert abs(valor.height() - tela._campo_cpf.height()) <= 1, \
-                f"{tema}: caixa do endereço ({valor.height()} px) com a altura da dos outros campos ({tela._campo_cpf.height()} px)"
-            assert abs(titulo.height() - legenda_outra.height()) <= 1, f"{tema}: legenda com a altura das outras"
+            assert abs(valor.height() - tela._campo_nascimento.height()) <= 1, \
+                f"{tema}: caixa do endereço ({valor.height()} px) com a altura da dos outros campos ({tela._campo_nascimento.height()} px)"
+            assert abs(titulo.height() - titulo_outra_secao.height()) <= 1, f"{tema}: título de seção com a altura das outras"
 
             # nada de "barra": o valor ocupa so a largura do texto e o botao de copiar fica logo ao lado
-            botao = _botoes_de_copia(tela)[0]
+            # (botoes[0] e o do CPF, no cabeçalho; o do endereço e o ultimo, retraído)
+            botao = _botoes_de_copia(tela)[-1]
             largura_texto = valor.fontMetrics().horizontalAdvance(_sem_invisiveis(valor))
             assert valor.width() <= largura_texto + 12, f"{tema}: valor de {valor.width()} px para um texto de {largura_texto} px (esticou)"
             folga = botao.mapTo(tela, QPoint(0, 0)).x() - valor.mapTo(tela, QPoint(valor.width(), 0)).x()
@@ -516,7 +603,7 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
             for _ in range(6):
                 app.processEvents()
             imagem = tela.grab().toImage()
-            botao_cep = _botoes_de_copia(tela)[0]
+            botao_cep = _botoes_de_copia(tela)[1]  # [0] e o do CPF, no cabeçalho
             direita_col0 = botao_cep.mapTo(tela, QPoint(botao_cep.width(), 0)).x()
             esquerda_col1 = tela._campo_logradouro.mapTo(tela, QPoint(0, 0)).x()
             x_vao, y_linha = (direita_col0 + esquerda_col1) // 2, tela._campo_cep.mapTo(tela, QPoint(0, tela._campo_cep.height() // 2)).y()
@@ -542,7 +629,7 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
     for _ in range(6):
         app.processEvents()
     valor = tela._campo_endereco_completo
-    botao = _botoes_de_copia(tela)[0]
+    botao = _botoes_de_copia(tela)[-1]  # [0] e o do CPF, no cabeçalho
     assert valor.heightForWidth(valor.width()) > valor.fontMetrics().lineSpacing() + 2, "endereço longo em janela estreita quebra em mais linhas"
     cartao = tela._nome_label.parentWidget()
     borda_cartao = cartao.mapTo(tela, QPoint(cartao.width(), 0)).x()
@@ -689,6 +776,17 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
 
 
 def main() -> None:
+    # este script constroi MUITAS janelas/widgets Qt em sequencia (uma FichaClienteScreen
+    # por secao de teste) intercaladas com leitura/escrita via openpyxl - a combinacao pode
+    # fazer o coletor de lixo CICLICO do Python disparar (automatico, por contagem de
+    # alocacoes) num momento infeliz e derrubar o processo (Windows fatal exception: access
+    # violation - o mesmo bug de fundo corrigido em core.data_store._carregar_planilha, so
+    # que ali o desligamento e so durante o uso do workbook; aqui, um script de vida curta,
+    # e mais simples desligar pro processo inteiro - o lixo ciclico que sobrar e liberado
+    # pelo SO quando o script termina, sem custo nenhum).
+    import gc
+    gc.disable()
+
     app = QApplication.instance() or QApplication(sys.argv)
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     testar_mascaras()
@@ -703,6 +801,7 @@ def main() -> None:
         with _Mensagens() as msgs:
             testar_dialogo(msgs)
             testar_ficha(app)
+            testar_pessoal_sem_buraco_e_multiplos_emails(app)
             cpfs = _cadastrar_clientes_de_endereco()
             testar_endereco_retratil(app, cpfs)
             testar_endereco_como_os_outros_campos(app, cpfs)

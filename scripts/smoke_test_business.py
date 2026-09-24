@@ -189,8 +189,11 @@ def main() -> None:
         assert depois["negadas"] == antes["negadas"]
         assert depois["em_analise"] == antes["em_analise"]
         gap = depois["total_propostas"] - depois["aprovadas"] - depois["negadas"] - depois["em_analise"]
-        assert gap == depois["sem_status"] + depois["nao_identificado"], "o gap tem que bater exatamente com sem_status+nao_identificado"
-        print(f"OK: {gap} proposta(s) fora dos 3 cards ficam visiveis em sem_status/nao_identificado, sem sumir nem virar 'Aprovado'.")
+        # "Encerrada" (fechada por causa de outra proposta da mesma venda) tambem fica
+        # fora dos 3 cards - o gap bate com sem_status + nao_identificado + encerradas
+        assert gap == depois["sem_status"] + depois["nao_identificado"] + depois["encerradas"], \
+            "o gap tem que bater exatamente com sem_status+nao_identificado+encerradas"
+        print(f"OK: {gap} proposta(s) fora dos 3 cards ficam visiveis em sem_status/nao_identificado/encerradas, sem sumir nem virar 'Aprovado'.")
 
         linha("4c) DASHBOARD - 'Aprovado' sem VALOR não vira R$0 silenciosamente (achado #22)")
         # cria com um valor valido (adicionar_proposta exige) e depois edita

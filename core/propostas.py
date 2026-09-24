@@ -24,11 +24,25 @@ STATUS_APROVADO = "Aprovado"
 STATUS_NF_ANEXADA = "Nota Fiscal Anexada"
 STATUS_GARANTIA_ASSINADA = "Garantia Assinada"
 STATUS_EFETIVADO = "Efetivado"
+# "Não efetivado": o banco aprovou mas o cliente NAO seguiu com a compra - desfecho
+# FINAL, so alcancavel a partir de "Aprovado" (adicionar_proposta/atualizar_proposta
+# travam qualquer outra origem). Nao confundir com a metrica antiga
+# "aprovadas_nao_efetivadas" de core/dashboard.py, que conta quem ainda esta
+# "Aprovado" (pendente, podendo virar venda) - este status aqui e o oposto: o
+# processo JA acabou sem virar venda.
+STATUS_NAO_EFETIVADO = "Não efetivado"
+# "Encerrada": a proposta parou de fazer sentido porque OUTRA proposta do mesmo
+# cliente + equipamento (a mesma venda, em outro banco) ja foi efetivada. Normalmente
+# gravada pelo fluxo de "perguntar_e_encerrar" (desktop/widgets/encerrar_propostas_da_venda.py),
+# mas pode ser escolhida a mao tambem (ex.: o admin sabe de outro motivo pra fechar).
+STATUS_PROPOSTA_ENCERRADA = "Encerrada"
 STATUS_NEGADO = "Negado"
 
 # Ordem sugerida nos formularios/dropdowns (funil aproximado da proposta).
 # "Efetivado" (compra concluida) e a ultima etapa do lado positivo: vem depois
-# de "Aprovado" (e das etapas de nota fiscal/garantia), antes do "Negado".
+# de "Aprovado" (e das etapas de nota fiscal/garantia); "Não efetivado" e
+# "Encerrada" sao os outros dois jeitos de uma proposta aprovada nao virar
+# venda, e ficam antes do "Negado" (que nunca foi aprovado).
 STATUS_OPCOES = [
     STATUS_EM_ANALISE,
     STATUS_PRE_APROVADO,
@@ -36,6 +50,8 @@ STATUS_OPCOES = [
     STATUS_NF_ANEXADA,
     STATUS_GARANTIA_ASSINADA,
     STATUS_EFETIVADO,
+    STATUS_NAO_EFETIVADO,
+    STATUS_PROPOSTA_ENCERRADA,
     STATUS_NEGADO,
 ]
 
@@ -43,6 +59,8 @@ STATUS_OPCOES = [
 # data_store.py, pra nunca ficar dessincronizada dali.
 _PALAVRAS_NEGADO = bd.PALAVRAS_STATUS_NEGADO
 _PALAVRAS_EFETIVADO = bd.PALAVRAS_STATUS_EFETIVADO
+_PALAVRAS_NAO_EFETIVADO = bd.PALAVRAS_STATUS_NAO_EFETIVADO
+_PALAVRAS_ENCERRADA = bd.PALAVRAS_STATUS_ENCERRADA
 _PALAVRAS_APROVADO_NAO_EFETIVADO = {"APROVADO", "APROVADA"}
 _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PENDENTE"}
 # Etapas conhecidas do funil depois da aprovacao inicial - so estas contam
@@ -50,14 +68,17 @@ _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PEN
 # nao e nenhuma das etapas oficiais, nem negado, nem em analise) NAO vira
 # "Aprovado" por omissao - isso inflaria a taxa de aprovacao e o valor
 # aprovado do dashboard com dado ruim. Ele cai em "Não identificado".
-# "Efetivado" conta como aprovado: separar essa etapa nao pode derrubar a
-# taxa de aprovacao (foi aprovado E virou compra).
+# "Efetivado" e "Não efetivado" contam como aprovado: o banco aprovou os dois -
+# separar essas etapas nao pode derrubar a taxa de aprovacao. "Encerrada" fica
+# de FORA (ver categoria_status): pode ter sido fechada sem nunca ter sido
+# decidida por aquele banco.
 _PALAVRAS_PRE_APROVADO = {"PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO"}
 _PALAVRAS_NF_ANEXADA = {"NOTA FISCAL ANEXADA"}
 _PALAVRAS_GARANTIA_ASSINADA = {"GARANTIA ASSINADA"}
 _PALAVRAS_APROVADO = (
     _PALAVRAS_APROVADO_NAO_EFETIVADO
     | _PALAVRAS_EFETIVADO
+    | _PALAVRAS_NAO_EFETIVADO
     | _PALAVRAS_PRE_APROVADO
     | _PALAVRAS_NF_ANEXADA
     | _PALAVRAS_GARANTIA_ASSINADA
@@ -72,11 +93,14 @@ ETAPA_APROVADO = "aprovado"
 ETAPA_NF_ANEXADA = "nota_fiscal"
 ETAPA_GARANTIA_ASSINADA = "garantia"
 ETAPA_EFETIVADO = "efetivado"
+ETAPA_NAO_EFETIVADO = "nao_efetivado"
+ETAPA_PROPOSTA_ENCERRADA = "encerrada"
 ETAPA_NEGADO = "negado"
 ETAPA_DESCONHECIDA = "desconhecida"
 
-# Ordem do funil (do inicio ao fim, depois "negado", e por ultimo o que nao da
-# pra classificar) - usada na contagem por status do topo de Todas as Propostas.
+# Ordem do funil (do inicio ao fim, depois os desfechos "fora do funil" - Nao
+# efetivado, Encerrada e Negado -, e por ultimo o que nao da pra classificar) -
+# usada na contagem por status do topo de Todas as Propostas.
 ETAPAS_EM_ORDEM = [
     ETAPA_EM_ANALISE,
     ETAPA_PRE_APROVADO,
@@ -84,6 +108,8 @@ ETAPAS_EM_ORDEM = [
     ETAPA_NF_ANEXADA,
     ETAPA_GARANTIA_ASSINADA,
     ETAPA_EFETIVADO,
+    ETAPA_NAO_EFETIVADO,
+    ETAPA_PROPOSTA_ENCERRADA,
     ETAPA_NEGADO,
     ETAPA_DESCONHECIDA,
     ETAPA_SEM_STATUS,
@@ -96,16 +122,21 @@ class ErroProposta(Exception):
 
 def categoria_status(status: str) -> str:
     """Classifica um status (mesmo um customizado/novo, desde que seja uma
-    das etapas oficiais do funil) em 'Negado', 'Em Análise' ou 'Aprovado' -
-    as 3 categorias usadas nas taxas do dashboard. Um status vazio devolve ""
-    (sem status); um status preenchido mas desconhecido devolve
-    'Não identificado' - nenhum dos dois conta como aprovacao.
+    das etapas oficiais do funil) em 'Negado', 'Em Análise', 'Aprovado' ou
+    'Encerrada' - as categorias usadas nas taxas do dashboard. Um status vazio
+    devolve "" (sem status); um status preenchido mas desconhecido devolve
+    'Não identificado' - nenhum destes conta como aprovacao. 'Encerrada' fica
+    de FORA de 'Aprovado' de proposito: a proposta pode ter sido fechada sem
+    nunca ter sido decidida por aquele banco (ver STATUS_PROPOSTA_ENCERRADA) -
+    contá-la como aprovada ou negada inflaria a taxa errada.
     """
     s = (status or "").strip().upper()
     if not s:
         return ""
     if s in _PALAVRAS_NEGADO:
         return "Negado"
+    if s in _PALAVRAS_ENCERRADA:
+        return "Encerrada"
     if s in _PALAVRAS_EM_ANALISE:
         return "Em Análise"
     if s in _PALAVRAS_APROVADO:
@@ -123,6 +154,8 @@ def etapa_status(status: str) -> str:
         return ETAPA_SEM_STATUS
     for etapa, palavras in (
         (ETAPA_NEGADO, _PALAVRAS_NEGADO),
+        (ETAPA_PROPOSTA_ENCERRADA, _PALAVRAS_ENCERRADA),
+        (ETAPA_NAO_EFETIVADO, _PALAVRAS_NAO_EFETIVADO),
         (ETAPA_EFETIVADO, _PALAVRAS_EFETIVADO),
         (ETAPA_APROVADO, _PALAVRAS_APROVADO_NAO_EFETIVADO),
         (ETAPA_PRE_APROVADO, _PALAVRAS_PRE_APROVADO),
@@ -140,10 +173,27 @@ def eh_efetivado(status: str) -> bool:
     return (status or "").strip().upper() in _PALAVRAS_EFETIVADO
 
 
+def eh_nao_efetivado(status: str) -> bool:
+    """Status "Não efetivado": o banco aprovou mas o cliente NAO seguiu com a
+    compra (desfecho final, diferente de so "ainda nao efetivou" - ver
+    eh_aprovado_nao_efetivado, que e o status "Aprovado" ainda em aberto)."""
+    return (status or "").strip().upper() in _PALAVRAS_NAO_EFETIVADO
+
+
+def eh_proposta_encerrada(status: str) -> bool:
+    """Status "Encerrada": fechada porque outra proposta do MESMO cliente +
+    equipamento ja foi efetivada em outro banco."""
+    return (status or "").strip().upper() in _PALAVRAS_ENCERRADA
+
+
 def eh_aprovado_nao_efetivado(status: str) -> bool:
-    """Status exatamente "Aprovado" - aprovada pelo banco mas ainda sem virar
-    compra. As etapas Pre-aprovado / Nota Fiscal Anexada / Garantia Assinada
-    NAO entram aqui: sao outras etapas do funil, com nome proprio."""
+    """Status exatamente "Aprovado" - aprovada pelo banco mas AINDA em aberto,
+    podendo virar compra a qualquer momento. As etapas Pre-aprovado / Nota
+    Fiscal Anexada / Garantia Assinada NAO entram aqui: sao outras etapas do
+    funil, com nome proprio. NAO CONFUNDIR com eh_nao_efetivado: aquele e o
+    status "Não efetivado", um desfecho FINAL (o cliente ja desistiu) - este
+    aqui e so "pendente" (o nome antigo desta funcao/metrica e antes do status
+    "Não efetivado" ter sido criado)."""
     return (status or "").strip().upper() in _PALAVRAS_APROVADO_NAO_EFETIVADO
 
 
@@ -497,6 +547,11 @@ def adicionar_proposta(campos: dict) -> int:
     campos.setdefault("STATUS", STATUS_EM_ANALISE)
     campos["CPF"] = (campos.get("CPF") or "").strip()
 
+    if eh_nao_efetivado(campos.get("STATUS")):
+        # uma proposta nova nunca passou por "Aprovado" - "Não efetivado" so
+        # faz sentido como uma MUDANCA de uma proposta que ja foi aprovada
+        raise ErroProposta('O status "Não efetivado" só pode vir de uma proposta que já estava "Aprovado".')
+
     _validar_campos(campos)
 
     df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
@@ -522,6 +577,12 @@ def atualizar_proposta(indice: int, campos: dict, esperado: Mapping | None = Non
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
     if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
         raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
+
+    if "STATUS" in campos and eh_nao_efetivado(campos["STATUS"]) and not eh_aprovado_nao_efetivado(df.loc[indice, "STATUS"]):
+        # so pode virar "Não efetivado" quem estava exatamente "Aprovado" - nunca a
+        # partir de Em analise/Negado/Efetivado/etc (o cliente so "desiste" do que
+        # tinha sido aprovado)
+        raise ErroProposta('O status "Não efetivado" só pode vir de uma proposta que já estava "Aprovado".')
 
     # `campos` pode vir parcial (so os campos que mudaram) - valida sempre o
     # estado FINAL da linha (valores atuais + alteracoes), nunca so o que foi
@@ -560,3 +621,56 @@ def remover_proposta(indice: int, esperado: Mapping | None = None) -> None:
     if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
         raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
     bd.escrever_propostas(CAMINHO_XLSX, df.drop(index=indice).reset_index(drop=True))
+
+
+# -- mesma venda em bancos diferentes ----------------------------------------------------
+# E comum lancar a MESMA venda (mesmo cliente + mesmo equipamento) em varios bancos ao
+# mesmo tempo. Quando uma delas efetiva, as outras que ainda estavam em aberto (em
+# analise, ou ate ja aprovadas por outro banco) deixam de fazer sentido - mas o app NUNCA
+# decide isso sozinho: so pergunta (ver desktop/widgets/encerrar_propostas_da_venda.py).
+
+
+def propostas_da_mesma_venda(cpf: str, equipamento: str, ignorar_indice: int | None = None) -> pd.DataFrame:
+    """Outras propostas do MESMO cliente (CPF, so os digitos) e do MESMO equipamento
+    (sem diferenciar maiusculas/espacos) - candidatas a serem a mesma venda em bancos
+    diferentes. Sempre le a planilha local inteira (so ADMIN grava, e e quem chama isto).
+    `ignorar_indice`: nunca inclui essa posicao (normalmente a proposta que acabou de ser
+    efetivada)."""
+    df = bd.ler_propostas(CAMINHO_XLSX)
+    alvo = apenas_digitos(cpf)
+    mesmo_cliente = df["CPF"].map(apenas_digitos) == alvo
+    mesmo_equipamento = _mesmo_texto(df["EQUIPAMENTO"], equipamento) if equipamento else pd.Series(False, index=df.index)
+    resultado = df[mesmo_cliente & mesmo_equipamento]
+    if ignorar_indice is not None:
+        resultado = resultado[resultado.index != ignorar_indice]
+    return resultado
+
+
+def propostas_em_aberto_da_mesma_venda(cpf: str, equipamento: str, ignorar_indice: int | None = None) -> pd.DataFrame:
+    """Como propostas_da_mesma_venda, so as que AINDA estao em aberto (esta_em_aberto) -
+    as candidatas reais a virar "Encerrada" quando uma delas acabou de ser efetivada. Uma
+    proposta ja Negada/Efetivada/Não efetivado/Encerrada nunca entra aqui."""
+    outras = propostas_da_mesma_venda(cpf, equipamento, ignorar_indice)
+    if outras.empty:
+        return outras
+    return outras[outras["STATUS"].map(esta_em_aberto)]
+
+
+def encerrar_propostas(indices: list[int]) -> int:
+    """Marca cada proposta de `indices` como STATUS_PROPOSTA_ENCERRADA, numa unica escrita.
+    So usada depois de perguntar (nunca automatico) - ver propostas_em_aberto_da_mesma_venda.
+    Pula (sem erro) indices que sumiram ou que ja nao estao mais em aberto nesse meio-tempo -
+    nunca sobrescreve um desfecho que outra tela ja deu a proposta. Devolve quantas mudaram."""
+    sessao_mod.exigir_admin()
+    if not indices:
+        return 0
+    df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
+    alteradas = 0
+    for indice in indices:
+        if indice not in df.index or not esta_em_aberto(df.loc[indice, "STATUS"]):
+            continue
+        df.loc[indice, "STATUS"] = STATUS_PROPOSTA_ENCERRADA
+        alteradas += 1
+    if alteradas:
+        bd.escrever_propostas(CAMINHO_XLSX, df)
+    return alteradas

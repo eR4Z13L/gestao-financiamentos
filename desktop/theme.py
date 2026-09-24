@@ -74,6 +74,12 @@ CORES_STATUS = {
         "pre_aprovado": {"faixa": "#5b9cff", "fundo": "#14284d", "texto": "#9cc3ff"},
         "nota_fiscal": {"faixa": "#a78bfa", "fundo": "#2a1f4d", "texto": "#cdbcff"},
         "garantia": {"faixa": "#22d3ee", "fundo": "#0e3540", "texto": "#8cebf7"},
+        # cinza-azulado: o cliente desistiu depois de aprovado (desfecho final, mas nao e
+        # "erro" do banco nem falta de dado - por isso nao e vermelho nem cinza puro)
+        "nao_efetivado": {"faixa": "#7c93b8", "fundo": "#1e2836", "texto": "#c1cee3"},
+        # cinza mais apagado que o "neutro": fechada so porque outra proposta da mesma
+        # venda efetivou primeiro - a mais "neutra" de todas as cores de status
+        "encerrada": {"faixa": "#6b7280", "fundo": "#23262f", "texto": "#b6bac4"},
         "neutro": {"faixa": "#8b93a3", "fundo": "#2a2e3a", "texto": "#c2c7d2"},
     },
     TEMA_CLARO: {
@@ -84,6 +90,8 @@ CORES_STATUS = {
         "pre_aprovado": {"faixa": "#2f6fed", "fundo": "#dce8ff", "texto": "#173f9c"},
         "nota_fiscal": {"faixa": "#7a56e0", "fundo": "#e8e0ff", "texto": "#4526a8"},
         "garantia": {"faixa": "#0891b2", "fundo": "#d0f1f7", "texto": "#0b5566"},
+        "nao_efetivado": {"faixa": "#5b6f94", "fundo": "#e1e6f0", "texto": "#2f3c56"},
+        "encerrada": {"faixa": "#6b7280", "fundo": "#e9eaed", "texto": "#3f4450"},
         "neutro": {"faixa": "#8a919e", "fundo": "#e6e9ee", "texto": "#3d4451"},
     },
 }
@@ -136,8 +144,27 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QLabel {{
         background-color: transparent;
     }}
+    /* sem fundo proprio: o dado aparece como TEXTO, nao como uma caixa/campo -
+       a Ficha de Cliente e so leitura, nao um formulario (pedido do usuario) */
     QLabel[role="campo_rotulo"], QLabel[role="campo_valor"] {{
-        background-color: {p['bg']};
+        background-color: transparent;
+    }}
+    /* titulo pequeno de uma secao de campos ("Contato", "Pessoal") - mesmo peso
+       da legenda de campo, um pouco maior e sempre maiusculo por CSS (o texto
+       Python fica normal, mais facil de reaproveitar em tooltips/testes) */
+    QLabel[role="titulo_secao"] {{
+        color: {p['texto_secundario']};
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background-color: transparent;
+    }}
+    /* link discreto ("mostrar campos vazios", "Instagram ↗"): cor de destaque,
+       sem sublinhado ate passar o mouse - o QSS nao troca cor no hover de QLabel
+       com link embutido, entao o proprio HTML do texto cuida disso */
+    QLabel[role="link_discreto"] {{
+        background-color: transparent;
     }}
     /* o tooltip e um QLabel por baixo dos panos: precisa de fundo proprio, senao a regra de QLabel
        acima o deixaria transparente (texto solto sobre a tela) */

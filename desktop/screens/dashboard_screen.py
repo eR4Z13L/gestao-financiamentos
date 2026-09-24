@@ -319,9 +319,12 @@ class DashboardScreen(QWidget):
         a_efetivar = topo["a_efetivar"]
         self._card_a_efetivar.definir_valor(str(a_efetivar["quantidade"]))
         efetivadas = a_efetivar["efetivadas"]
-        self._card_a_efetivar.definir_detalhe(
-            f"{efetivadas} {'efetivada' if efetivadas == 1 else 'efetivadas'} até agora", aviso=efetivadas == 0
-        )
+        detalhe_a_efetivar = f"{efetivadas} {'efetivada' if efetivadas == 1 else 'efetivadas'} até agora"
+        taxa_efetivacao = topo["taxa_efetivacao"]
+        if taxa_efetivacao["percentual"] is not None:
+            # das aprovadas (inclui quem ainda esta so "Aprovado" pendente), quantas viraram venda
+            detalhe_a_efetivar += f" · {_percentual(taxa_efetivacao['percentual'])} das aprovadas já efetivaram"
+        self._card_a_efetivar.definir_detalhe(detalhe_a_efetivar, aviso=efetivadas == 0)
 
         taxa = topo["taxa_aprovacao"]
         if taxa["percentual"] is None:

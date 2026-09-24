@@ -11,8 +11,11 @@ mesmo de "Todas as Propostas"). O painel da ficha rola na vertical, e o endereco
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
-from PySide6.QtCore import QModelIndex, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QModelIndex, QRect, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -34,7 +38,15 @@ from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
-from core.formatting import formatar_data, formatar_endereco, formatar_equipamento_e_valor, formatar_tempo
+from core.formatting import (
+    formatar_data,
+    formatar_endereco,
+    formatar_equipamento_e_valor,
+    formatar_reais,
+    formatar_tempo,
+    iniciais_do_nome,
+)
+from core.validators import apenas_digitos
 from desktop import settings as settings_mod
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
@@ -42,8 +54,9 @@ from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.expansor_proposta import ExpansorDeProposta
+from desktop.widgets.identidade_usuario import _Avatar
 from desktop.widgets.lista_cartoes import ContentorDeListaAutomatica, ListaCartoes, ModeloCartoes, chave_cor_etapa
-from desktop.widgets.lista_clientes import ListaClientes
+from desktop.widgets.lista_clientes import ListaClientes, rotulo_do_tipo
 from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.rotulo_uma_linha import RotuloUmaLinha
 from desktop.widgets.shadow import aplicar_sombra_suave
@@ -51,6 +64,75 @@ from desktop.widgets.shadow import aplicar_sombra_suave
 _TEXTO_PADRAO_PAINEL = "Selecione um cliente na lista ao lado, ou cadastre um novo."
 
 _MARGEM_PAINEL = 10  # em volta do conteudo do painel do cliente: da espaco pra sombra do cartao
+
+
+_TAMANHO_DO_AVATAR = 40  # maior que o da barra lateral: aqui e o foco da tela
+
+# host -> nome curto pro link de rede social ("instagram.com/fulano" -> "Instagram ↗")
+_REDES_CONHECIDAS = {
+    "instagram.com": "Instagram", "facebook.com": "Facebook", "wa.me": "WhatsApp",
+    "tiktok.com": "TikTok", "linkedin.com": "LinkedIn", "twitter.com": "Twitter", "x.com": "X",
+    "youtube.com": "YouTube",
+}
+
+
+def _link_da_rede_social(texto: str) -> tuple[str, str] | None:
+    """Se `texto` parece uma URL de verdade, devolve (rótulo curto, URL) pro link. Um
+    handle solto ("@fulano123", sem domínio) devolve None: mostra só como texto, sem
+    link - nunca inventa um destino pra abrir."""
+    bruto = (texto or "").strip()
+    if not bruto:
+        return None
+    alvo = bruto if bruto.lower().startswith(("http://", "https://")) else f"https://{bruto}"
+    host = QUrl(alvo).host().lower().removeprefix("www.")
+    if not host or "." not in host:
+        return None
+    for dominio, nome in _REDES_CONHECIDAS.items():
+        if host == dominio or host.endswith("." + dominio):
+            return nome, alvo
+    return host, alvo
+
+
+def _numero_whatsapp(celular: str) -> str | None:
+    """Os dígitos do celular prontos pro link do WhatsApp (wa.me), com o "55" do Brasil
+    na frente quando faltar (10 ou 11 dígitos = DDD+número, sem DDI). None se não
+    parecer um número de verdade - nunca monta um link que provavelmente falha."""
+    digitos = apenas_digitos(celular)
+    if len(digitos) in (10, 11):
+        return "55" + digitos
+    if len(digitos) in (12, 13) and digitos.startswith("55"):
+        return digitos
+    return None
+
+
+def _resumo_do_cliente(historico: pd.DataFrame) -> dict:
+    """Números da faixa de resumo: total de propostas, quantas aprovadas (a categoria
+    completa - Efetivado incluso), valor aprovado e a data da proposta mais recente
+    (qualquer status: é "última atividade", não "última decisão")."""
+    total = len(historico)
+    if total == 0:
+        return {"total": 0, "aprovadas": 0, "valor_aprovado": 0.0, "ultima_atividade": None}
+    categoria = historico["STATUS"].map(propostas_mod.categoria_status)
+    aprovada = categoria == "Aprovado"
+    return {
+        "total": total,
+        "aprovadas": int(aprovada.sum()),
+        "valor_aprovado": float(historico.loc[aprovada, "VALOR (R$)"].sum()),
+        "ultima_atividade": pd.to_datetime(historico["DATA"], errors="coerce").max(),
+    }
+
+
+def _formatar_ultima_atividade(data) -> str:
+    """Dias desde `data` (a DATA de uma proposta, não a coluna TEMPO - por isso não
+    reaproveita formatar_tempo, que lê "Encerrado"/"N dias" já calculados)."""
+    if data is None or pd.isna(data):
+        return "—"
+    dias = (pd.Timestamp.today().normalize() - pd.Timestamp(data).normalize()).days
+    if dias < 0:
+        return "data futura"
+    if dias == 0:
+        return "hoje"
+    return "há 1 dia" if dias == 1 else f"há {dias} dias"
 
 
 def _montar_item_historico(indice: int, banco: str, equipamento: str, valor, status: str, data, tempo: str) -> dict:
@@ -270,7 +352,7 @@ class FichaClienteScreen(QWidget):
         self._bloco_filtro_vendedor.setVisible(False)  # so enxerga os proprios clientes: filtrar por vendedor nao faz sentido
         self._botao_novo_cliente.setVisible(False)
         self._botao_editar_cliente.setVisible(False)
-        self._botao_excluir_cliente.setVisible(False)
+        self._botao_menu_cliente.setVisible(False)  # o menu "..." so tem "Excluir cliente"
         self._botao_excluir_proposta.setVisible(False)
         self._botao_nova_proposta.setVisible(False)
         # o duplo clique num card do historico segue expandindo a proposta: pro VENDEDOR e a
@@ -316,49 +398,135 @@ class FichaClienteScreen(QWidget):
         aplicar_sombra_suave(cartao, settings_mod.obter_tema())
         layout_cartao = QVBoxLayout(cartao)
         layout_cartao.setContentsMargins(16, 16, 16, 16)
-        layout_cartao.setSpacing(12)
+        layout_cartao.setSpacing(14)
 
+        # -- cabecalho: avatar + nome + CPF/tipo/vendedor/cadastro numa linha pequena,
+        # Editar em destaque e "..." com Excluir (menos facil de clicar sem querer que
+        # um botao vermelho colado no Editar) -------------------------------------
         cabecalho_ficha = QHBoxLayout()
+        cabecalho_ficha.setSpacing(12)
+        self._avatar = _Avatar("")
+        cabecalho_ficha.addWidget(self._avatar)
+
+        coluna_nome = QVBoxLayout()
+        coluna_nome.setSpacing(2)
         self._nome_label = QLabel("")
         self._nome_label.setProperty("role", "subtitulo")
-        cabecalho_ficha.addWidget(self._nome_label)
-        cabecalho_ficha.addStretch()
+        coluna_nome.addWidget(self._nome_label)
+
+        linha_sub = QHBoxLayout()
+        linha_sub.setSpacing(4)
+        self._campo_cpf = QLabel("")
+        self._campo_cpf.setProperty("role", "secundario")
+        linha_sub.addWidget(self._campo_cpf)
+        self._botao_copiar_cpf = BotaoCopiar(lambda: self._cpf_selecionado or "")
+        linha_sub.addWidget(self._botao_copiar_cpf)
+        self._sub_info = QLabel("")
+        self._sub_info.setProperty("role", "secundario")
+        linha_sub.addWidget(self._sub_info)
+        linha_sub.addStretch(1)
+        coluna_nome.addLayout(linha_sub)
+        cabecalho_ficha.addLayout(coluna_nome, 1)
+
         self._botao_editar_cliente = QPushButton("Editar")
         self._botao_editar_cliente.setProperty("role", "botao_primario")
         self._botao_editar_cliente.clicked.connect(self._abrir_edicao_cliente)
         cabecalho_ficha.addWidget(self._botao_editar_cliente)
-        self._botao_excluir_cliente = QPushButton("Excluir")
-        self._botao_excluir_cliente.setProperty("role", "botao_perigo")
-        self._botao_excluir_cliente.clicked.connect(self._excluir_cliente)
-        cabecalho_ficha.addWidget(self._botao_excluir_cliente)
+
+        self._botao_menu_cliente = QPushButton("⋯")
+        self._botao_menu_cliente.setFixedWidth(34)
+        self._botao_menu_cliente.setToolTip("Mais ações")
+        self._menu_cliente = QMenu(self._botao_menu_cliente)
+        self._acao_excluir_cliente = self._menu_cliente.addAction("Excluir cliente")
+        self._acao_excluir_cliente.triggered.connect(self._excluir_cliente)
+        self._botao_menu_cliente.setMenu(self._menu_cliente)
+        cabecalho_ficha.addWidget(self._botao_menu_cliente)
         layout_cartao.addLayout(cabecalho_ficha)
 
-        grade = self._nova_grade()
-        # informacoes principais (as duas primeiras linhas), logo abaixo do
-        # nome do cliente: quem e, quando nasceu, como falar com ele
-        self._campo_cpf = self._criar_campo(grade, 0, 0, "CPF/CNPJ")
-        self._campo_nascimento = self._criar_campo(grade, 0, 1, "Nascimento")
-        self._campo_tipo = self._criar_campo(grade, 0, 2, "Tipo")
-        self._campo_celular = self._criar_campo(grade, 1, 0, "Celular")
-        self._campo_email = self._criar_campo(grade, 1, 1, "E-mail")
-        self._campo_vendedor = self._criar_campo(grade, 1, 2, "Vendedor")
-        # informacoes secundarias
-        self._campo_rede_social = self._criar_campo(grade, 2, 0, "Rede social")
-        self._campo_vinculado = self._criar_campo(grade, 2, 1, "Vinculado a")
-        self._campo_cadastrado_em = self._criar_campo(grade, 2, 2, "Cadastrado em")
-        self._campo_nome_pai = self._criar_campo(grade, 3, 0, "Nome do pai")
-        self._campo_nome_mae = self._criar_campo(grade, 3, 1, "Nome da mãe")
-        self._campo_profissao = self._criar_campo(grade, 3, 2, "Profissão")
-        layout_cartao.addLayout(grade)
+        # -- resumo: numero de propostas, aprovadas, valor aprovado, ultima atividade -
+        # responde "esse cliente vale a pena?" sem abrir nada
+        self._resumo_label = QLabel("")
+        self._resumo_label.setProperty("role", "secundario")
+        self._resumo_label.setWordWrap(True)
+        layout_cartao.addWidget(self._resumo_label)
 
-        # endereco: um campo como os outros (legenda pequena + valor, na mesma
-        # grade), RETRAIDO por padrao - uma linha por extenso com o botao que
-        # copia o endereco inteiro; a seta ao lado da legenda expande nos 7 campos
+        # -- Contato: celular (com WhatsApp), e-mail e rede social clicaveis - a secao
+        # some inteira se os 3 estiverem vazios ------------------------------------
+        self._secao_contato = QWidget()
+        self._secao_contato.setProperty("role", "transparente")
+        coluna_contato = QVBoxLayout(self._secao_contato)
+        coluna_contato.setContentsMargins(0, 0, 0, 0)
+        coluna_contato.setSpacing(6)
+        titulo_contato = QLabel("Contato")
+        titulo_contato.setProperty("role", "titulo_secao")
+        coluna_contato.addWidget(titulo_contato)
+
+        linha_celular = QHBoxLayout()
+        linha_celular.setSpacing(4)
+        self._campo_celular = self._criar_rotulo_valor()
+        linha_celular.addWidget(self._campo_celular)
+        self._botao_copiar_celular = BotaoCopiar(lambda: self._campo_celular.property("texto_cru") or "")
+        linha_celular.addWidget(self._botao_copiar_celular)
+        self._botao_whatsapp = QPushButton("WhatsApp")
+        self._botao_whatsapp.setProperty("role", "botao_link")
+        self._botao_whatsapp.clicked.connect(self._abrir_whatsapp)
+        linha_celular.addWidget(self._botao_whatsapp)
+        linha_celular.addStretch(1)
+        coluna_contato.addLayout(linha_celular)
+
+        self._campo_email = self._criar_rotulo_valor()
+        self._preparar_rotulo_com_link(self._campo_email)
+        coluna_contato.addWidget(self._campo_email)
+
+        self._campo_rede_social = self._criar_rotulo_valor()
+        self._preparar_rotulo_com_link(self._campo_rede_social)
+        coluna_contato.addWidget(self._campo_rede_social)
+
+        layout_cartao.addWidget(self._secao_contato)
+
+        # -- Pessoal: nascimento, pai, mae, profissao, vinculado - os campos vazios
+        # (a maioria dos clientes so tem nascimento) ficam escondidos atras de um link,
+        # em vez de espalhar "—" pela tela ------------------------------------------
+        self._pessoal_mostrar_vazios = False
+        self._secao_pessoal = QWidget()
+        self._secao_pessoal.setProperty("role", "transparente")
+        coluna_pessoal = QVBoxLayout(self._secao_pessoal)
+        coluna_pessoal.setContentsMargins(0, 0, 0, 0)
+        coluna_pessoal.setSpacing(6)
+        titulo_pessoal = QLabel("Pessoal")
+        titulo_pessoal.setProperty("role", "titulo_secao")
+        coluna_pessoal.addWidget(titulo_pessoal)
+
+        grade_pessoal = self._nova_grade()
+        coluna_pessoal.addLayout(grade_pessoal)
+        self._grade_pessoal = grade_pessoal
+        self._pessoal_wrap_nascimento, self._campo_nascimento = self._criar_campo_livre("Nascimento")
+        wrap_pai, self._campo_nome_pai = self._criar_campo_livre("Nome do pai")
+        wrap_mae, self._campo_nome_mae = self._criar_campo_livre("Nome da mãe")
+        wrap_profissao, self._campo_profissao = self._criar_campo_livre("Profissão")
+        wrap_vinculado, self._campo_vinculado = self._criar_campo_livre("Vinculado a")
+        # nascimento fica sempre visivel (e o campo mais comum de existir, ancora a
+        # secao); so os outros 4 somem quando vazios. A grade so recebe os widgets de
+        # verdade em _reordenar_grade_pessoal - remontada a cada mudanca, pra um campo
+        # escondido nunca deixar buraco na posicao fixa que ele teria (ver o metodo).
+        self._pessoal_todos_campos = [self._pessoal_wrap_nascimento, wrap_pai, wrap_mae, wrap_profissao, wrap_vinculado]
+        self._pessoal_campos_opcionais = [wrap_pai, wrap_mae, wrap_profissao, wrap_vinculado]
+
+        self._link_pessoal_vazios = QLabel("")
+        self._link_pessoal_vazios.setProperty("role", "link_discreto")
+        self._link_pessoal_vazios.setTextFormat(Qt.TextFormat.RichText)
+        self._link_pessoal_vazios.linkActivated.connect(self._alternar_pessoal_vazios)
+        coluna_pessoal.addWidget(self._link_pessoal_vazios)
+
+        layout_cartao.addWidget(self._secao_pessoal)
+
+        # -- Endereco: o mesmo widget retratil de sempre, agora como secao propria
+        # (nao mais numa grade compartilhada com os outros campos) -------------------
         self._cabecalho_endereco = CabecalhoRetratil(
             "Endereço",
             dica_expandir="Mostrar os campos do endereço (CEP, logradouro, número...)",
             dica_recolher="Voltar ao endereço em uma linha",
-            papel_do_titulo="campo_rotulo",  # a mesma legenda dos outros campos
+            papel_do_titulo="titulo_secao",
         )
         self._cabecalho_endereco.toggled.connect(self._ao_alternar_endereco)
         linha_legenda_endereco = QHBoxLayout()
@@ -371,11 +539,13 @@ class FichaClienteScreen(QWidget):
         linha_resumo.setContentsMargins(0, 0, 0, 0)
         self._endereco_resumo.setLayout(linha_resumo)
 
-        caixa_endereco = QVBoxLayout()
-        caixa_endereco.setSpacing(2)  # o mesmo espaco entre legenda e valor dos outros campos
-        caixa_endereco.addLayout(linha_legenda_endereco)
-        caixa_endereco.addWidget(self._endereco_resumo)
-        grade.addLayout(caixa_endereco, 4, 0, 1, 3)  # ultima linha da grade de dados, por toda a largura
+        self._secao_endereco = QWidget()
+        self._secao_endereco.setProperty("role", "transparente")
+        coluna_endereco = QVBoxLayout(self._secao_endereco)
+        coluna_endereco.setContentsMargins(0, 0, 0, 0)
+        coluna_endereco.setSpacing(2)  # o mesmo espaco entre legenda e valor dos outros campos
+        coluna_endereco.addLayout(linha_legenda_endereco)
+        coluna_endereco.addWidget(self._endereco_resumo)
 
         # expandido: cada campo do endereco tem seu botao de copiar (a ideia e
         # copiar um de cada vez pra colar em outro sistema)
@@ -385,7 +555,9 @@ class FichaClienteScreen(QWidget):
         grade_endereco.setContentsMargins(0, 0, 0, 0)
         self._endereco_campos.setLayout(grade_endereco)
         self._endereco_campos.setVisible(False)
-        grade.addWidget(self._endereco_campos, 5, 0, 1, 3)
+        coluna_endereco.addWidget(self._endereco_campos)
+        layout_cartao.addWidget(self._secao_endereco)
+
         self._campo_cep = self._criar_campo_copiavel(grade_endereco, 0, 0, "CEP")
         self._campo_logradouro = self._criar_campo_copiavel(grade_endereco, 0, 1, "Logradouro")
         self._campo_numero = self._criar_campo_copiavel(grade_endereco, 0, 2, "Número")
@@ -471,18 +643,31 @@ class FichaClienteScreen(QWidget):
         return valor
 
     @staticmethod
-    def _criar_campo(grade: QGridLayout, row: int, col: int, titulo: str) -> QLabel:
-        """Cria um par legenda/valor na grade e devolve o QLabel do valor (pra
-        dar setText depois)."""
-        caixa = QVBoxLayout()
+    def _criar_campo_livre(titulo: str) -> tuple[QWidget, QLabel]:
+        """Cria um par legenda/valor dentro de um QWidget, SEM posicionar numa grade ainda -
+        pra poder esconder o par INTEIRO (legenda incluida) quando o valor estiver vazio, e
+        reposicionar os que sobraram sem deixar buraco (ver a seção "Pessoal" e
+        _reordenar_grade_pessoal). Devolve (o widget, o QLabel do valor, pra dar setText depois)."""
+        wrapper = QWidget()
+        wrapper.setProperty("role", "transparente")
+        caixa = QVBoxLayout(wrapper)
+        caixa.setContentsMargins(0, 0, 0, 0)
         caixa.setSpacing(2)
         legenda = QLabel(titulo)
         legenda.setProperty("role", "campo_rotulo")
         valor = FichaClienteScreen._criar_rotulo_valor()
         caixa.addWidget(legenda)
         caixa.addWidget(valor)
-        grade.addLayout(caixa, row, col)
-        return valor
+        return wrapper, valor
+
+    @staticmethod
+    def _criar_campo(grade: QGridLayout, row: int, col: int, titulo: str) -> tuple[QWidget, QLabel]:
+        """Como _criar_campo_livre, mas já posicionado numa posição FIXA da grade - pra
+        campos que não somem (ex.: o endereço expandido, onde os 7 campos são sempre
+        mostrados juntos)."""
+        wrapper, valor = FichaClienteScreen._criar_campo_livre(titulo)
+        grade.addWidget(wrapper, row, col)
+        return wrapper, valor
 
     @staticmethod
     def _linha_copiavel() -> tuple[QHBoxLayout, QLabel]:
@@ -540,6 +725,104 @@ class FichaClienteScreen(QWidget):
     def _definir_valor_copiavel(rotulo: QLabel, texto: str) -> None:
         rotulo.setProperty("texto_cru", texto)
         rotulo.setText(texto_quebravel(texto) or "—")
+
+    # -- contato: WhatsApp, e-mail e rede social clicaveis --------------------
+
+    @staticmethod
+    def _preparar_rotulo_com_link(rotulo: QLabel) -> None:
+        """Deixa `rotulo` pronto pra mostrar um link clicavel quando o texto vier com
+        HTML (ver _texto_com_link_de_email/_texto_com_link_de_rede_social) - texto puro
+        ("—", sem valor) continua aparecendo normal."""
+        rotulo.setTextFormat(Qt.TextFormat.RichText)
+        rotulo.setOpenExternalLinks(True)
+        rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+
+    _PADRAO_EMAIL = re.compile(r"[^\s,;]+@[^\s,;]+\.[^\s,;]+")
+
+    @staticmethod
+    def _texto_com_link_de_email(email: str) -> str:
+        """Normalmente 1 e-mail só - mas o campo às vezes tem mais de um, digitados juntos
+        (separados por espaço, vírgula, ponto-e-vírgula ou quebra de linha), e às vezes até
+        outra coisa junto (achamos um caso real com um telefone colado depois dos e-mails).
+        Acha cada trecho que PARECE um e-mail (via regex, sem espaço dentro) e cada um vira
+        o seu próprio link de mailto, numa linha - o que sobrar (não é nenhum e-mail
+        encontrado) aparece como texto puro na última linha, sem virar um mailto: quebrado
+        nem ser cortado no meio (um telefone "+55 77 9208-1246" tem espaço por dentro -
+        dividir por espaço/vírgula ignorando isso o fragmentaria em 3 pedaços sem sentido)."""
+        limpo = (email or "").strip()
+        if not limpo:
+            return "—"
+        enderecos = FichaClienteScreen._PADRAO_EMAIL.findall(limpo)
+        if not enderecos:
+            return texto_quebravel(limpo)  # nada parece e-mail: mostra como veio, sem tentar link
+        linhas = [f'<a href="mailto:{e}">{texto_quebravel(e)}</a>' for e in enderecos]
+        sobra = limpo
+        for endereco in enderecos:
+            sobra = sobra.replace(endereco, " ")
+        sobra = " ".join(sobra.split())
+        if sobra:
+            linhas.append(texto_quebravel(sobra))
+        return "<br>".join(linhas)
+
+    @staticmethod
+    def _texto_com_link_de_rede_social(bruto: str) -> str:
+        limpo = (bruto or "").strip()
+        if not limpo:
+            return "—"
+        link = _link_da_rede_social(limpo)
+        if link is None:
+            return texto_quebravel(limpo)  # handle solto ("@fulano"), sem link: nunca inventa destino
+        rotulo, url = link
+        return f'<a href="{url}">{rotulo} ↗</a>'
+
+    def _abrir_whatsapp(self) -> None:
+        numero = self._botao_whatsapp.property("numero_whatsapp")
+        if numero:
+            QDesktopServices.openUrl(QUrl(f"https://wa.me/{numero}"))
+
+    # -- Pessoal: campos vazios escondidos atras de um link -------------------
+
+    @staticmethod
+    def _definir_campo_pessoal(wrapper: QWidget, rotulo: QLabel, texto: str) -> None:
+        limpo = (texto or "").strip()
+        wrapper.setProperty("vazio", not limpo)
+        rotulo.setText(texto_quebravel(limpo) or "—")
+
+    def _alternar_pessoal_vazios(self, _href: str = "") -> None:
+        self._pessoal_mostrar_vazios = not self._pessoal_mostrar_vazios
+        self._atualizar_visibilidade_pessoal()
+
+    def _reordenar_grade_pessoal(self) -> None:
+        """Remonta a grade só com os campos visíveis, em ordem (Nascimento primeiro,
+        sempre; os outros só quando têm valor, ou "mostrar vazios" estiver ligado),
+        preenchendo 3 por linha sem pular posição - diferente de só chamar setVisible(),
+        isso nunca deixa buraco onde um campo escondido estaria (ex.: "Vinculado a"
+        flutuando sozinho, deslocado, quando os campos antes dele na grade estão vazios)."""
+        visiveis = [self._pessoal_wrap_nascimento] + [
+            w for w in self._pessoal_campos_opcionais if self._pessoal_mostrar_vazios or not w.property("vazio")
+        ]
+        for wrapper in self._pessoal_todos_campos:
+            self._grade_pessoal.removeWidget(wrapper)
+        for indice, wrapper in enumerate(visiveis):
+            self._grade_pessoal.addWidget(wrapper, indice // 3, indice % 3)
+            wrapper.setVisible(True)
+        for wrapper in self._pessoal_todos_campos:
+            if wrapper not in visiveis:
+                wrapper.setVisible(False)
+
+    def _atualizar_visibilidade_pessoal(self) -> None:
+        vazios = [w for w in self._pessoal_campos_opcionais if w.property("vazio")]
+        self._reordenar_grade_pessoal()
+        if not vazios:
+            self._link_pessoal_vazios.setVisible(False)
+            return
+        self._link_pessoal_vazios.setVisible(True)
+        if self._pessoal_mostrar_vazios:
+            texto = "Ocultar campos vazios"
+        else:
+            plural = len(vazios) != 1
+            texto = f"+ {len(vazios)} campo{'s' if plural else ''} vazio{'s' if plural else ''}"
+        self._link_pessoal_vazios.setText(f'<a href="#">{texto}</a>')
 
     # -- endereco retratil, rolagem do painel --------------------------------
 
@@ -711,19 +994,53 @@ class FichaClienteScreen(QWidget):
         # editar uma proposta precisa dos valores originais
         self._historico_atual = historico
 
+        self._avatar.definir_iniciais(iniciais_do_nome(cliente["CLIENTE"]))
         self._nome_label.setText(texto_quebravel(cliente["CLIENTE"]))
         self._campo_cpf.setText(cliente["CPF/CNPJ"])
-        self._campo_tipo.setText(cliente["TIPO"] or "—")
-        self._campo_vendedor.setText(cliente["VENDEDOR"] or "—")
-        self._campo_celular.setText(cliente["CELULAR"] or "—")
-        self._campo_email.setText(texto_quebravel(cliente["EMAIL"]) or "—")
-        self._campo_rede_social.setText(texto_quebravel(cliente["REDE SOCIAL"]) or "—")
+        cadastro = formatar_data(cliente.get("DATA CADASTRO"))
+        info = f"{rotulo_do_tipo(cliente['TIPO']) or 'Cliente'} · Vendedor: {cliente['VENDEDOR'] or '—'}"
+        if cadastro != "—":
+            info += f" · Cliente desde {cadastro}"
+        self._sub_info.setText(f"· {info}")
+
+        resumo = _resumo_do_cliente(historico)
+        if resumo["total"] == 0:
+            self._resumo_label.setText("Nenhuma proposta registrada ainda.")
+        else:
+            partes = [
+                f"{resumo['total']} proposta{'s' if resumo['total'] != 1 else ''}",
+                f"{resumo['aprovadas']} aprovada{'s' if resumo['aprovadas'] != 1 else ''}",
+            ]
+            # so mostra o valor aprovado quando ha alguma - com 0 aprovadas, "0 aprovadas"
+            # ja diz tudo (um segmento "nenhuma aprovada" a mais seria redundante)
+            if resumo["aprovadas"]:
+                partes.append(f"{formatar_reais(resumo['valor_aprovado'])} aprovado")
+            partes.append(f"última atividade {_formatar_ultima_atividade(resumo['ultima_atividade'])}")
+            self._resumo_label.setText(" · ".join(partes))
+
+        # Contato: numero pra copiar/WhatsApp guardado como propriedade (o texto exibido
+        # pode ser so o valor cru mesmo, sem HTML)
+        celular = cliente["CELULAR"] or ""
+        self._campo_celular.setProperty("texto_cru", celular)
+        self._campo_celular.setText(texto_quebravel(celular) or "—")
+        numero_whats = _numero_whatsapp(celular)
+        self._botao_whatsapp.setProperty("numero_whatsapp", numero_whats)
+        self._botao_whatsapp.setEnabled(bool(numero_whats))
+        self._botao_whatsapp.setToolTip("" if numero_whats else "Celular sem DDD/dígitos suficientes para abrir o WhatsApp")
+
+        email = cliente["EMAIL"] or ""
+        self._campo_email.setText(self._texto_com_link_de_email(email))
+        rede_social = cliente["REDE SOCIAL"] or ""
+        self._campo_rede_social.setText(self._texto_com_link_de_rede_social(rede_social))
+        self._secao_contato.setVisible(bool(celular.strip() or email.strip() or rede_social.strip()))
+
         self._campo_nascimento.setText(formatar_data(cliente.get("NASCIMENTO")))
-        self._campo_cadastrado_em.setText(formatar_data(cliente.get("DATA CADASTRO")))
-        self._campo_vinculado.setText(texto_quebravel(cliente["VINCULADO"]) or "—")
-        self._campo_nome_pai.setText(texto_quebravel(cliente["NOME DO PAI"]) or "—")
-        self._campo_nome_mae.setText(texto_quebravel(cliente["NOME DA MÃE"]) or "—")
-        self._campo_profissao.setText(texto_quebravel(cliente["PROFISSÃO"]) or "—")
+        self._definir_campo_pessoal(self._pessoal_campos_opcionais[0], self._campo_nome_pai, cliente["NOME DO PAI"])
+        self._definir_campo_pessoal(self._pessoal_campos_opcionais[1], self._campo_nome_mae, cliente["NOME DA MÃE"])
+        self._definir_campo_pessoal(self._pessoal_campos_opcionais[2], self._campo_profissao, cliente["PROFISSÃO"])
+        self._definir_campo_pessoal(self._pessoal_campos_opcionais[3], self._campo_vinculado, cliente["VINCULADO"])
+        self._pessoal_mostrar_vazios = False
+        self._atualizar_visibilidade_pessoal()
 
         self._definir_valor_copiavel(self._campo_cep, cliente["CEP"])
         self._definir_valor_copiavel(self._campo_logradouro, cliente["LOGRADOURO"])

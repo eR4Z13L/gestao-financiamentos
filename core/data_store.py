@@ -21,6 +21,7 @@ Regras importantes:
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import tempfile
@@ -126,11 +127,26 @@ PALAVRAS_STATUS_NEGADO = {"NEGADO", "NEGADA", "REPROVADO", "REPROVADA", "CANCELA
 # paralelo. core/propostas.py reaproveita esta lista.
 PALAVRAS_STATUS_EFETIVADO = {"EFETIVADO", "EFETIVADA"}
 
+# "Não efetivado" = o banco aprovou mas o cliente NAO seguiu com a compra (so pode vir
+# depois de "Aprovado" - core/propostas.py trava essa transicao). Nao confundir com a
+# METRICA antiga "aprovadas_nao_efetivadas" (core/dashboard.py): aquela conta quem
+# ainda esta "Aprovado" (pendente, podendo virar venda); este status e um desfecho
+# FINAL (o cliente ja desistiu, nao volta mais a andar).
+PALAVRAS_STATUS_NAO_EFETIVADO = {"NÃO EFETIVADO", "NAO EFETIVADO"}
+
+# "Encerrada" = a proposta parou de fazer sentido porque OUTRA proposta do mesmo
+# cliente + equipamento (a mesma venda, em outro banco) ja foi efetivada - nao e erro
+# do banco (nao e Negado) nem desistencia do cliente (nao e Nao efetivado): so "nao foi
+# por ali". Ver core.propostas.propostas_em_aberto_da_mesma_venda/encerrar_propostas.
+PALAVRAS_STATUS_ENCERRADA = {"ENCERRADA"}
+
 # Status que fazem uma proposta parar de contar "N dias" e virar "Encerrado"
-# na coluna TEMPO: os desfechos finais - a compra concluida (Efetivado) ou a
-# proposta perdida (negado/reprovado/cancelado). "Aprovado" NAO encerra: a
-# proposta segue "em aberto" (contando dias) ate virar Efetivado, ou ser revertida.
-STATUS_ENCERRADO = PALAVRAS_STATUS_EFETIVADO | PALAVRAS_STATUS_NEGADO
+# na coluna TEMPO: os desfechos finais - a compra concluida (Efetivado), a proposta
+# perdida (negado/reprovado/cancelado), o cliente que desistiu depois de aprovado
+# (Nao efetivado) ou a proposta fechada por causa de outra da mesma venda (Encerrada).
+# "Aprovado" (sozinho) NAO encerra: a proposta segue "em aberto" (contando dias) ate
+# ganhar um desses desfechos.
+STATUS_ENCERRADO = PALAVRAS_STATUS_EFETIVADO | PALAVRAS_STATUS_NEGADO | PALAVRAS_STATUS_NAO_EFETIVADO | PALAVRAS_STATUS_ENCERRADA
 
 _COLUNAS_DE_DATA = {
     ABA_CLIENTES: {"DATA CADASTRO", "NASCIMENTO"},
@@ -181,7 +197,21 @@ def arquivo_esta_bloqueado(caminho_xlsx: Path) -> bool:
 
 
 def _carregar_planilha(caminho_xlsx: Path):
-    return openpyxl.load_workbook(caminho_xlsx, data_only=False)
+    # o coletor de lixo CICLICO do Python (gc.collect(), automatico por contagem de
+    # alocacoes) pode disparar NO MEIO do parser XML em C do openpyxl - encontramos
+    # isso travando o app (Windows fatal exception: access violation) quando a janela
+    # ja tinha criado/destruido varios widgets (Qt/PySide6 tambem usa ciclos de
+    # referencia, o que deixa mais lixo ciclico pendente). Desligar o coletor so
+    # durante a leitura evita a reentrancia sem perder memoria de verdade: os objetos
+    # continuam sendo liberados por contagem de referencia normal, so a VARREDURA de
+    # ciclos fica pra depois.
+    coletor_estava_ligado = gc.isenabled()
+    gc.disable()
+    try:
+        return openpyxl.load_workbook(caminho_xlsx, data_only=False)
+    finally:
+        if coletor_estava_ligado:
+            gc.enable()
 
 
 def _esta_vazio(valor) -> bool:

@@ -122,7 +122,11 @@ def testar_numeros_do_topo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
 
     efetivadas = topo["a_efetivar"]["efetivadas"]
     assert tela._card_a_efetivar.valor() == str(topo["a_efetivar"]["quantidade"])
-    assert tela._card_a_efetivar.detalhe() == f"{efetivadas} {'efetivada' if efetivadas == 1 else 'efetivadas'} até agora"
+    detalhe_a_efetivar = f"{efetivadas} {'efetivada' if efetivadas == 1 else 'efetivadas'} até agora"
+    taxa_efetivacao = topo["taxa_efetivacao"]
+    if taxa_efetivacao["percentual"] is not None:
+        detalhe_a_efetivar += f" · {_pct(taxa_efetivacao['percentual'])} das aprovadas já efetivaram"
+    assert tela._card_a_efetivar.detalhe() == detalhe_a_efetivar
     assert tela._card_a_efetivar.detalhe_em_aviso() == (efetivadas == 0)
     taxa = topo["taxa_aprovacao"]
     assert tela._card_taxa.valor() == _pct(taxa["percentual"]) and tela._card_taxa.detalhe() == f"{taxa['aprovadas']} de {taxa['decididas']} decididas"
@@ -131,12 +135,13 @@ def testar_numeros_do_topo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     assert tela._card_mediano.valor() == formatar_reais(mediano["mediana"]) and tela._card_mediano.detalhe() == f"{mediano['com_valor']} de {mediano['total']} com valor"
     assert "Taxa de reprovação" not in [c.titulo() for c in (tela._card_em_analise, tela._card_a_efetivar, tela._card_taxa, tela._card_mediano)]
     assert all(c.comparacao() == "" for c in (tela._card_em_analise, tela._card_a_efetivar, tela._card_taxa, tela._card_mediano)), "Tudo nao compara"
-    print("OK: os 4 numeros (a efetivar x efetivadas, taxa sobre as decididas com a formula no tooltip, mediana), sem 'taxa de reprovacao'.")
+    print("OK: os 4 numeros (a efetivar x efetivadas + % ja efetivado, taxa sobre as decididas com a formula no tooltip, mediana), sem 'taxa de reprovacao'.")
 
     # o aviso "0 efetivadas": ambar e em destaque, de verdade (a cor sai do QSS do tema)
     tela._propostas = fx.montar_propostas(dict(STATUS="Aprovado"), dict(STATUS="Negado"))
     tela._atualizar()
-    assert tela._card_a_efetivar.detalhe() == "0 efetivadas até agora" and tela._card_a_efetivar.detalhe_em_aviso()
+    # 1 aprovada (categoria), 0 efetivada -> 0% das aprovadas ja efetivaram (aparece, nao e None)
+    assert tela._card_a_efetivar.detalhe() == "0 efetivadas até agora · 0,0% das aprovadas já efetivaram" and tela._card_a_efetivar.detalhe_em_aviso()
     rotulo = tela._card_a_efetivar._detalhe
     esperado = QColor(CORES_STATUS[tema]["em_analise"]["texto"])
     assert _contar_pixels(rotulo.grab().toImage(), esperado, QRect(0, 0, rotulo.width(), rotulo.height()), 40) > 10, "o aviso deveria estar na cor ambar do tema"

@@ -82,6 +82,13 @@ class FormularioProposta(QWidget):
     recolher_pedido = Signal()
     cancelada = Signal()
     duplicacao_pedida = Signal()
+    # emitido ANTES de `gravada`, so quando o status acabou de virar "Efetivado" (nao
+    # quando ja estava): (cpf, equipamento, indice_gravado). Quem escuta (ExpansorDeProposta)
+    # oferece encerrar as outras propostas em aberto da mesma venda - ver
+    # desktop/widgets/encerrar_propostas_da_venda.py. Emitido ANTES de `gravada` de
+    # proposito: depois dela o card e recarregado/recriado, e este `self` pode nao
+    # continuar valido.
+    efetivada_agora = Signal(str, str, int)
 
     def __init__(
         self,
@@ -521,4 +528,10 @@ class FormularioProposta(QWidget):
             QMessageBox.critical(self, "Erro inesperado ao salvar", str(exc))
             return
 
+        status_anterior = (self._proposta_original or {}).get("STATUS") or ""
+        if propostas_mod.eh_efetivado(status) and not propostas_mod.eh_efetivado(status_anterior):
+            # o status ACABOU de virar Efetivado (nao ja estava): pode haver outras
+            # propostas em aberto da mesma venda (mesmo cliente+equipamento) em outro
+            # banco - emite ANTES de `gravada` (ver o comentario do sinal)
+            self.efetivada_agora.emit(cpf, campos["EQUIPAMENTO"], self.indice_gravado)
         self.gravada.emit()

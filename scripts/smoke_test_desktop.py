@@ -104,7 +104,7 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     assert tela._painel_stack.currentIndex() == 1
     assert tela._nome_label.text() == cliente_com_proposta["CLIENTE"]
     assert tela._campo_cpf.text() == cliente_com_proposta["CPF/CNPJ"]
-    assert tela._campo_vendedor.text() == (cliente_com_proposta["VENDEDOR"] or "—")
+    assert f"Vendedor: {cliente_com_proposta['VENDEDOR'] or '—'}" in tela._sub_info.text()
 
     # isVisible() so reflete a realidade quando a janela foi de fato mostrada
     # na tela (nao e o caso aqui, em modo headless) - isHidden() reflete o
@@ -347,12 +347,13 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         assert largura_minima < 1100, f"minimumSizeHint ficou grande demais ({largura_minima}px) - layout vai estourar a tela"
         print(f"OK: minimumSizeHint da ficha com URL longa em Rede Social e Observações ficou em {largura_minima}px (< 1100px).")
 
-        # o texto exibido tem que conter a URL inteira (so quebrada por
-        # espacos de largura zero invisiveis) - nenhum caractere pode ter
-        # sido perdido/truncado silenciosamente
-        texto_exibido = tela._campo_rede_social.text().replace("​", "")
-        assert texto_exibido == url_longa, "a URL exibida deveria ser identica a original, sem espaços de largura zero"
-        print("OK: a URL inteira continua visível na ficha (só quebrada em várias linhas), nada foi cortado.")
+        # a Rede Social agora mostra um LINK CURTO (domínio + seta), nunca a URL crua -
+        # isso já evita a URL comprida esticar o layout sozinha; mas o link precisa
+        # continuar levando pro endereço INTEIRO (nada cortado no href)
+        html_rede_social = tela._campo_rede_social.text()
+        assert "maapp.com.br ↗" in html_rede_social, "rede social deveria mostrar um link curto, não a URL crua"
+        assert url_longa in html_rede_social, "o link precisa continuar apontando pro endereço completo (href)"
+        print("OK: a Rede Social mostra um link curto ('maapp.com.br ↗'), mas continua apontando pro endereço completo.")
 
         if not historico.empty:
             # os cards do historico nao mostram as observacoes (ficam na tela de leitura da proposta):

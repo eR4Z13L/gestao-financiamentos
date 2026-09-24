@@ -84,7 +84,8 @@ def _df(statuses: list[str], vendedores: list[str] | None = None) -> pd.DataFram
 def testar_regras() -> None:
     linha("1) Lista de status e categorias")
     assert propostas_mod.STATUS_OPCOES == [
-        "Em Análise", "Pré-aprovado", "Aprovado", "Nota Fiscal Anexada", "Garantia Assinada", "Efetivado", "Negado",
+        "Em Análise", "Pré-aprovado", "Aprovado", "Nota Fiscal Anexada", "Garantia Assinada", "Efetivado",
+        "Não efetivado", "Encerrada", "Negado",
     ], propostas_mod.STATUS_OPCOES
     assert propostas_mod.STATUS_OPCOES.index("Efetivado") > propostas_mod.STATUS_OPCOES.index("Aprovado"), "vem DEPOIS de Aprovado"
     for s in ("Efetivado", "EFETIVADO", " efetivada "):
@@ -96,6 +97,17 @@ def testar_regras() -> None:
         assert not propostas_mod.eh_aprovado_nao_efetivado(s) and not propostas_mod.eh_efetivado(s), s
     print("OK: 'Efetivado' entra depois de Garantia Assinada; conta como categoria Aprovado; só o status exato "
           "'Aprovado' é 'aprovado não efetivado'.")
+
+    linha("1b) 'Não efetivado' e 'Encerrada' (status novos)")
+    for s in ("Não efetivado", "NÃO EFETIVADO", "nao efetivado "):
+        assert propostas_mod.categoria_status(s) == "Aprovado", s  # o banco aprovou - conta na taxa
+        assert propostas_mod.eh_nao_efetivado(s) and not propostas_mod.eh_efetivado(s) and not propostas_mod.eh_aprovado_nao_efetivado(s)
+    for s in ("Encerrada", "ENCERRADA", " encerrada "):
+        assert propostas_mod.categoria_status(s) == "Encerrada", s  # fica FORA de Aprovado/Negado
+        assert propostas_mod.eh_proposta_encerrada(s) and not propostas_mod.eh_efetivado(s)
+    assert not propostas_mod.esta_em_aberto("Não efetivado") and not propostas_mod.esta_em_aberto("Encerrada")
+    print("OK: 'Não efetivado' conta como Aprovado na taxa (o banco aprovou); 'Encerrada' tem categoria própria "
+          "(fora de Aprovado e de Negado); as duas encerram (esta_em_aberto = False).")
 
     linha("2) TEMPO (leitura): Efetivado e Negado encerram; Aprovado NÃO")
     dez_dias_atras = datetime.today() - timedelta(days=10)
@@ -230,7 +242,8 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     linha("5) Dashboard (tela): 'Aprovadas a efetivar' e a tabela por vendedor")
     tela = DashboardScreen()
     assert tela._card_a_efetivar.valor() == "2", "so as de status exatamente 'Aprovado' estao a efetivar"
-    assert tela._card_a_efetivar.detalhe() == "3 efetivadas até agora"
+    # 3 efetivadas de 6 aprovadas (categoria) = 50% ja viraram venda
+    assert tela._card_a_efetivar.detalhe() == "3 efetivadas até agora · 50,0% das aprovadas já efetivaram"
     assert not tela._card_a_efetivar.detalhe_em_aviso(), "com efetivadas o detalhe e normal (o aviso e pra 0 efetivadas)"
     assert tela._card_taxa.valor() == "100,0%", "6 aprovadas de 6 decididas (so aprovadas/(aprovadas+negadas))"
     assert tela._card_taxa.detalhe() == "6 de 6 decididas"
@@ -239,7 +252,8 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     por_vendedor = {n: tela._tabela_vendedores.texto_da_celula(i, coluna_a_efetivar) for i, n in enumerate(nomes)}
     assert por_vendedor == {"ANA": "2", "BIA": "0"}, por_vendedor
     tela.close()
-    print("OK: 'Aprovadas a efetivar' mostra 2 e '3 efetivadas até agora'; a tabela por vendedor tem a coluna 'A efetivar' (2 / 0).")
+    print("OK: 'Aprovadas a efetivar' mostra 2 e '3 efetivadas até agora · 50,0% das aprovadas já efetivaram'; "
+          "a tabela por vendedor tem a coluna 'A efetivar' (2 / 0).")
 
     linha("5b) Dashboard sem nenhuma Aprovada/Efetivada")
     arquivo2 = pasta / "controle2.xlsx"

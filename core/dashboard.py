@@ -27,9 +27,11 @@ from core.propostas import (
     ETAPA_EFETIVADO,
     ETAPA_EM_ANALISE,
     ETAPA_GARANTIA_ASSINADA,
+    ETAPA_NAO_EFETIVADO,
     ETAPA_NEGADO,
     ETAPA_NF_ANEXADA,
     ETAPA_PRE_APROVADO,
+    ETAPA_PROPOSTA_ENCERRADA,
     ETAPA_SEM_STATUS,
     categoria_status,
     eh_aprovado_nao_efetivado,
@@ -48,7 +50,13 @@ def _percentual(numerador: float, denominador: float) -> float:
 def _nao_efetivadas(status: pd.Series) -> tuple[int, int, float]:
     """(efetivadas, aprovadas nao efetivadas, % nao efetivadas) de uma serie
     de STATUS. A porcentagem e sobre Aprovado + Efetivado - "de tudo que foi
-    aprovado, quanto ainda nao virou venda"; 0.0 se nao ha nenhuma das duas."""
+    aprovado, quanto ainda nao virou venda"; 0.0 se nao ha nenhuma das duas.
+
+    ATENCAO AO NOME: "aprovadas nao efetivadas" aqui e quem ainda esta com o
+    status "Aprovado" (PENDENTE, ainda pode virar venda) - eh_aprovado_nao_efetivado().
+    Isso e DIFERENTE do status "Não efetivado" (core.propostas.STATUS_NAO_EFETIVADO),
+    que e um desfecho FINAL (o cliente ja desistiu). Os dois nomes parecidos existem
+    porque esta metrica e mais antiga que aquele status - ver eh_nao_efetivado()."""
     # astype(bool): sem nenhuma proposta (ex.: vendedor recem-cadastrado) o map() devolve uma
     # serie vazia SEM tipo booleano - de texto, quando o STATUS e texto - e a soma dela e ""
     # em vez de 0 (o int("") derrubava o Dashboard, e com ele a janela inteira, pra esse vendedor)
@@ -65,12 +73,15 @@ def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
     aprovadas = int((categoria == "Aprovado").sum())
     negadas = int((categoria == "Negado").sum())
     em_analise = int((categoria == "Em Análise").sum())
-    # propostas que NAO entram em nenhum dos 3 cards acima: status em branco
-    # ("sem_status") ou status preenchido mas desconhecido/mal digitado
-    # ("nao_identificado") - separados pra tela poder explicar a diferenca
-    # em vez de so deixar o total "nao bater" com a soma dos cards.
+    # propostas que NAO entram em nenhum dos cards acima: status em branco
+    # ("sem_status"), status preenchido mas desconhecido/mal digitado
+    # ("nao_identificado") ou "Encerrada" (fechada por causa de outra proposta
+    # da mesma venda, sem ter sido decidida por este banco) - separados pra
+    # tela poder explicar a diferenca em vez de so deixar o total "nao bater"
+    # com a soma dos cards.
     sem_status = int((categoria == "").sum())
     nao_identificado = int((categoria == "Não identificado").sum())
+    encerradas = int((categoria == "Encerrada").sum())
     decididas = aprovadas + negadas
     # soma com skipna (padrao do pandas) ja ignora VALOR ausente em vez de
     # tratar como R$0 - mas isso e invisivel pra quem olha so o numero final,
@@ -90,6 +101,7 @@ def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
         "em_analise": em_analise,
         "sem_status": sem_status,
         "nao_identificado": nao_identificado,
+        "encerradas": encerradas,
         "aprovadas_sem_valor": aprovadas_sem_valor,
         "taxa_aprovacao": _percentual(aprovadas, decididas),
         "taxa_reprovacao": _percentual(negadas, decididas),
@@ -285,11 +297,15 @@ def _texto_normalizado(serie: pd.Series) -> pd.Series:
 
 
 def indicadores_do_topo(propostas: pd.DataFrame) -> dict:
-    """Os quatro numeros do topo do dashboard:
+    """Os numeros do topo do dashboard:
     - em_analise: quantas, a soma dos valores e quantas TEM valor (o resto nao entra na soma);
-    - a_efetivar: as de status exatamente "Aprovado" (aprovadas que ainda nao viraram compra) e
-      quantas ja foram efetivadas - o que mostra se o processo termina;
-    - taxa_aprovacao: aprovadas (todas as etapas positivas) sobre as DECIDIDAS (aprovadas + negadas);
+    - a_efetivar: as de status exatamente "Aprovado" (aprovadas que ainda nao viraram compra, nem
+      desistiram) e quantas ja foram efetivadas - o que mostra se o processo termina. Não conta
+      "Não efetivado" nem "Encerrada": essas ja tem um desfecho, nao estao mais "a efetivar";
+    - taxa_aprovacao: aprovadas (todas as etapas positivas, "Não efetivado" incluido - o banco
+      aprovou) sobre as DECIDIDAS (aprovadas + negadas). "Encerrada" fica de fora dos dois lados;
+    - taxa_efetivacao: das aprovadas (mesma base da taxa_aprovacao, incluindo quem ainda esta so
+      "Aprovado" pendente), quantas viraram venda de fato - None sem nenhuma aprovada;
     - valor_mediano: a mediana dos valores preenchidos (a soma engana quando ha valores de teste ou
       atipicos) e quantas propostas tem valor."""
     etapas = propostas["STATUS"].map(etapa_status)
@@ -300,6 +316,7 @@ def indicadores_do_topo(propostas: pd.DataFrame) -> dict:
     aprovadas = int((categoria == "Aprovado").sum())
     negadas = int((categoria == "Negado").sum())
     decididas = aprovadas + negadas
+    efetivadas_qtd = int((etapas == ETAPA_EFETIVADO).sum())
     com_valor = valores.dropna()
     return {
         "total": len(propostas),
@@ -310,12 +327,17 @@ def indicadores_do_topo(propostas: pd.DataFrame) -> dict:
         },
         "a_efetivar": {
             "quantidade": int((etapas == ETAPA_APROVADO).sum()),
-            "efetivadas": int((etapas == ETAPA_EFETIVADO).sum()),
+            "efetivadas": efetivadas_qtd,
         },
         "taxa_aprovacao": {
             "aprovadas": aprovadas,
             "decididas": decididas,
             "percentual": (aprovadas / decididas * 100) if decididas else None,
+        },
+        "taxa_efetivacao": {
+            "efetivadas": efetivadas_qtd,
+            "aprovadas": aprovadas,
+            "percentual": (efetivadas_qtd / aprovadas * 100) if aprovadas else None,
         },
         "valor_mediano": {
             "mediana": float(com_valor.median()) if len(com_valor) else None,
@@ -343,6 +365,7 @@ def comparar_periodos(atual: dict, anterior: dict) -> dict | None:
         "em_analise": atual["em_analise"]["quantidade"] - anterior["em_analise"]["quantidade"],
         "a_efetivar": atual["a_efetivar"]["quantidade"] - anterior["a_efetivar"]["quantidade"],
         "taxa_aprovacao": _diferenca(atual["taxa_aprovacao"]["percentual"], anterior["taxa_aprovacao"]["percentual"]),
+        "taxa_efetivacao": _diferenca(atual["taxa_efetivacao"]["percentual"], anterior["taxa_efetivacao"]["percentual"]),
         "valor_mediano": variacao_da_mediana,
     }
 
@@ -351,10 +374,18 @@ def comparar_periodos(atual: dict, anterior: dict) -> dict | None:
 
 ATENCAO_PARADAS = "paradas"
 ATENCAO_A_EFETIVAR = "a_efetivar"
+ATENCAO_MESMA_VENDA = "mesma_venda"
 ATENCAO_SEM_VALOR = "sem_valor"
 ATENCAO_DUPLICADAS = "duplicadas"
 ATENCAO_DATA_ESTRANHA = "data_estranha"
-ATENCOES_EM_ORDEM = [ATENCAO_PARADAS, ATENCAO_A_EFETIVAR, ATENCAO_SEM_VALOR, ATENCAO_DUPLICADAS, ATENCAO_DATA_ESTRANHA]
+ATENCOES_EM_ORDEM = [
+    ATENCAO_PARADAS,
+    ATENCAO_A_EFETIVAR,
+    ATENCAO_MESMA_VENDA,
+    ATENCAO_SEM_VALOR,
+    ATENCAO_DUPLICADAS,
+    ATENCAO_DATA_ESTRANHA,
+]
 
 TOM_PROCESSO = "processo"  # o que esta parado no fluxo (amber)
 TOM_DADOS = "dados"  # o que esta errado ou faltando no cadastro
@@ -417,6 +448,18 @@ def _indices_de_atencao(propostas: pd.DataFrame, chave: str, dias: int, hoje: da
         return _indices(propostas, em_aberto & (dias_parada > dias))
     if chave == ATENCAO_A_EFETIVAR:
         return _indices(propostas, propostas["STATUS"].map(etapa_status) == ETAPA_APROVADO)
+    if chave == ATENCAO_MESMA_VENDA:
+        # propostas AINDA em aberto de um cliente+equipamento onde OUTRA proposta ja foi
+        # efetivada (a mesma venda, fechada por outro banco) - candidatas a "Encerrada"
+        # que ninguem encerrou ainda (a pergunta ao efetivar foi respondida "não", ou a
+        # proposta nem existia naquele momento). Nunca mexe sozinho: so sinaliza.
+        cpf = propostas["CPF"].map(apenas_digitos)
+        equipamento = _texto_normalizado(propostas["EQUIPAMENTO"])
+        em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool)
+        efetivada = propostas["STATUS"].map(eh_efetivado).astype(bool)
+        valido = (cpf != "") & (equipamento != "")
+        tem_efetivada_no_grupo = efetivada.groupby([cpf, equipamento]).transform("any")
+        return _indices(propostas, em_aberto & valido & tem_efetivada_no_grupo)
     if chave == ATENCAO_SEM_VALOR:
         return _indices(propostas, _valores(propostas).isna())
     if chave == ATENCAO_DUPLICADAS:
@@ -443,6 +486,7 @@ def precisa_de_atencao(propostas: pd.DataFrame, dias: int | None = None, hoje: d
     definicoes = {
         ATENCAO_PARADAS: (TOM_PROCESSO, lambda n: _plural(n, "proposta", "propostas") + f" em aberto há mais de {dias} dias", f"Em aberto há mais de {dias} dias"),
         ATENCAO_A_EFETIVAR: (TOM_PROCESSO, lambda n: _plural(n, "proposta aprovada", "propostas aprovadas") + " ainda sem efetivar", "Aprovadas ainda sem efetivar"),
+        ATENCAO_MESMA_VENDA: (TOM_PROCESSO, lambda n: _plural(n, "proposta em aberto", "propostas em aberto") + " de um cliente que já efetivou o mesmo equipamento em outro banco", "Cliente já efetivou em outro banco"),
         ATENCAO_SEM_VALOR: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " sem valor", "Sem valor preenchido"),
         ATENCAO_DUPLICADAS: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " que parecem duplicadas", "Parecem duplicadas"),
         ATENCAO_DATA_ESTRANHA: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " com data fora do padrão", "Data fora do padrão"),
@@ -492,6 +536,8 @@ ROTULOS_DE_ETAPA = {
     ETAPA_NF_ANEXADA: "Nota fiscal",
     ETAPA_GARANTIA_ASSINADA: "Garantia",
     ETAPA_EFETIVADO: "Efetivado",
+    ETAPA_NAO_EFETIVADO: "Não efetivado",
+    ETAPA_PROPOSTA_ENCERRADA: "Encerrada",
     ETAPA_NEGADO: "Negado",
     ETAPA_SEM_STATUS: "Sem status",
     ETAPA_DESCONHECIDA: "Status não reconhecido",
@@ -504,6 +550,10 @@ ETAPAS_DO_FUNIL = [
     ETAPA_GARANTIA_ASSINADA,
     ETAPA_EFETIVADO,
 ]
+# Desfechos que saem do funil principal (mostrados depois, separados por um filete -
+# ver desktop/widgets/funil_de_etapas.py): "Não efetivado" e "Encerrada" sao tao
+# "fora do funil" quanto "Negado" - todos sao pontos finais que nao a etapa seguinte.
+ETAPAS_FORA_DO_FUNIL = [ETAPA_NAO_EFETIVADO, ETAPA_PROPOSTA_ENCERRADA, ETAPA_NEGADO]
 
 
 @dataclass(frozen=True)
@@ -516,9 +566,9 @@ class EtapaDoFunil:
 
 
 def funil_por_etapa(propostas: pd.DataFrame) -> list[EtapaDoFunil]:
-    """Uma linha por etapa do funil (em ordem), depois "Negado" (que fica separado: sair do funil nao e
-    uma etapa dele). "Sem status" e "Status nao reconhecido" so aparecem se houver alguma - uma proposta
-    que nao se encaixa nao pode sumir da conta."""
+    """Uma linha por etapa do funil (em ordem), depois os desfechos que saem dele - "Não efetivado",
+    "Encerrada" e "Negado" (ETAPAS_FORA_DO_FUNIL), sempre nessa ordem. "Sem status" e "Status nao
+    reconhecido" so aparecem se houver alguma - uma proposta que nao se encaixa nao pode sumir da conta."""
     etapas = propostas["STATUS"].map(etapa_status)
     valores = _valores(propostas)
 
@@ -528,7 +578,7 @@ def funil_por_etapa(propostas: pd.DataFrame) -> list[EtapaDoFunil]:
             etapa, ROTULOS_DE_ETAPA[etapa], int(da_etapa.sum()), float(valores[da_etapa].sum()), int(valores[da_etapa].notna().sum())
         )
 
-    linhas = [_linha(e) for e in ETAPAS_DO_FUNIL + [ETAPA_NEGADO]]
+    linhas = [_linha(e) for e in ETAPAS_DO_FUNIL + ETAPAS_FORA_DO_FUNIL]
     linhas += [l for l in (_linha(ETAPA_SEM_STATUS), _linha(ETAPA_DESCONHECIDA)) if l.quantidade]
     return linhas
 

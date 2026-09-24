@@ -113,7 +113,8 @@ def testar_cores() -> None:
     esperado = {
         "Em Análise": "em_analise", "EM ANALISE": "em_analise", "Pré-aprovado": "pre_aprovado", "PRE-APROVADO": "pre_aprovado",
         "Aprovado": "aprovado", "APROVADO": "aprovado", "Nota Fiscal Anexada": "nota_fiscal", "Garantia Assinada": "garantia",
-        "Efetivado": "efetivado", "EFETIVADO": "efetivado", "Negado": "negado", "NEGADO": "negado", "Reprovado": "negado",
+        "Efetivado": "efetivado", "EFETIVADO": "efetivado", "Não efetivado": "nao_efetivado", "NÃO EFETIVADO": "nao_efetivado",
+        "Encerrada": "encerrada", "ENCERRADA": "encerrada", "Negado": "negado", "NEGADO": "negado", "Reprovado": "negado",
         "Cancelado": "negado", "": "neutro", "Status Maluco": "neutro",
     }
     for status, chave in esperado.items():
@@ -125,7 +126,10 @@ def testar_cores() -> None:
     linha("1b) Contraste nos dois temas (WCAG)")
     for tema in (TEMA_ESCURO, TEMA_CLARO):
         cartao = PALETAS[tema]["bg_card"]
-        assert set(CORES_STATUS[tema]) == {"aprovado", "efetivado", "negado", "em_analise", "pre_aprovado", "nota_fiscal", "garantia", "neutro"}
+        assert set(CORES_STATUS[tema]) == {
+            "aprovado", "efetivado", "negado", "em_analise", "pre_aprovado", "nota_fiscal", "garantia",
+            "nao_efetivado", "encerrada", "neutro",
+        }
         for chave, cor in CORES_STATUS[tema].items():
             texto_na_pilula = _contraste(cor["texto"], cor["fundo"])
             faixa_no_card = _contraste(cor["faixa"], cartao)

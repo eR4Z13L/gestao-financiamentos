@@ -281,7 +281,7 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
         ClienteDialog.exec = _exec_edicao_email
         tela._abrir_edicao_cliente()
         assert tela._filtro_vendedor.currentText() == "BIA", "continua no filtro: nao precisa limpar"
-        assert tela._campo_email.text() == "irene@exemplo.com", "ficha aberta tem que mostrar o que acabou de ser salvo"
+        assert "irene@exemplo.com" in tela._campo_email.text(), "ficha aberta tem que mostrar o que acabou de ser salvo"
         print("OK: editar quem continua no filtro mantém o filtro e atualiza a ficha aberta.")
 
         # editar tirando o cliente do filtro (troca de vendedor)
@@ -294,7 +294,7 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
         ClienteDialog.exec = _exec_troca_vendedor
         tela._abrir_edicao_cliente()
         assert tela._filtro_vendedor.currentIndex() == 0 and tela._cpf_selecionado == cpf_novo
-        assert tela._campo_vendedor.text() == "ANA"
+        assert "Vendedor: ANA" in tela._sub_info.text()
         print("OK: editar e sair do filtro atual: filtros limpos e a ficha continua na tela.")
     finally:
         ClienteDialog.exec = original_exec

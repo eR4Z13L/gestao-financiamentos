@@ -59,6 +59,8 @@ _FRASE_CONTAGEM = {
     propostas_mod.ETAPA_NF_ANEXADA: ("com nota fiscal anexada", "com nota fiscal anexada"),
     propostas_mod.ETAPA_GARANTIA_ASSINADA: ("com garantia assinada", "com garantia assinada"),
     propostas_mod.ETAPA_EFETIVADO: ("efetivada", "efetivadas"),
+    propostas_mod.ETAPA_NAO_EFETIVADO: ("não efetivada", "não efetivadas"),
+    propostas_mod.ETAPA_PROPOSTA_ENCERRADA: ("encerrada", "encerradas"),
     propostas_mod.ETAPA_NEGADO: ("negada", "negadas"),
     propostas_mod.ETAPA_DESCONHECIDA: ("com status não reconhecido", "com status não reconhecido"),
     propostas_mod.ETAPA_SEM_STATUS: ("sem status", "sem status"),

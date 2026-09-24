@@ -62,6 +62,8 @@ _COR_POR_ETAPA = {
     propostas_mod.ETAPA_PRE_APROVADO: "pre_aprovado",
     propostas_mod.ETAPA_NF_ANEXADA: "nota_fiscal",
     propostas_mod.ETAPA_GARANTIA_ASSINADA: "garantia",
+    propostas_mod.ETAPA_NAO_EFETIVADO: "nao_efetivado",
+    propostas_mod.ETAPA_PROPOSTA_ENCERRADA: "encerrada",
 }
 
 

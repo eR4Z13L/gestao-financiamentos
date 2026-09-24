@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from desktop.widgets.encerrar_propostas_da_venda import perguntar_e_encerrar
 from desktop.widgets.formulario_proposta import FormularioProposta
 from desktop.widgets.lista_cartoes import RASCUNHO, ListaCartoes, ModeloCartoes
 
@@ -220,6 +221,7 @@ class ExpansorDeProposta(QObject):
         formulario.recolher_pedido.connect(self._ao_recolher_pedido)
         formulario.cancelada.connect(self._ao_cancelar_rascunho)
         formulario.duplicacao_pedida.connect(self._duplicar)
+        formulario.efetivada_agora.connect(self._ao_efetivar)
 
     # -- reacoes do formulario -----------------------------------------------------------
 
@@ -245,6 +247,12 @@ class ExpansorDeProposta(QObject):
             self._expandir_indice(origem)  # a duplicata era de uma proposta: volta pra leitura dela
         else:
             self._lista.setFocus()
+
+    def _ao_efetivar(self, cpf: str, equipamento: str, indice: int) -> None:
+        """Chega ANTES de `gravada` (ver o sinal em FormularioProposta): a lista/card ainda nao
+        foram recarregados, entao usamos `self._lista` (que sobrevive) como pai do dialogo, nunca
+        `self._formulario`."""
+        perguntar_e_encerrar(self._lista, cpf, equipamento, indice)
 
     def _ao_gravar(self) -> None:
         formulario = self._formulario

@@ -24,7 +24,13 @@ _FOLGA_ANTES_DO_NEGADO = 14
 _LARGURA_DO_ROTULO = 118
 _LARGURA_DO_NUMERO = 40
 _ALTURA_DA_BARRA = 14
-_ETAPAS_FORA_DO_FUNIL = (propostas_mod.ETAPA_NEGADO, propostas_mod.ETAPA_SEM_STATUS, propostas_mod.ETAPA_DESCONHECIDA)
+_ETAPAS_FORA_DO_FUNIL = (
+    propostas_mod.ETAPA_NAO_EFETIVADO,
+    propostas_mod.ETAPA_PROPOSTA_ENCERRADA,
+    propostas_mod.ETAPA_NEGADO,
+    propostas_mod.ETAPA_SEM_STATUS,
+    propostas_mod.ETAPA_DESCONHECIDA,
+)
 
 
 class FunilDeEtapas(UsaPaletaDoTema, QWidget):
