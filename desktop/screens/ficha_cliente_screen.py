@@ -164,7 +164,10 @@ class FichaClienteScreen(QWidget):
         super().__init__(parent)
 
         self._cpf_selecionado: str | None = None
-        self._modo_leitura_cliente = True  # False = dados do cliente (cabecalho/Contato/Pessoal) em edicao
+        self._modo_leitura_cliente = True  # False = dados do cliente (grade de campos) em edicao
+        self._dados_mostrar_vazios = False  # link "+N campos vazios" (campos NAO essenciais da grade)
+        self._endereco_estava_expandido = False  # lembrado ao forcar expandido durante a edicao (ver _aplicar_modo_edicao_cliente)
+        self._endereco_forcado_expandido = False
         self._historico_atual: pd.DataFrame = pd.DataFrame()  # valores "crus" (indice = posicao real no arquivo)
         # CPFs (so digitos) de quem tem proposta em aberto - pinta a bolinha nos cards de cliente.
         # Fica em cache: a lista e refeita a cada tecla da busca, e reler as propostas a cada
@@ -405,59 +408,18 @@ class FichaClienteScreen(QWidget):
         layout_cartao.setContentsMargins(16, 14, 16, 14)
         layout_cartao.setSpacing(10)
 
-        # -- cabecalho: avatar + nome + CPF/tipo/vendedor/cadastro numa linha pequena,
-        # Editar em destaque e "..." com Excluir (menos facil de clicar sem querer que
-        # um botao vermelho colado no Editar) -------------------------------------
+        # -- cabecalho: so avatar + nome + Editar/OK/Cancelar + "..." com Excluir (menos
+        # facil de clicar sem querer que um botao vermelho colado no Editar) - CPF, Tipo,
+        # Vendedor e Cadastrado em viraram campos DA GRADE, ver abaixo -----------------
         cabecalho_ficha = QHBoxLayout()
         cabecalho_ficha.setSpacing(12)
         self._avatar = _Avatar("")
         cabecalho_ficha.addWidget(self._avatar)
 
-        coluna_nome = QVBoxLayout()
-        coluna_nome.setSpacing(2)
-        # nome, CPF, Tipo e Vendedor sao campos DE VERDADE (nao QLabel) desde sempre - so
-        # ficam travados (somente leitura) fora do modo edicao, igual a proposta expandida
-        # (ver _aplicar_modo_edicao_cliente). Isso tambem tira o "espaco vazio" que a grade
-        # antiga deixava: os campos ocupam so a largura do proprio conteudo, lado a lado.
         self._campo_nome = QLineEdit()
         self._campo_nome.setProperty("role", "subtitulo")
         self._campo_nome.setReadOnly(True)
-        coluna_nome.addWidget(self._campo_nome)
-
-        linha_sub = QHBoxLayout()
-        linha_sub.setSpacing(4)
-        self._campo_cpf = QLineEdit()
-        self._campo_cpf.setProperty("role", "secundario")
-        self._campo_cpf.setReadOnly(True)
-        self._campo_cpf.setMaximumWidth(150)
-        conectar_mascara(self._campo_cpf, formatar_cpf_cnpj_parcial)
-        linha_sub.addWidget(self._campo_cpf)
-        self._botao_copiar_cpf = BotaoCopiar(lambda: self._cpf_selecionado or "")
-        linha_sub.addWidget(self._botao_copiar_cpf)
-
-        separador_tipo = QLabel("·")
-        separador_tipo.setProperty("role", "secundario")
-        linha_sub.addWidget(separador_tipo)
-        self._campo_tipo = ComboTravavel()
-        self._campo_tipo.addItems(clientes_mod.TIPO_OPCOES)
-        self._campo_tipo.definir_travado(True)
-        self._campo_tipo.setMaximumWidth(110)
-        linha_sub.addWidget(self._campo_tipo)
-
-        rotulo_vendedor = QLabel("· Vendedor:")
-        rotulo_vendedor.setProperty("role", "secundario")
-        linha_sub.addWidget(rotulo_vendedor)
-        self._campo_vendedor = ComboTravavel()
-        self._campo_vendedor.definir_travado(True)
-        self._campo_vendedor.setMaximumWidth(130)
-        linha_sub.addWidget(self._campo_vendedor)
-
-        self._rotulo_cadastro = QLabel("")  # "· Cliente desde DD/MM/AAAA" - nunca editavel
-        self._rotulo_cadastro.setProperty("role", "secundario")
-        linha_sub.addWidget(self._rotulo_cadastro)
-        linha_sub.addStretch(1)
-        coluna_nome.addLayout(linha_sub)
-        cabecalho_ficha.addLayout(coluna_nome, 1)
+        cabecalho_ficha.addWidget(self._campo_nome, 1)
 
         self._botao_editar_cliente = QPushButton("Editar")
         self._botao_editar_cliente.setProperty("role", "botao_primario")
@@ -492,47 +454,55 @@ class FichaClienteScreen(QWidget):
         self._resumo_label.setWordWrap(True)
         layout_cartao.addWidget(self._resumo_label)
 
-        # -- Contato: celular (com WhatsApp), e-mail e rede social clicaveis - a secao
-        # some inteira se os 3 estiverem vazios ------------------------------------
-        self._secao_contato = QWidget()
-        self._secao_contato.setProperty("role", "transparente")
-        coluna_contato = QVBoxLayout(self._secao_contato)
-        coluna_contato.setContentsMargins(0, 0, 0, 0)
-        coluna_contato.setSpacing(6)
-        titulo_contato = QLabel("Contato")
-        titulo_contato.setProperty("role", "titulo_secao")
-        coluna_contato.addWidget(titulo_contato)
+        # -- grade de dados: CPF/CNPJ, Nascimento, Tipo, Celular, E-mail, Vendedor, Rede
+        # social, Vinculado a, Cadastrado em, Nome do pai, Nome da mãe, Profissão - todos
+        # numa unica grade de 3 colunas (pedido do usuario, comparando com uma versao
+        # anterior do app). Cada campo e sempre o MESMO widget em leitura/edicao (so
+        # trava/destrava - ver _aplicar_modo_edicao_cliente), com a MESMA caixa nos dois
+        # modos. CPF/Nascimento/Tipo/Celular/E-mail/Vendedor/Cadastrado em sao
+        # "essenciais" (sempre visiveis, mesmo vazios); Rede social/Vinculado a/Nome do
+        # pai/Nome da mae/Profissao somem quando vazios em LEITURA (ver
+        # _reordenar_grade_dados) - os outros reocupam o lugar, sem deixar buraco.
+        self._grade_dados = self._nova_grade()
+        layout_cartao.addLayout(self._grade_dados)
 
-        # celular e e-mail LADO A LADO (cada um so metade da largura - antes esticavam
-        # a linha toda, deixando o botao de copiar/WhatsApp longe do valor); rede social
-        # embaixo dos dois, numa linha so pra ela
-        linha_principal = QHBoxLayout()
-        linha_principal.setSpacing(16)
+        self._campo_cpf = QLineEdit()
+        self._campo_cpf.setReadOnly(True)
+        self._campo_cpf.setMaximumWidth(150)
+        conectar_mascara(self._campo_cpf, formatar_cpf_cnpj_parcial)
+        wrap_cpf, self._botao_copiar_cpf = self._criar_campo_com_widget(
+            "CPF/CNPJ", self._campo_cpf, lambda: self._cpf_selecionado or ""
+        )
 
-        coluna_celular = QHBoxLayout()
-        coluna_celular.setSpacing(4)
+        self._campo_nascimento = CampoData()
+        self._campo_nascimento.definir_somente_leitura(True)
+        self._campo_nascimento.setMaximumWidth(140)  # só o tamanho de "dd/mm/aaaa" + o botão de calendário
+        wrap_nascimento, self._botao_copiar_nascimento = self._criar_campo_com_widget(
+            "Nascimento", self._campo_nascimento, lambda: self._campo_nascimento.texto()
+        )
+
+        self._campo_tipo = ComboTravavel()
+        self._campo_tipo.addItems(clientes_mod.TIPO_OPCOES)
+        self._campo_tipo.definir_travado(True)
+        wrap_tipo, _ = self._criar_campo_com_widget("Tipo", self._campo_tipo)
+
         self._campo_celular = QLineEdit()
         self._campo_celular.setReadOnly(True)
         self._campo_celular.setMaximumWidth(140)
         conectar_mascara(self._campo_celular, formatar_telefone_parcial)
-        coluna_celular.addWidget(self._campo_celular)
-        self._botao_copiar_celular = BotaoCopiar(lambda: self._campo_celular.text())
-        coluna_celular.addWidget(self._botao_copiar_celular)
         self._botao_whatsapp = QPushButton("WhatsApp")
         self._botao_whatsapp.setProperty("role", "botao_link")
         self._botao_whatsapp.clicked.connect(self._abrir_whatsapp)
-        coluna_celular.addWidget(self._botao_whatsapp)
-        coluna_celular.addStretch(1)
-        linha_principal.addLayout(coluna_celular, 1)
+        wrap_celular, self._botao_copiar_celular = self._criar_campo_com_widget(
+            "Celular", self._campo_celular, lambda: self._campo_celular.text(), extras=[self._botao_whatsapp]
+        )
 
         # e-mail: em LEITURA mostra um QLabel com link(s) clicavel(is) - o campo pode ter
         # mais de um endereco (ver _texto_com_link_de_email), cada um na sua linha; em
         # EDICAO vira QLineEdit comum. QLineEdit nao renderiza HTML/links, por isso os
         # dois modos precisam de widgets diferentes (trocados por um QStackedWidget) -
-        # mas o rotulo ganha a MESMA caixa do QLineEdit (role "campo_valor_caixa"), pro
-        # campo nao mudar de formato ao trocar entre leitura e edicao (pedido do usuario).
-        coluna_email = QHBoxLayout()
-        coluna_email.setSpacing(4)
+        # mas o rotulo ganha a MESMA caixa do QLineEdit (role "campo_valor" + propriedade
+        # "caixa"), pro campo nao mudar de formato ao trocar entre leitura e edicao.
         self._pilha_email = QStackedWidget()
         self._pilha_email.setProperty("role", "transparente")
         self._rotulo_email = self._criar_rotulo_valor()
@@ -542,61 +512,44 @@ class FichaClienteScreen(QWidget):
         self._campo_email.textChanged.connect(self._validar_email_ao_vivo_cliente)
         self._pilha_email.addWidget(self._rotulo_email)
         self._pilha_email.addWidget(self._campo_email)
-        coluna_email.addWidget(self._pilha_email, 1)
-        self._botao_copiar_email = BotaoCopiar(lambda: self._campo_email.text())
-        coluna_email.addWidget(self._botao_copiar_email)
-        linha_principal.addLayout(coluna_email, 1)
+        wrap_email, self._botao_copiar_email = self._criar_campo_com_widget(
+            "E-mail", self._pilha_email, lambda: self._campo_email.text()
+        )
 
-        coluna_contato.addLayout(linha_principal)
+        self._campo_vendedor = ComboTravavel()
+        self._campo_vendedor.definir_travado(True)
+        wrap_vendedor, _ = self._criar_campo_com_widget("Vendedor", self._campo_vendedor)
 
         # rede social: SEMPRE o mesmo QLineEdit (mostra o link/handle cru, igual editando)
         # - o botao do lado abre o link (mesmo padrao do WhatsApp), com o nome da rede
         # detectada ("Instagram ↗", "Facebook ↗"...); sem link reconhecido, o botao some
-        linha_rede_social = QHBoxLayout()
-        linha_rede_social.setSpacing(4)
         self._campo_rede_social = QLineEdit()
         self._campo_rede_social.setReadOnly(True)
         self._campo_rede_social.textChanged.connect(self._atualizar_botao_rede_social)
-        linha_rede_social.addWidget(self._campo_rede_social, 1)
-        self._botao_copiar_rede_social = BotaoCopiar(lambda: self._campo_rede_social.text())
-        linha_rede_social.addWidget(self._botao_copiar_rede_social)
         self._botao_abrir_rede_social = QPushButton("")
         self._botao_abrir_rede_social.setProperty("role", "botao_link")
         self._botao_abrir_rede_social.clicked.connect(self._abrir_rede_social)
         self._botao_abrir_rede_social.setVisible(False)
-        linha_rede_social.addWidget(self._botao_abrir_rede_social)
-        coluna_contato.addLayout(linha_rede_social)
-
-        layout_cartao.addWidget(self._secao_contato)
-
-        # -- Pessoal: nascimento, pai, mae, profissao, vinculado - os campos vazios
-        # (a maioria dos clientes so tem nascimento) ficam escondidos; o titulo da secao
-        # e um CabecalhoRetratil (mesma seta de "Endereço") que mostra/esconde os vazios -
-        # em vez de espalhar "—" pela tela ------------------------------------------
-        self._pessoal_mostrar_vazios = False
-        self._secao_pessoal = QWidget()
-        self._secao_pessoal.setProperty("role", "transparente")
-        coluna_pessoal = QVBoxLayout(self._secao_pessoal)
-        coluna_pessoal.setContentsMargins(0, 0, 0, 0)
-        coluna_pessoal.setSpacing(6)
-        self._cabecalho_pessoal = CabecalhoRetratil(
-            "Pessoal",
-            dica_expandir="Mostrar também os campos vazios",
-            dica_recolher="Ocultar campos vazios",
-            papel_do_titulo="titulo_secao",
+        wrap_rede_social, self._botao_copiar_rede_social = self._criar_campo_com_widget(
+            "Rede social", self._campo_rede_social, lambda: self._campo_rede_social.text(),
+            extras=[self._botao_abrir_rede_social],
         )
-        self._cabecalho_pessoal.toggled.connect(self._ao_alternar_pessoal_vazios)
-        coluna_pessoal.addWidget(self._cabecalho_pessoal)
 
-        grade_pessoal = self._nova_grade()
-        coluna_pessoal.addLayout(grade_pessoal)
-        self._grade_pessoal = grade_pessoal
-        self._campo_nascimento = CampoData()
-        self._campo_nascimento.definir_somente_leitura(True)
-        self._campo_nascimento.setMaximumWidth(140)  # só o tamanho de "dd/mm/aaaa" + o botão de calendário
-        self._pessoal_wrap_nascimento, self._botao_copiar_nascimento = self._criar_campo_com_widget(
-            "Nascimento", self._campo_nascimento, lambda: self._campo_nascimento.texto()
+        self._campo_vinculado = QLineEdit()
+        self._campo_vinculado.setReadOnly(True)
+        self._campo_vinculado.setPlaceholderText("—")
+        self._campo_vinculado.setMaximumWidth(220)
+        wrap_vinculado, self._botao_copiar_vinculado = self._criar_campo_com_widget(
+            "Vinculado a", self._campo_vinculado, lambda: self._campo_vinculado.text()
         )
+
+        self._rotulo_cadastro = QLabel("—")  # nunca editavel - a data e gravada so no cadastro
+        self._rotulo_cadastro.setProperty("role", "campo_valor")
+        self._rotulo_cadastro.setProperty("caixa", True)
+        wrap_cadastro, self._botao_copiar_cadastro = self._criar_campo_com_widget(
+            "Cadastrado em", self._rotulo_cadastro, lambda: self._rotulo_cadastro.text()
+        )
+
         self._campo_nome_pai = QLineEdit()
         self._campo_nome_pai.setReadOnly(True)
         self._campo_nome_pai.setPlaceholderText("—")
@@ -618,21 +571,26 @@ class FichaClienteScreen(QWidget):
         wrap_profissao, self._botao_copiar_profissao = self._criar_campo_com_widget(
             "Profissão", self._campo_profissao, lambda: self._campo_profissao.text()
         )
-        self._campo_vinculado = QLineEdit()
-        self._campo_vinculado.setReadOnly(True)
-        self._campo_vinculado.setPlaceholderText("—")
-        self._campo_vinculado.setMaximumWidth(220)
-        wrap_vinculado, self._botao_copiar_vinculado = self._criar_campo_com_widget(
-            "Vinculado a", self._campo_vinculado, lambda: self._campo_vinculado.text()
-        )
-        # nascimento fica sempre visivel (e o campo mais comum de existir, ancora a
-        # secao); so os outros 4 somem quando vazios. A grade so recebe os widgets de
-        # verdade em _reordenar_grade_pessoal - remontada a cada mudanca, pra um campo
-        # escondido nunca deixar buraco na posicao fixa que ele teria (ver o metodo).
-        self._pessoal_todos_campos = [self._pessoal_wrap_nascimento, wrap_pai, wrap_mae, wrap_profissao, wrap_vinculado]
-        self._pessoal_campos_opcionais = [wrap_pai, wrap_mae, wrap_profissao, wrap_vinculado]
 
-        layout_cartao.addWidget(self._secao_pessoal)
+        # ordem de exibicao (linha 1: CPF/Nascimento/Tipo; linha 2: Celular/E-mail/
+        # Vendedor; linha 3: Rede social/Vinculado a/Cadastrado em; linha 4: pai/mae/
+        # profissao) - a grade so recebe os widgets de verdade em _reordenar_grade_dados,
+        # remontada a cada mudanca, pra um campo escondido nunca deixar buraco na posicao
+        # fixa que ele teria.
+        self._campos_essenciais_dados = [wrap_cpf, wrap_nascimento, wrap_tipo, wrap_celular, wrap_email, wrap_vendedor, wrap_cadastro]
+        self._campos_opcionais_dados = [wrap_rede_social, wrap_vinculado, wrap_pai, wrap_mae, wrap_profissao]
+        self._todos_campos_dados = [
+            wrap_cpf, wrap_nascimento, wrap_tipo,
+            wrap_celular, wrap_email, wrap_vendedor,
+            wrap_rede_social, wrap_vinculado, wrap_cadastro,
+            wrap_pai, wrap_mae, wrap_profissao,
+        ]
+
+        self._link_dados_vazios = QLabel("")
+        self._link_dados_vazios.setProperty("role", "link_discreto")
+        self._link_dados_vazios.setTextFormat(Qt.TextFormat.RichText)
+        self._link_dados_vazios.linkActivated.connect(self._ao_clicar_link_dados_vazios)
+        layout_cartao.addWidget(self._link_dados_vazios)
 
         # -- Endereco: o mesmo widget retratil de sempre, agora como secao propria
         # (nao mais numa grade compartilhada com os outros campos) -------------------
@@ -647,10 +605,14 @@ class FichaClienteScreen(QWidget):
         linha_legenda_endereco.addWidget(self._cabecalho_endereco)
         linha_legenda_endereco.addStretch()
 
+        # contorno igual aos outros campos (pedido do usuario) - a caixa fica no
+        # CONTENTOR (WA_StyledBackground, senao um QWidget comum nao pinta borda de QSS),
+        # nao no RotuloUmaLinha: o sizeHint dele mede so o texto, sem contar padding/borda
         self._endereco_resumo = QWidget()
-        self._endereco_resumo.setProperty("role", "transparente")  # sem fundo proprio: nada de faixa atras do campo
+        self._endereco_resumo.setProperty("role", "caixa_campo")
+        self._endereco_resumo.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         linha_resumo, self._campo_endereco_completo = self._linha_copiavel_compacta()
-        linha_resumo.setContentsMargins(0, 0, 0, 0)
+        linha_resumo.setContentsMargins(8, 6, 8, 6)
         self._endereco_resumo.setLayout(linha_resumo)
 
         self._secao_endereco = QWidget()
@@ -758,15 +720,17 @@ class FichaClienteScreen(QWidget):
 
     @staticmethod
     def _criar_campo_com_widget(
-        titulo: str, widget: QWidget, copiar: Callable[[], str] | None = None
+        titulo: str, widget: QWidget, copiar: Callable[[], str] | None = None, extras: list[QWidget] | None = None
     ) -> tuple[QWidget, BotaoCopiar | None]:
-        """Legenda + um widget de valor JÁ PRONTO (QLineEdit, CampoData...) - usado pelos
-        campos editáveis da seção Pessoal (o valor edita e trava/destrava, a legenda nunca
-        muda). `copiar`: se passado, põe um BotaoCopiar do lado (só aparece em leitura -
-        ver _aplicar_modo_edicao_cliente). Devolve (o wrapper INTEIRO - legenda incluída,
-        pra poder esconder o par quando o valor estiver vazio e reposicionar os que
-        sobraram sem deixar buraco, ver a seção "Pessoal" e _reordenar_grade_pessoal - e
-        o botão de copiar, ou None se `copiar` não foi passado)."""
+        """Legenda + um widget de valor JÁ PRONTO (QLineEdit, CampoData, ComboTravavel...)
+        - usado por todos os campos da grade de dados da Ficha (o valor edita e trava/
+        destrava, a legenda nunca muda). `copiar`: se passado, põe um BotaoCopiar do lado
+        (só aparece em leitura - ver _aplicar_modo_edicao_cliente). `extras`: outros
+        widgets pra por depois do botão de copiar (ex.: o botão "WhatsApp" do celular, ou
+        o de abrir a rede social). Devolve (o wrapper INTEIRO - legenda incluída, pra
+        poder esconder o par quando o valor estiver vazio e reposicionar os que sobraram
+        sem deixar buraco, ver _reordenar_grade_dados - e o botão de copiar, ou None se
+        `copiar` não foi passado)."""
         wrapper = QWidget()
         wrapper.setProperty("role", "transparente")
         caixa = QVBoxLayout(wrapper)
@@ -775,14 +739,18 @@ class FichaClienteScreen(QWidget):
         legenda = QLabel(titulo)
         legenda.setProperty("role", "campo_rotulo")
         caixa.addWidget(legenda)
-        if copiar is None:
+        if copiar is None and not extras:
             caixa.addWidget(widget)
             return wrapper, None
         linha = QHBoxLayout()
         linha.setSpacing(4)
         linha.addWidget(widget, 1)
-        botao = BotaoCopiar(copiar)
-        linha.addWidget(botao)
+        botao = None
+        if copiar is not None:
+            botao = BotaoCopiar(copiar)
+            linha.addWidget(botao)
+        for extra in extras or []:
+            linha.addWidget(extra)
         caixa.addLayout(linha)
         return wrapper, botao
 
@@ -794,6 +762,7 @@ class FichaClienteScreen(QWidget):
         _definir_valor_copiavel), nunca o que aparece no QLabel: la o texto
         tem "—" quando vazio e pontos de quebra invisiveis (texto_quebravel)."""
         valor = FichaClienteScreen._criar_rotulo_valor()
+        valor.setProperty("caixa", True)  # mesmo contorno dos outros campos (pedido do usuario)
         botao = BotaoCopiar(lambda: valor.property("texto_cru") or "")
         linha = QHBoxLayout()
         linha.setSpacing(4)
@@ -812,7 +781,11 @@ class FichaClienteScreen(QWidget):
         botao = BotaoCopiar(lambda: valor.property("texto_cru") or "")
         linha = QHBoxLayout()
         linha.setSpacing(4)
-        linha.addWidget(valor, alignment=Qt.AlignmentFlag.AlignVCenter)
+        # AlignLeft explicito (alem do AlignVCenter): deixa claro que o valor NUNCA deve
+        # esticar pra preencher a linha - e o addStretch(1) no fim que ocupa o resto,
+        # nao o rotulo (e exatamente a "barra pela largura toda" que este metodo existe
+        # pra evitar, ver docstring)
+        linha.addWidget(valor, alignment=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         linha.addWidget(botao, alignment=Qt.AlignmentFlag.AlignVCenter)
         linha.addStretch(1)
         return linha, valor
@@ -903,53 +876,66 @@ class FichaClienteScreen(QWidget):
         if link is not None:
             QDesktopServices.openUrl(QUrl(link[1]))
 
-    # -- Pessoal: campos vazios escondidos atras da seta do titulo da secao ---
+    # -- grade de dados: campos NAO essenciais vazios ficam escondidos atras do link ---
 
     @staticmethod
-    def _definir_campo_pessoal(wrapper: QWidget, campo: QLineEdit, texto: str) -> None:
+    def _definir_campo_opcional(wrapper: QWidget, campo: QLineEdit, texto: str) -> None:
         limpo = (texto or "").strip()
         wrapper.setProperty("vazio", not limpo)
         campo.setText(limpo)
+        # setText() deixa o cursor no FIM - num campo estreito (a grade so tem 1/3 da
+        # largura do card), um texto comprido apareceria cortado pelo começo em vez do
+        # fim; volta o cursor pro inicio, pra sempre mostrar o começo do texto
+        campo.setCursorPosition(0)
 
-    def _ao_alternar_pessoal_vazios(self, mostrar: bool) -> None:
-        self._pessoal_mostrar_vazios = mostrar
-        self._atualizar_visibilidade_pessoal()
+    def _ao_clicar_link_dados_vazios(self, _href: str = "") -> None:
+        self._dados_mostrar_vazios = not self._dados_mostrar_vazios
+        self._atualizar_visibilidade_dados()
 
-    def _reordenar_grade_pessoal(self) -> None:
-        """Remonta a grade só com os campos visíveis, em ordem (Nascimento primeiro,
-        sempre; os outros só quando têm valor, "mostrar vazios" estiver ligado, OU o
-        card estiver em EDIÇÃO - editar exige ver todos os campos, mesmo vazios),
-        preenchendo 3 por linha sem pular posição - diferente de só chamar setVisible(),
-        isso nunca deixa buraco onde um campo escondido estaria (ex.: "Vinculado a"
-        flutuando sozinho, deslocado, quando os campos antes dele na grade estão vazios)."""
-        mostrar_tudo = self._pessoal_mostrar_vazios or not self._modo_leitura_cliente
-        visiveis = [self._pessoal_wrap_nascimento] + [
-            w for w in self._pessoal_campos_opcionais if mostrar_tudo or not w.property("vazio")
+    def _reordenar_grade_dados(self) -> None:
+        """Remonta a grade só com os campos visíveis, na ORDEM de exibição (campos
+        essenciais sempre entram; os NÃO essenciais só quando têm valor, "mostrar
+        vazios" estiver ligado, OU o card estiver em EDIÇÃO - editar exige ver todos,
+        mesmo vazios), preenchendo 3 por linha sem pular posição - diferente de só
+        chamar setVisible(), isso nunca deixa buraco onde um campo escondido estaria
+        (os campos depois dele reocupam o lugar)."""
+        mostrar_tudo = self._dados_mostrar_vazios or not self._modo_leitura_cliente
+        essenciais = set(self._campos_essenciais_dados)
+        visiveis = [
+            w for w in self._todos_campos_dados
+            if w in essenciais or mostrar_tudo or not w.property("vazio")
         ]
-        for wrapper in self._pessoal_todos_campos:
-            self._grade_pessoal.removeWidget(wrapper)
+        for wrapper in self._todos_campos_dados:
+            self._grade_dados.removeWidget(wrapper)
         for indice, wrapper in enumerate(visiveis):
-            self._grade_pessoal.addWidget(wrapper, indice // 3, indice % 3)
+            self._grade_dados.addWidget(wrapper, indice // 3, indice % 3)
             wrapper.setVisible(True)
-        for wrapper in self._pessoal_todos_campos:
+        for wrapper in self._todos_campos_dados:
             if wrapper not in visiveis:
                 wrapper.setVisible(False)
 
-    def _atualizar_visibilidade_pessoal(self) -> None:
-        self._reordenar_grade_pessoal()
-        # a seta reflete o estado de verdade: aberta quando tudo esta mostrado (por
-        # escolha, ou porque esta editando - edicao sempre mostra tudo, ver _reordenar_grade_pessoal)
-        mostrar_tudo = self._pessoal_mostrar_vazios or not self._modo_leitura_cliente
-        self._cabecalho_pessoal.blockSignals(True)
-        self._cabecalho_pessoal.setChecked(mostrar_tudo)
-        self._cabecalho_pessoal.blockSignals(False)
+    def _atualizar_visibilidade_dados(self) -> None:
+        self._reordenar_grade_dados()
+        vazios = [w for w in self._campos_opcionais_dados if w.property("vazio")]
+        if not vazios or not self._modo_leitura_cliente:
+            self._link_dados_vazios.setVisible(False)
+            return
+        self._link_dados_vazios.setVisible(True)
+        if self._dados_mostrar_vazios:
+            texto = "Ocultar campos vazios"
+        else:
+            plural = len(vazios) != 1
+            texto = f"+ {len(vazios)} campo{'s' if plural else ''} vazio{'s' if plural else ''}"
+        self._link_dados_vazios.setText(f'<a href="#">{texto}</a>')
 
     # -- endereco retratil, rolagem do painel --------------------------------
 
     def _ao_alternar_endereco(self, expandido: bool) -> None:
         """Retraido: o endereco numa linha (com copiar). Expandido: os 7 campos,
         cada um com o seu copiar. A escolha vale pra qualquer cliente que se abra
-        depois (e uma preferencia de visualizacao, nao um dado do cliente)."""
+        depois (e uma preferencia de visualizacao, nao um dado do cliente) - EXCETO
+        durante a edicao do cliente, que forca expandido (ver _aplicar_modo_edicao_cliente:
+        "so mostrar o endereco em campos separados" ao editar)."""
         self._endereco_resumo.setVisible(not expandido)
         self._endereco_campos.setVisible(expandido)
         if expandido:
@@ -1122,12 +1108,12 @@ class FichaClienteScreen(QWidget):
         # QLabel) nao se aplica mais aqui, e sujaria o texto de verdade do campo
         self._campo_nome.setText(cliente["CLIENTE"])
         self._campo_cpf.setText(cliente["CPF/CNPJ"])
+        self._campo_cpf.setCursorPosition(0)  # CNPJ formatado pode nao caber inteiro na caixa compacta
 
         self._definir_texto_tipo(cliente["TIPO"])
         self._recarregar_vendedores_do_cabecalho(cliente["VENDEDOR"] or "")
 
-        cadastro = formatar_data(cliente.get("DATA CADASTRO"))
-        self._rotulo_cadastro.setText(f"· Cliente desde {cadastro}" if cadastro != "—" else "")
+        self._rotulo_cadastro.setText(formatar_data(cliente.get("DATA CADASTRO")))
 
         resumo = _resumo_do_cliente(historico)
         if resumo["total"] == 0:
@@ -1154,21 +1140,24 @@ class FichaClienteScreen(QWidget):
         email = cliente["EMAIL"] or ""
         self._rotulo_email.setText(self._texto_com_link_de_email(email))
         self._campo_email.setText(email)
+        self._campo_email.setCursorPosition(0)  # mostra o começo, nao o fim de um e-mail comprido
+
+        # campos_opcionais_dados = [rede_social, vinculado, pai, mae, profissao] - ordem
+        # em que foram criados (ver _construir_pagina_ficha)
         rede_social = cliente["REDE SOCIAL"] or ""
-        self._campo_rede_social.setText(rede_social)  # o botao de abrir se atualiza sozinho (textChanged)
-        self._secao_contato.setVisible(bool(celular.strip() or email.strip() or rede_social.strip()))
+        self._definir_campo_opcional(self._campos_opcionais_dados[0], self._campo_rede_social, rede_social)
+        self._definir_campo_opcional(self._campos_opcionais_dados[1], self._campo_vinculado, cliente["VINCULADO"])
+        self._definir_campo_opcional(self._campos_opcionais_dados[2], self._campo_nome_pai, cliente["NOME DO PAI"])
+        self._definir_campo_opcional(self._campos_opcionais_dados[3], self._campo_nome_mae, cliente["NOME DA MÃE"])
+        self._definir_campo_opcional(self._campos_opcionais_dados[4], self._campo_profissao, cliente["PROFISSÃO"])
 
         nascimento_atual = cliente.get("NASCIMENTO")
         if isinstance(nascimento_atual, pd.Timestamp) and not pd.isna(nascimento_atual):
             self._campo_nascimento.definir_data(QDate(nascimento_atual.year, nascimento_atual.month, nascimento_atual.day))
         else:
             self._campo_nascimento.limpar()
-        self._definir_campo_pessoal(self._pessoal_campos_opcionais[0], self._campo_nome_pai, cliente["NOME DO PAI"])
-        self._definir_campo_pessoal(self._pessoal_campos_opcionais[1], self._campo_nome_mae, cliente["NOME DA MÃE"])
-        self._definir_campo_pessoal(self._pessoal_campos_opcionais[2], self._campo_profissao, cliente["PROFISSÃO"])
-        self._definir_campo_pessoal(self._pessoal_campos_opcionais[3], self._campo_vinculado, cliente["VINCULADO"])
-        self._pessoal_mostrar_vazios = False
-        self._atualizar_visibilidade_pessoal()
+        self._dados_mostrar_vazios = False
+        self._atualizar_visibilidade_dados()
 
         self._definir_valor_copiavel(self._campo_cep, cliente["CEP"])
         self._definir_valor_copiavel(self._campo_logradouro, cliente["LOGRADOURO"])
@@ -1336,13 +1325,14 @@ class FichaClienteScreen(QWidget):
         self._campo_vendedor.blockSignals(False)
 
     def _aplicar_modo_edicao_cliente(self, leitura: bool) -> None:
-        """Trava/destrava o cabecalho + Contato + Pessoal (nao mexe no Endereco - esse
-        continua so leitura por enquanto). O mesmo padrao de FormularioProposta: o campo
-        e sempre o MESMO widget, so alterna somente-leitura - inclusive visualmente: o
-        campo mantem a MESMA caixa em leitura e edicao (pedido do usuario), so o cursor/
-        possibilidade de digitar muda. E-mail e excecao (vira um QLabel com link em
-        leitura - ver _pilha_email; a caixa dele usa role "campo_valor_caixa" pra parecer
-        igual ao QLineEdit)."""
+        """Trava/destrava a grade de dados do cliente (Endereco tem sua propria regra -
+        ver abaixo). O mesmo padrao de FormularioProposta: o campo e sempre o MESMO
+        widget, so alterna somente-leitura - inclusive visualmente: o campo mantem a
+        MESMA caixa em leitura e edicao (pedido do usuario), so o cursor/possibilidade
+        de digitar muda. E-mail e excecao (vira um QLabel com link em leitura - ver
+        _pilha_email; a caixa dele usa role "campo_valor" + propriedade "caixa" pra
+        parecer igual ao QLineEdit). "Cadastrado em" nunca fica editavel (a data e
+        gravada so no cadastro - ver _salvar_edicao_cliente)."""
         self._modo_leitura_cliente = leitura
         for campo in (
             self._campo_nome, self._campo_cpf, self._campo_celular, self._campo_rede_social,
@@ -1360,6 +1350,7 @@ class FichaClienteScreen(QWidget):
             self._botao_copiar_cpf, self._botao_copiar_celular, self._botao_copiar_email,
             self._botao_copiar_rede_social, self._botao_copiar_nascimento, self._botao_copiar_pai,
             self._botao_copiar_mae, self._botao_copiar_profissao, self._botao_copiar_vinculado,
+            self._botao_copiar_cadastro,
         ):
             botao.setVisible(leitura)
 
@@ -1368,11 +1359,26 @@ class FichaClienteScreen(QWidget):
         self._botao_cancelar_cliente.setVisible(not leitura)
         self._botao_menu_cliente.setVisible(leitura)  # excluir cliente no meio de uma edicao nao faz sentido
 
+        # Endereco: "so mostrar em campos separados" ao editar (pedido do usuario) - forca
+        # expandido e trava o retratil, lembrando o estado de antes pra devolver ao sair
+        # da edicao (a escolha retraido/expandido e uma preferencia do usuario, nao um
+        # dado do cliente - nao pode "vazar" um forcado pra fora da edicao)
+        if leitura:
+            if self._endereco_forcado_expandido:
+                self._cabecalho_endereco.setChecked(self._endereco_estava_expandido)
+                self._endereco_forcado_expandido = False
+            self._cabecalho_endereco.setEnabled(True)
+        else:
+            self._endereco_estava_expandido = self._cabecalho_endereco.isChecked()
+            self._endereco_forcado_expandido = True
+            self._cabecalho_endereco.setChecked(True)
+            self._cabecalho_endereco.setEnabled(False)
+
         if leitura:
             for campo in (self._campo_nome, self._campo_cpf, self._campo_email):
                 limpar_invalido(campo)
             limpar_invalido(self._campo_nascimento.campo)
-        self._atualizar_visibilidade_pessoal()  # editando, mostra TODOS os campos de Pessoal (mesmo vazios)
+        self._atualizar_visibilidade_dados()  # editando, mostra TODOS os campos (mesmo vazios)
 
     def _alternar_edicao_cliente(self) -> None:
         if not self._cpf_selecionado:

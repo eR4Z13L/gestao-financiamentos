@@ -392,6 +392,14 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         border-radius: 6px;
         padding: 6px 8px;
     }}
+    /* mesma caixa, mas pra um CONTENTOR (QWidget) em vez de um campo/rotulo de valor -
+       ex.: o endereco retraido (RotuloUmaLinha, cujo sizeHint so mede o texto, sem
+       padding/borda) - o widget precisa de WA_StyledBackground pra essa regra valer */
+    QWidget[role="caixa_campo"] {{
+        background-color: {p['bg_card']};
+        border: 1px solid {p['borda']};
+        border-radius: 6px;
+    }}
 
     /* combo travado (ver desktop/widgets/combo_travavel.py): sem a seta de
        abrir a lista - ela nao faria nada */
