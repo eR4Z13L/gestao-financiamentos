@@ -525,16 +525,18 @@ class FichaClienteScreen(QWidget):
         coluna_celular.addStretch(1)
         linha_principal.addLayout(coluna_celular, 1)
 
-        # e-mail: em LEITURA mostra um QLabel com link(s) clicavel(is) (o campo pode ter
-        # mais de um endereco - ver _texto_com_link_de_email); em EDICAO vira QLineEdit
-        # comum. QLineEdit nao renderiza HTML/links, por isso os dois modos precisam de
-        # widgets diferentes (unico caso na ficha que nao e so travar/destravar o MESMO
-        # campo, como o resto) - trocados por um QStackedWidget. Rede social e igual.
+        # e-mail: em LEITURA mostra um QLabel com link(s) clicavel(is) - o campo pode ter
+        # mais de um endereco (ver _texto_com_link_de_email), cada um na sua linha; em
+        # EDICAO vira QLineEdit comum. QLineEdit nao renderiza HTML/links, por isso os
+        # dois modos precisam de widgets diferentes (trocados por um QStackedWidget) -
+        # mas o rotulo ganha a MESMA caixa do QLineEdit (role "campo_valor_caixa"), pro
+        # campo nao mudar de formato ao trocar entre leitura e edicao (pedido do usuario).
         coluna_email = QHBoxLayout()
         coluna_email.setSpacing(4)
         self._pilha_email = QStackedWidget()
         self._pilha_email.setProperty("role", "transparente")
         self._rotulo_email = self._criar_rotulo_valor()
+        self._rotulo_email.setProperty("caixa", True)
         self._preparar_rotulo_com_link(self._rotulo_email)
         self._campo_email = QLineEdit()
         self._campo_email.textChanged.connect(self._validar_email_ao_vivo_cliente)
@@ -547,18 +549,22 @@ class FichaClienteScreen(QWidget):
 
         coluna_contato.addLayout(linha_principal)
 
+        # rede social: SEMPRE o mesmo QLineEdit (mostra o link/handle cru, igual editando)
+        # - o botao do lado abre o link (mesmo padrao do WhatsApp), com o nome da rede
+        # detectada ("Instagram ↗", "Facebook ↗"...); sem link reconhecido, o botao some
         linha_rede_social = QHBoxLayout()
         linha_rede_social.setSpacing(4)
-        self._pilha_rede_social = QStackedWidget()
-        self._pilha_rede_social.setProperty("role", "transparente")
-        self._rotulo_rede_social = self._criar_rotulo_valor()
-        self._preparar_rotulo_com_link(self._rotulo_rede_social)
         self._campo_rede_social = QLineEdit()
-        self._pilha_rede_social.addWidget(self._rotulo_rede_social)
-        self._pilha_rede_social.addWidget(self._campo_rede_social)
-        linha_rede_social.addWidget(self._pilha_rede_social, 1)
+        self._campo_rede_social.setReadOnly(True)
+        self._campo_rede_social.textChanged.connect(self._atualizar_botao_rede_social)
+        linha_rede_social.addWidget(self._campo_rede_social, 1)
         self._botao_copiar_rede_social = BotaoCopiar(lambda: self._campo_rede_social.text())
         linha_rede_social.addWidget(self._botao_copiar_rede_social)
+        self._botao_abrir_rede_social = QPushButton("")
+        self._botao_abrir_rede_social.setProperty("role", "botao_link")
+        self._botao_abrir_rede_social.clicked.connect(self._abrir_rede_social)
+        self._botao_abrir_rede_social.setVisible(False)
+        linha_rede_social.addWidget(self._botao_abrir_rede_social)
         coluna_contato.addLayout(linha_rede_social)
 
         layout_cartao.addWidget(self._secao_contato)
@@ -844,8 +850,8 @@ class FichaClienteScreen(QWidget):
     @staticmethod
     def _preparar_rotulo_com_link(rotulo: QLabel) -> None:
         """Deixa `rotulo` pronto pra mostrar um link clicavel quando o texto vier com
-        HTML (ver _texto_com_link_de_email/_texto_com_link_de_rede_social) - texto puro
-        ("—", sem valor) continua aparecendo normal."""
+        HTML (ver _texto_com_link_de_email) - texto puro ("—", sem valor) continua
+        aparecendo normal."""
         rotulo.setTextFormat(Qt.TextFormat.RichText)
         rotulo.setOpenExternalLinks(True)
         rotulo.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -877,21 +883,25 @@ class FichaClienteScreen(QWidget):
             linhas.append(texto_quebravel(sobra))
         return "<br>".join(linhas)
 
-    @staticmethod
-    def _texto_com_link_de_rede_social(bruto: str) -> str:
-        limpo = (bruto or "").strip()
-        if not limpo:
-            return "—"
-        link = _link_da_rede_social(limpo)
-        if link is None:
-            return texto_quebravel(limpo)  # handle solto ("@fulano"), sem link: nunca inventa destino
-        rotulo, url = link
-        return f'<a href="{url}">{rotulo} ↗</a>'
-
     def _abrir_whatsapp(self) -> None:
         numero = self._botao_whatsapp.property("numero_whatsapp")
         if numero:
             QDesktopServices.openUrl(QUrl(f"https://wa.me/{numero}"))
+
+    def _atualizar_botao_rede_social(self, texto: str) -> None:
+        """O botao mostra o nome da rede detectada ("Instagram ↗", "Facebook ↗"...) e some
+        quando o texto nao parece um link de verdade - mesmo padrao do WhatsApp ao lado
+        do celular, so que a rede muda de acordo com o link (varias sao reconhecidas, ver
+        _REDES_CONHECIDAS)."""
+        link = _link_da_rede_social(texto)
+        self._botao_abrir_rede_social.setVisible(link is not None)
+        if link is not None:
+            self._botao_abrir_rede_social.setText(f"{link[0]} ↗")
+
+    def _abrir_rede_social(self) -> None:
+        link = _link_da_rede_social(self._campo_rede_social.text())
+        if link is not None:
+            QDesktopServices.openUrl(QUrl(link[1]))
 
     # -- Pessoal: campos vazios escondidos atras da seta do titulo da secao ---
 
@@ -1145,8 +1155,7 @@ class FichaClienteScreen(QWidget):
         self._rotulo_email.setText(self._texto_com_link_de_email(email))
         self._campo_email.setText(email)
         rede_social = cliente["REDE SOCIAL"] or ""
-        self._rotulo_rede_social.setText(self._texto_com_link_de_rede_social(rede_social))
-        self._campo_rede_social.setText(rede_social)
+        self._campo_rede_social.setText(rede_social)  # o botao de abrir se atualiza sozinho (textChanged)
         self._secao_contato.setVisible(bool(celular.strip() or email.strip() or rede_social.strip()))
 
         nascimento_atual = cliente.get("NASCIMENTO")
@@ -1329,31 +1338,23 @@ class FichaClienteScreen(QWidget):
     def _aplicar_modo_edicao_cliente(self, leitura: bool) -> None:
         """Trava/destrava o cabecalho + Contato + Pessoal (nao mexe no Endereco - esse
         continua so leitura por enquanto). O mesmo padrao de FormularioProposta: o campo
-        e sempre o MESMO widget, so alterna somente-leitura; email/rede social sao
-        excecao (viram um QLabel com link em leitura - ver _pilha_email/_pilha_rede_social)."""
+        e sempre o MESMO widget, so alterna somente-leitura - inclusive visualmente: o
+        campo mantem a MESMA caixa em leitura e edicao (pedido do usuario), so o cursor/
+        possibilidade de digitar muda. E-mail e excecao (vira um QLabel com link em
+        leitura - ver _pilha_email; a caixa dele usa role "campo_valor_caixa" pra parecer
+        igual ao QLineEdit)."""
         self._modo_leitura_cliente = leitura
-        for campo in (self._campo_email, self._campo_rede_social):
-            campo.setReadOnly(leitura)
-        # os de baixo, alem de travar, precisam de "travado" pro QSS: um QLineEdit ja
-        # tem caixa por padrao (bom pra editar), mas travado ele deve parecer um valor
-        # comum do card, sem caixa - ver QLineEdit[travado="true"] em desktop/theme.py
         for campo in (
-            self._campo_nome, self._campo_cpf, self._campo_celular,
+            self._campo_nome, self._campo_cpf, self._campo_celular, self._campo_rede_social,
             self._campo_nome_pai, self._campo_nome_mae, self._campo_profissao, self._campo_vinculado,
         ):
             campo.setReadOnly(leitura)
-            campo.setProperty("travado", leitura)
-            campo.style().unpolish(campo)
-            campo.style().polish(campo)
+        self._campo_email.setReadOnly(leitura)
         self._campo_nascimento.definir_somente_leitura(leitura)
-        self._campo_nascimento.campo.setProperty("travado", leitura)
-        self._campo_nascimento.campo.style().unpolish(self._campo_nascimento.campo)
-        self._campo_nascimento.campo.style().polish(self._campo_nascimento.campo)
         self._campo_tipo.definir_travado(leitura)
         self._campo_vendedor.definir_travado(leitura)
 
         self._pilha_email.setCurrentIndex(0 if leitura else 1)
-        self._pilha_rede_social.setCurrentIndex(0 if leitura else 1)
 
         for botao in (
             self._botao_copiar_cpf, self._botao_copiar_celular, self._botao_copiar_email,

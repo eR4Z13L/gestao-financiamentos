@@ -347,13 +347,13 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         assert largura_minima < 1100, f"minimumSizeHint ficou grande demais ({largura_minima}px) - layout vai estourar a tela"
         print(f"OK: minimumSizeHint da ficha com URL longa em Rede Social e Observações ficou em {largura_minima}px (< 1100px).")
 
-        # a Rede Social agora mostra um LINK CURTO (domínio + seta), nunca a URL crua -
-        # isso já evita a URL comprida esticar o layout sozinha; mas o link precisa
-        # continuar levando pro endereço INTEIRO (nada cortado no href)
-        html_rede_social = tela._rotulo_rede_social.text()
-        assert "maapp.com.br ↗" in html_rede_social, "rede social deveria mostrar um link curto, não a URL crua"
-        assert url_longa in html_rede_social, "o link precisa continuar apontando pro endereço completo (href)"
-        print("OK: a Rede Social mostra um link curto ('maapp.com.br ↗'), mas continua apontando pro endereço completo.")
+        # a Rede Social mostra a URL crua no campo (como QLineEdit, não estica o layout -
+        # ele rola por dentro, ao contrário de um QLabel com word-wrap); o botão do lado
+        # mostra um link CURTO (domínio + seta), que precisa continuar levando pro
+        # endereço INTEIRO
+        assert tela._campo_rede_social.text() == url_longa, "o campo deveria mostrar a URL exata, como foi digitada"
+        assert tela._botao_abrir_rede_social.text() == "maapp.com.br ↗", "o botão deveria mostrar um link curto, não a URL crua"
+        print("OK: a Rede Social mostra a URL crua no campo, com um botão de link curto ('maapp.com.br ↗') do lado.")
 
         if not historico.empty:
             # os cards do historico nao mostram as observacoes (ficam na tela de leitura da proposta):

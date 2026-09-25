@@ -381,13 +381,16 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QPlainTextEdit[travado="true"] {{
         padding: 1px 4px;  /* o texto ja tem uns 4px de margem propria */
     }}
-    /* QLineEdit travado (cabecalho/Contato/Pessoal da Ficha de Cliente em modo LEITURA -
-       ver desktop/screens/ficha_cliente_screen.py): ao contrario do bloco acima, aqui e o
-       INVERSO - o QLineEdit ja tem caixa por padrao (regra la em cima), e travado ele deve
-       parecer um valor comum do card, sem caixa; destravando pra editar, a caixa volta */
-    QLineEdit[travado="true"] {{
-        background-color: transparent;
-        border: 1px solid transparent;
+    /* rotulo de valor com a MESMA caixa de um QLineEdit por cima (propriedade "caixa",
+       ex.: e-mail em leitura - ver desktop/screens/ficha_cliente_screen.py): o campo nao
+       pode mudar de formato ao trocar entre leitura e edicao (pedido do usuario), entao
+       o QLabel usado so pra mostrar link(s) clicaveis ganha a mesma caixa que o
+       QLineEdit correspondente teria, sem perder a cor/tamanho de "campo_valor" */
+    QLabel[role="campo_valor"][caixa="true"] {{
+        background-color: {p['bg_card']};
+        border: 1px solid {p['borda']};
+        border-radius: 6px;
+        padding: 6px 8px;
     }}
 
     /* combo travado (ver desktop/widgets/combo_travavel.py): sem a seta de
