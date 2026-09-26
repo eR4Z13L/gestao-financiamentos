@@ -1,10 +1,10 @@
-"""Testa a Ficha de Cliente e o dialogo de cliente depois da separacao do
-endereco: nascimento digitavel (com calendario como alternativa), endereco em
-campos separados com botao de copiar (retraido numa linha por padrao, expande
-nos 7 campos), campos novos (pai/mae/profissao), o aviso de "endereco a
-revisar" e o painel do cliente com barra de rolagem (campos sem espremer). Tudo
-com clientes FICTICIOS numa copia temporaria da planilha - nao depende dos
-dados reais.
+"""Testa a Ficha de Cliente (cadastro/edicao inline, sem dialogo): nascimento
+digitavel (com calendario como alternativa), endereco em campos separados com
+botao de copiar (retraido numa linha por padrao, expande nos 7 campos), campos
+novos (pai/mae/profissao), o "endereco a revisar" (editavel/apagavel) e o
+painel do cliente com barra de rolagem (campos sem espremer). Tudo com
+clientes FICTICIOS numa copia temporaria da planilha - nao depende dos dados
+reais.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cliente.py
 """
@@ -24,7 +24,7 @@ import pandas as pd
 from PySide6.QtCore import QDate, QPoint, Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QFormLayout, QLabel, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
 from config import CAMINHO_XLSX
 
@@ -37,7 +37,6 @@ from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
-from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.widgets.lista_cartoes import ALTURA_CARTAO, ESPACO
 from desktop.theme import PALETAS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
@@ -46,7 +45,6 @@ from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
 from desktop.widgets.formatters import formatar_cep_parcial, formatar_data_parcial
 
-CPF_NOVO = "111.444.777-35"
 CPF_SEPARADO = "529.982.247-25"
 CPF_REVISAR = "390.533.447-05"
 
@@ -130,96 +128,6 @@ class _Mensagens:
 
     def __exit__(self, *_):
         QMessageBox.warning, QMessageBox.critical, QMessageBox.information = self._orig
-
-
-def _linha_do_form(dialogo: ClienteDialog, campo) -> int:
-    formulario = dialogo.findChild(QFormLayout)
-    return formulario.getWidgetPosition(campo)[0]
-
-
-def testar_dialogo(msgs: _Mensagens) -> None:
-    linha("2) ClienteDialog: nascimento digitável, endereço em campos, campos novos")
-    vendedores_mod.adicionar_vendedor("VENDEDOR TESTE")
-    assert clientes_mod.buscar_por_cpf(CPF_NOVO) is None, "CPF de teste ja existe na planilha"
-
-    dialogo = ClienteDialog(cliente=None)
-    # ordem: nascimento logo abaixo de CPF e nome (antes de tipo/celular/endereco...)
-    assert _linha_do_form(dialogo, dialogo._cpf) == 0 and _linha_do_form(dialogo, dialogo._nome) == 1
-    assert _linha_do_form(dialogo, dialogo._nascimento) == 2, "nascimento deve ficar logo abaixo do nome"
-    assert _linha_do_form(dialogo, dialogo._nascimento) < _linha_do_form(dialogo, dialogo._tipo) < _linha_do_form(dialogo, dialogo._cep)
-    ordem_endereco = [dialogo._cep, dialogo._logradouro, dialogo._numero, dialogo._complemento, dialogo._bairro, dialogo._cidade, dialogo._uf]
-    linhas = [_linha_do_form(dialogo, c) for c in ordem_endereco]
-    assert linhas == sorted(linhas) and len(set(linhas)) == 7, "CEP, logradouro, número, complemento, bairro, cidade, UF em sequência"
-    assert dialogo._uf.currentText() == "" and dialogo._uf.count() == 28, "lista fechada: em branco + 27 estados"
-    assert _linha_do_form(dialogo, dialogo._nome_pai) > _linha_do_form(dialogo, dialogo._vinculado), "pai/mãe/profissão são secundários"
-    assert _linha_do_form(dialogo, dialogo._rede_social) < _linha_do_form(dialogo, dialogo._nome_pai) < _linha_do_form(dialogo, dialogo._nome_mae) < _linha_do_form(dialogo, dialogo._profissao)
-    assert dialogo._endereco_revisar is None, "cliente novo nao tem endereco a revisar"
-    print("OK: Nascimento na 3ª linha (logo abaixo de CPF e nome); pai/mãe/profissão junto dos secundários.")
-
-    dialogo._cpf.setText(CPF_NOVO)
-    dialogo._nome.setText("Cliente Ficha Teste")
-    dialogo._tipo.setCurrentText("Cliente")
-    dialogo._vendedor.setCurrentText("VENDEDOR TESTE")
-    QTest.keyClicks(dialogo._nascimento.campo, "15031985")
-    QTest.keyClicks(dialogo._cep, "60165120")
-    assert dialogo._cep.text() == "60165-120"
-    dialogo._logradouro.setText("Avenida Beira Mar")
-    dialogo._numero.setText("2120")
-    dialogo._complemento.setText("apto 12")
-    dialogo._bairro.setText("Meireles")
-    dialogo._cidade.setText("Fortaleza")
-    dialogo._uf.setCurrentText("CE")
-    dialogo._nome_pai.setText("Pai Teste")
-    dialogo._nome_mae.setText("Mãe Teste")
-    dialogo._profissao.setText("Engenheiro")
-    dialogo._salvar()
-    assert dialogo.result() == QDialog.DialogCode.Accepted, msgs.textos
-    salvo = clientes_mod.buscar_por_cpf(CPF_NOVO)
-    assert salvo["NASCIMENTO"] == pd.Timestamp(1985, 3, 15)
-    assert (salvo["CEP"], salvo["LOGRADOURO"], salvo["NÚMERO"], salvo["COMPLEMENTO"], salvo["BAIRRO"], salvo["CIDADE"], salvo["UF"]) == (
-        "60165-120", "Avenida Beira Mar", "2120", "apto 12", "Meireles", "Fortaleza", "CE")
-    assert (salvo["NOME DO PAI"], salvo["NOME DA MÃE"], salvo["PROFISSÃO"]) == ("Pai Teste", "Mãe Teste", "Engenheiro")
-    print("OK: cliente cadastrado digitando o nascimento (15031985) e com endereço/pai/mãe/profissão nos campos certos.")
-
-    linha("2b) Validações do diálogo")
-    total = len(clientes_mod.listar_clientes())
-    d2 = ClienteDialog(cliente=None)
-    d2._cpf.setText("529.982.247-25")
-    d2._nome.setText("Nasc Invalido")
-    d2._tipo.setCurrentText("Cliente")
-    d2._nascimento.campo.setText("31/02/2000")
-    d2._salvar()
-    assert d2.result() != QDialog.DialogCode.Accepted and "Nascimento inválido" in msgs.titulos[-1]
-    assert "válida" in msgs.textos[-1]
-    d2._nascimento.campo.clear()
-    d2._cep.setText("1234")
-    d2._salvar()
-    assert d2.result() != QDialog.DialogCode.Accepted and "CEP" in msgs.textos[-1]
-    d2._cep.clear()
-    d2._uf.addItem("Ceara")  # valor fora da lista (ex.: veio de edicao direta no Excel)
-    d2._uf.setCurrentText("Ceara")
-    d2._salvar()
-    assert d2.result() != QDialog.DialogCode.Accepted and "UF" in msgs.textos[-1]
-    assert len(clientes_mod.listar_clientes()) == total, "nada pode ser gravado quando a validacao falha"
-    print("OK: data inválida, CEP incompleto e UF fora da lista são recusados com aviso (sem gravar e sem virar 'não informado' em silêncio).")
-
-    linha("2c) Endereço 'a revisar' no diálogo")
-    clientes_mod.adicionar_cliente(
-        {"CPF/CNPJ": CPF_REVISAR, "CLIENTE": "Cliente Revisar", "TIPO": "Cliente", "ENDEREÇO (REVISAR)": "rua tal 12 apto 3"}
-    )
-    d3 = ClienteDialog(cliente=clientes_mod.buscar_por_cpf(CPF_REVISAR))
-    assert d3._endereco_revisar is not None and d3._endereco_revisar.text() == "rua tal 12 apto 3"
-    d3._salvar()  # sem mexer: o texto original nao pode sumir
-    assert clientes_mod.buscar_por_cpf(CPF_REVISAR)["ENDEREÇO (REVISAR)"] == "rua tal 12 apto 3"
-    d3 = ClienteDialog(cliente=clientes_mod.buscar_por_cpf(CPF_REVISAR))
-    d3._logradouro.setText("Rua Tal")
-    d3._numero.setText("12")
-    d3._endereco_revisar.clear()  # revisado: apaga o texto original
-    d3._salvar()
-    revisado = clientes_mod.buscar_por_cpf(CPF_REVISAR)
-    assert (revisado["LOGRADOURO"], revisado["NÚMERO"], revisado["ENDEREÇO (REVISAR)"]) == ("Rua Tal", "12", "")
-    assert ClienteDialog(cliente=revisado)._endereco_revisar is None, "revisado: a linha some do formulário"
-    print("OK: texto original aparece no diálogo, sobrevive a um salvar sem mexer e some depois de apagado.")
 
 
 def _botoes_de_copia(tela: FichaClienteScreen) -> list[BotaoCopiar]:
@@ -336,6 +244,8 @@ def testar_ficha(app: QApplication) -> None:
     assert clipboard.text() == longo and "​" not in clipboard.text()
     print("OK: logradouro longo é copiado exatamente como foi digitado.")
 
+    clientes_mod.adicionar_cliente({"CPF/CNPJ": CPF_REVISAR, "CLIENTE": "Cliente Revisar", "TIPO": "Cliente"})
+    tela._atualizar_lista()
     tela._selecionar_por_cpf(CPF_REVISAR)
     app.processEvents()
     assert tela._aviso_endereco_revisar.isHidden() or "revisar" not in tela._aviso_endereco_revisar.text()
@@ -348,6 +258,19 @@ def testar_ficha(app: QApplication) -> None:
     tela._recarregar_ficha_atual()
     app.processEvents()
     assert tela._aviso_endereco_revisar.isVisible() and "rua tal 12 apto 3" in tela._aviso_endereco_revisar.text()
+
+    # o texto "a revisar" e editavel/apagavel direto na ficha: editando, a pilha
+    # troca pro campo de verdade, ja preenchido com o texto antigo; apagar e
+    # salvar o some de vez
+    tela._alternar_edicao_cliente()
+    assert tela._pilha_endereco_revisar.isVisible() and tela._pilha_endereco_revisar.currentIndex() == 1
+    assert tela._campo_endereco_revisar.text() == "rua tal 12 apto 3"
+    tela._campo_endereco_revisar.setText("")
+    tela._salvar_edicao_cliente()
+    assert not tela._pilha_endereco_revisar.isVisible(), "sem texto, a pilha inteira (aviso/campo) some"
+    assert clientes_mod.buscar_por_cpf(CPF_REVISAR)["ENDEREÇO (REVISAR)"] == "", "apagou e salvou pra valer"
+    print("OK: 'Endereço original (revisar)' é editável/apagável direto na ficha (some quando fica vazio).")
+
     tela._selecionar_por_cpf(CPF_SEPARADO)
     assert not tela._aviso_endereco_revisar.isVisible(), "aviso não pode vazar de um cliente para o outro"
     print("OK: aviso 'endereço a revisar' aparece só para o cliente que tem o texto pendente.")
@@ -504,7 +427,7 @@ def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
         assert not botao.isVisible(), "botão de copiar não deveria aparecer em modo de edição"
     print("OK: 'Editar' destrava os campos, troca os botões por OK/Cancelar, e some com os botões de copiar.")
 
-    # nome vazio: rejeitado, campo marcado invalido, SEM QMessageBox (diferente do ClienteDialog)
+    # nome vazio: rejeitado, campo marcado invalido, SEM QMessageBox
     antes = len(msgs.textos)
     tela._campo_nome.setText("")
     tela._salvar_edicao_cliente()
@@ -580,7 +503,7 @@ def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
 
 
 def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
-    linha("3d) '+ Novo Cliente' inline (nao abre mais o ClienteDialog): valida, salva, cancela descarta")
+    linha("3d) '+ Novo Cliente' inline: valida, salva, cancela descarta")
     tela = FichaClienteScreen()
     tela.resize(1300, 800)
     tela.show()
@@ -1028,7 +951,6 @@ def main() -> None:
     vendedores_mod.CAMINHO_XLSX = tmp
     try:
         with _Mensagens() as msgs:
-            testar_dialogo(msgs)
             testar_ficha(app)
             testar_dados_sem_buraco_e_multiplos_emails(app)
             testar_edicao_inline(app, msgs)

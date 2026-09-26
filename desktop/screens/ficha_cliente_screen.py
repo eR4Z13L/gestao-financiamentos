@@ -690,12 +690,27 @@ class FichaClienteScreen(QWidget):
         linha_cidade_uf.addWidget(wrap_uf, 1)
         grade_endereco.addLayout(linha_cidade_uf, 1, 2)
 
-        # so aparece pra quem tem endereco antigo que a migracao nao separou
+        # so aparece pra quem tem endereco antigo que a migracao nao separou - em
+        # leitura, um aviso (so texto, role "secundario"); editando, vira campo de
+        # verdade (mesmo padrao do e-mail - QStackedWidget - so que aqui pra dar pra
+        # apagar o texto depois de preencher CEP/Logradouro/etc acima)
         self._aviso_endereco_revisar = QLabel("")
         self._aviso_endereco_revisar.setProperty("role", "secundario")
         self._aviso_endereco_revisar.setWordWrap(True)
-        self._aviso_endereco_revisar.setVisible(False)
-        layout_cartao.addWidget(self._aviso_endereco_revisar)
+
+        self._campo_endereco_revisar = QLineEdit()
+        self._campo_endereco_revisar.setToolTip(
+            "Endereço como estava antes de ser separado em campos. Preencha CEP, Logradouro, "
+            "Número, Bairro e Cidade acima e depois apague este texto."
+        )
+        wrap_endereco_revisar, _ = self._criar_campo_com_widget("Endereço original (revisar)", self._campo_endereco_revisar)
+
+        self._pilha_endereco_revisar = QStackedWidget()
+        self._pilha_endereco_revisar.setProperty("role", "transparente")
+        self._pilha_endereco_revisar.addWidget(self._aviso_endereco_revisar)
+        self._pilha_endereco_revisar.addWidget(wrap_endereco_revisar)
+        self._pilha_endereco_revisar.setVisible(False)
+        layout_cartao.addWidget(self._pilha_endereco_revisar)
 
         layout.addWidget(cartao)
 
@@ -1208,11 +1223,13 @@ class FichaClienteScreen(QWidget):
         )
 
         texto_revisar = cliente["ENDEREÇO (REVISAR)"]
-        self._aviso_endereco_revisar.setVisible(bool(texto_revisar))
+        self._pilha_endereco_revisar.setVisible(bool(texto_revisar))
         if texto_revisar:
             self._aviso_endereco_revisar.setText(
                 f"⚠ Endereço a revisar (ainda não separado nos campos acima): {texto_quebravel(texto_revisar)}"
             )
+        self._campo_endereco_revisar.setText(texto_revisar or "")
+        self._campo_endereco_revisar.setCursorPosition(0)
 
         if historico.empty:
             self._modelo_historico.definir_itens([])  # (a visibilidade do historico segue o modelo)
@@ -1301,10 +1318,10 @@ class FichaClienteScreen(QWidget):
     # -- cadastro de cliente novo (inline, mesmo padrao Editar/OK/Cancelar da edicao) --
 
     def _iniciar_novo_cliente(self) -> None:
-        """Abre a ficha em branco, direto em modo edicao - "+ Novo Cliente" nao abre
-        mais o ClienteDialog (ver _salvar_edicao_cliente/_cancelar_edicao_cliente pro
-        resto do fluxo: salvar chama adicionar_cliente em vez de atualizar_cliente,
-        cancelar descarta o rascunho em vez de reler do disco)."""
+        """Abre a ficha em branco, direto em modo edicao (ver
+        _salvar_edicao_cliente/_cancelar_edicao_cliente pro resto do fluxo: salvar
+        chama adicionar_cliente em vez de atualizar_cliente, cancelar descarta o
+        rascunho em vez de reler do disco)."""
         self._lista.clearSelection()  # dispara _selecionar_cliente(""), que so mostra a pagina vazia - sobrescrita abaixo
         self._cpf_selecionado = None
         cliente_vazio = {coluna: "" for coluna in bd.CLIENTES_COLUNAS}
@@ -1319,9 +1336,8 @@ class FichaClienteScreen(QWidget):
         self._aplicar_modo_edicao_cliente(leitura=False)
         self._campo_nome.setFocus()
 
-    # -- edicao INLINE do cliente (cabecalho/Contato/Pessoal) - "Editar" ja nao abre mais
-    # o ClienteDialog pra um cliente EXISTENTE (soh continua assim pra "+ Novo Cliente",
-    # ate o cadastro tambem virar inline) ------------------------------------------------
+    # -- edicao INLINE do cliente (cabecalho/Contato/Pessoal), tanto pra um cliente
+    # EXISTENTE ("Editar") quanto pra um cliente NOVO ("+ Novo Cliente") ------------------
 
     def _definir_texto_tipo(self, tipo_cru: str) -> None:
         # tira qualquer item "fora do padrao" de uma rodada anterior, antes de adicionar o novo
@@ -1383,7 +1399,7 @@ class FichaClienteScreen(QWidget):
             self._campo_nome, self._campo_cpf, self._campo_celular, self._campo_rede_social,
             self._campo_nome_pai, self._campo_nome_mae, self._campo_profissao, self._campo_vinculado,
             self._campo_cep, self._campo_logradouro, self._campo_numero, self._campo_complemento,
-            self._campo_bairro, self._campo_cidade,
+            self._campo_bairro, self._campo_cidade, self._campo_endereco_revisar,
         ):
             campo.setReadOnly(leitura)
         self._campo_email.setReadOnly(leitura)
@@ -1393,6 +1409,7 @@ class FichaClienteScreen(QWidget):
         self._campo_uf.definir_travado(leitura)
 
         self._pilha_email.setCurrentIndex(0 if leitura else 1)
+        self._pilha_endereco_revisar.setCurrentIndex(0 if leitura else 1)
 
         for botao in (
             self._botao_copiar_cpf, self._botao_copiar_celular, self._botao_copiar_email,
@@ -1530,6 +1547,7 @@ class FichaClienteScreen(QWidget):
             "BAIRRO": self._campo_bairro.text().strip(),
             "CIDADE": self._campo_cidade.text().strip(),
             "UF": self._campo_uf.currentText().strip(),
+            "ENDEREÇO (REVISAR)": self._campo_endereco_revisar.text().strip(),
         }
         try:
             if self._modo_novo_cliente:

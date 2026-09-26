@@ -122,7 +122,7 @@ Os testes rodam contra cópias temporárias dos dados (nunca contra
 venv\Scripts\python.exe scripts\smoke_test_data_store.py
 venv\Scripts\python.exe scripts\smoke_test_business.py
 venv\Scripts\python.exe scripts\smoke_test_desktop.py
-venv\Scripts\python.exe scripts\smoke_test_dialogs.py
+venv\Scripts\python.exe scripts\smoke_test_formulario_proposta.py
 venv\Scripts\python.exe scripts\smoke_test_formatters.py
 venv\Scripts\python.exe scripts\smoke_test_propostas_screen.py
 venv\Scripts\python.exe scripts\smoke_test_proposta_leitura.py

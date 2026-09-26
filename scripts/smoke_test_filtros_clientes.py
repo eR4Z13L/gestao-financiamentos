@@ -252,9 +252,8 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
 
     cpf_novo = _cpf(50)
 
-    # "+ Novo Cliente" e inline (nao abre mais o ClienteDialog): preenche direto os
-    # campos da ficha, ja em modo edicao, e salva - um cliente do vendedor BIA, fora
-    # do filtro ANA que esta ativo agora
+    # "+ Novo Cliente" preenche direto os campos da ficha, ja em modo edicao, e
+    # salva - um cliente do vendedor BIA, fora do filtro ANA que esta ativo agora
     tela._iniciar_novo_cliente()
     assert tela._painel_stack.currentIndex() == 1 and not tela._modo_leitura_cliente
     tela._campo_cpf.setText(cpf_novo)
