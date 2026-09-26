@@ -794,6 +794,11 @@ class FichaClienteScreen(QWidget):
             linha.addWidget(botao)
         for extra in extras or []:
             linha.addWidget(extra)
+        # campo com largura maxima propria (CPF, Nascimento, Celular, Vinculado, Pai/Mae/
+        # Profissao) nao deveria esticar - sem esse espacador no final, o espaco sobrando
+        # empurra o campo pra direita em vez de sobrar depois do botao de copiar
+        if widget.maximumWidth() < 16777215:  # 16777215 = QWIDGETSIZE_MAX (Qt nao expõe a constante ao Python)
+            linha.addStretch(1)
         caixa.addLayout(linha)
         return wrapper, botao
 

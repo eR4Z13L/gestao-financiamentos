@@ -230,6 +230,12 @@ def _botoes_de_copia(tela: FichaClienteScreen) -> list[BotaoCopiar]:
     return sorted(botoes, key=lambda b: (b.mapTo(tela, QPoint(0, 0)).y() // 20, b.mapTo(tela, QPoint(0, 0)).x()))
 
 
+def _legenda_de(campo: QWidget) -> QLabel:
+    """O QLabel do titulo (legenda) do wrapper que _criar_campo_com_widget monta -
+    primeiro item do QVBoxLayout do wrapper (ver _criar_campo_com_widget)."""
+    return campo.parentWidget().layout().itemAt(0).widget()
+
+
 def testar_ficha(app: QApplication) -> None:
     linha("3) Ficha de Cliente: grade de dados, endereço com botão copiar, aviso de revisar")
     clientes_mod.adicionar_cliente(
@@ -249,6 +255,7 @@ def testar_ficha(app: QApplication) -> None:
     tela._cabecalho_endereco.setChecked(True)  # aqui interessam os 7 campos
     app.processEvents()
     y = lambda campo: campo.mapTo(tela, QPoint(0, 0)).y()  # noqa: E731
+    x = lambda campo: campo.mapTo(tela, QPoint(0, 0)).x()  # noqa: E731
     # nome no cabeçalho, resumo logo abaixo, CPF/Nascimento na 1a linha da grade (mesma
     # linha); Celular/E-mail SÃO ESSENCIAIS - aparecem mesmo vazios (só os NÃO
     # essenciais somem quando vazios)
@@ -258,6 +265,13 @@ def testar_ficha(app: QApplication) -> None:
     assert not tela._pilha_email.parentWidget().isHidden(), "e-mail é essencial: aparece mesmo vazio"
     assert tela._campo_nascimento.texto() == "20/07/1990"
     print("OK: nome no cabeçalho, CPF/Nascimento no topo da grade; Celular/E-mail aparecem mesmo vazios (são campos essenciais).")
+
+    # CPF/Nascimento/Celular tem largura maxima propria (nao esticam) - o campo deveria
+    # ficar colado no titulo (mesmo x), nao sobrar espaço vazio antes dele empurrando
+    # pra direita (bug real: faltava um espaçador no final da linha, ver _criar_campo_com_widget)
+    for campo in (tela._campo_cpf, tela._campo_nascimento, tela._campo_celular):
+        assert x(campo) == x(_legenda_de(campo)), f"{campo.objectName() or campo}: campo deveria começar no mesmo x do título"
+    print("OK: CPF/Nascimento/Celular alinhados ao título (sem sobra de espaço empurrando pra direita).")
 
     # rede social/vinculado/pai/mãe/profissão (vazios neste cliente, os 5 NÃO
     # essenciais) começam ESCONDIDOS atrás do link "+N campos vazios"; clicar mostra
@@ -271,6 +285,11 @@ def testar_ficha(app: QApplication) -> None:
     # placeholder, pra nao virar um valor de verdade quando a pessoa for editar)
     assert [tela._campo_nome_pai.text(), tela._campo_nome_mae.text(), tela._campo_profissao.text()] == [""] * 3
     assert all(c.placeholderText() == "—" for c in (tela._campo_nome_pai, tela._campo_nome_mae, tela._campo_profissao))
+    # mesmo bug do CPF/Nascimento/Celular: Vinculado/Pai/Mãe/Profissão também têm largura
+    # máxima própria e também precisam ficar colados no título
+    for campo in (tela._campo_vinculado, tela._campo_nome_pai, tela._campo_nome_mae, tela._campo_profissao):
+        assert x(campo) == x(_legenda_de(campo)), f"{campo}: campo deveria começar no mesmo x do título"
+    print("OK: Vinculado/Nome do pai/Nome da mãe/Profissão também alinhados ao título.")
     tela._ao_clicar_link_dados_vazios()  # volta a esconder, pro resto do teste seguir no estado padrão
     assert tela._campos_opcionais_dados[indice_pai].isHidden()
     print("OK: campos não essenciais vazios ficam escondidos atrás de um link ('+N campos vazios').")
