@@ -19,7 +19,6 @@ from PySide6.QtCore import QDate, QModelIndex, QRect, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -49,7 +48,6 @@ from core.formatting import (
 )
 from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
-from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.botao_icone_link import BotaoIconeLink
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
@@ -167,6 +165,7 @@ class FichaClienteScreen(QWidget):
 
         self._cpf_selecionado: str | None = None
         self._modo_leitura_cliente = True  # False = dados do cliente (grade de campos) em edicao
+        self._modo_novo_cliente = False  # True = a ficha esta em branco, editando um cliente AINDA NAO salvo
         self._dados_mostrar_vazios = False  # link "+N campos vazios" (campos NAO essenciais da grade)
         self._endereco_estava_expandido = False  # lembrado ao forcar expandido durante a edicao (ver _aplicar_modo_edicao_cliente)
         self._endereco_forcado_expandido = False
@@ -208,7 +207,7 @@ class FichaClienteScreen(QWidget):
 
         self._botao_novo_cliente = QPushButton("+ Novo Cliente")
         self._botao_novo_cliente.setProperty("role", "botao_primario")
-        self._botao_novo_cliente.clicked.connect(self._abrir_cadastro_cliente)
+        self._botao_novo_cliente.clicked.connect(self._iniciar_novo_cliente)
         coluna_lista.addWidget(self._botao_novo_cliente)
 
         corpo.addLayout(coluna_lista, 1)
@@ -1112,6 +1111,14 @@ class FichaClienteScreen(QWidget):
         # toda releitura do disco (outro cliente, ou o mesmo depois de salvar) comeca
         # em modo leitura - evita ficar com campos "destravados" mostrando dado que ja nao bate
         self._aplicar_modo_edicao_cliente(leitura=True)
+        if self._modo_novo_cliente:
+            # rascunho de cliente novo terminou (salvou de verdade, ou a pessoa abriu
+            # outro cliente no meio do rascunho - descarta) - os botoes de proposta
+            # tinham sumido em _iniciar_novo_cliente (nao dava pra lancar proposta
+            # pra quem ainda nao existia)
+            self._modo_novo_cliente = False
+            self._botao_nova_proposta.setVisible(True)
+            self._botao_excluir_proposta.setVisible(True)
         # guarda os valores "crus" (Timestamp/float, indice = posicao real no
         # arquivo) - os cards mostram uma versao formatada pra leitura, mas
         # editar uma proposta precisa dos valores originais
@@ -1291,24 +1298,26 @@ class FichaClienteScreen(QWidget):
         barra.setValue(alvo)
         self._area_a_mostrar = None
 
-    # -- dialogos: cadastro/edicao de cliente e nova proposta ---------------
+    # -- cadastro de cliente novo (inline, mesmo padrao Editar/OK/Cancelar da edicao) --
 
-    def _abrir_cadastro_cliente(self) -> None:
-        dialogo = ClienteDialog(cliente=None, parent=self)
-        aceito = dialogo.exec() == QDialog.DialogCode.Accepted
-        # o dialogo tem "+ Novo Vendedor": o filtro precisa enxergar quem foi
-        # cadastrado, mesmo que o cliente nao tenha sido salvo
-        vendedor_escolhido_sumiu = self._recarregar_vendedores_filtro()
-        if not aceito:
-            if vendedor_escolhido_sumiu:
-                self._atualizar_lista()
-            return
-        # limpa a busca pra garantir que o cliente novo apareca na lista,
-        # mesmo que o texto buscado antes nao bata com o nome/CPF dele
-        self._invalidar_em_aberto()
-        self._busca.setText("")
-        self._atualizar_lista()
-        self._mostrar_cliente(dialogo.cpf_salvo)
+    def _iniciar_novo_cliente(self) -> None:
+        """Abre a ficha em branco, direto em modo edicao - "+ Novo Cliente" nao abre
+        mais o ClienteDialog (ver _salvar_edicao_cliente/_cancelar_edicao_cliente pro
+        resto do fluxo: salvar chama adicionar_cliente em vez de atualizar_cliente,
+        cancelar descarta o rascunho em vez de reler do disco)."""
+        self._lista.clearSelection()  # dispara _selecionar_cliente(""), que so mostra a pagina vazia - sobrescrita abaixo
+        self._cpf_selecionado = None
+        cliente_vazio = {coluna: "" for coluna in bd.CLIENTES_COLUNAS}
+        historico_vazio = pd.DataFrame(columns=bd.PROPOSTAS_COLUNAS)
+        self._preencher_ficha(cliente_vazio, historico_vazio)
+        self._modo_novo_cliente = True  # depois do preencher: ele reseta essa flag pra False
+        self._painel_stack.setCurrentIndex(1)
+        self._rolagem_ficha.verticalScrollBar().setValue(0)
+        # nao da pra lancar proposta pra um cliente que ainda nao foi salvo
+        self._botao_nova_proposta.setVisible(False)
+        self._botao_excluir_proposta.setVisible(False)
+        self._aplicar_modo_edicao_cliente(leitura=False)
+        self._campo_nome.setFocus()
 
     # -- edicao INLINE do cliente (cabecalho/Contato/Pessoal) - "Editar" ja nao abre mais
     # o ClienteDialog pra um cliente EXISTENTE (soh continua assim pra "+ Novo Cliente",
@@ -1399,6 +1408,7 @@ class FichaClienteScreen(QWidget):
         self._botao_ok_cliente.setVisible(not leitura)
         self._botao_cancelar_cliente.setVisible(not leitura)
         self._botao_menu_cliente.setVisible(leitura)  # excluir cliente no meio de uma edicao nao faz sentido
+        self._botao_novo_cliente.setEnabled(leitura)  # nao dava pra ter dois rascunhos abertos ao mesmo tempo
 
         # Endereco: "so mostrar em campos separados" ao editar (pedido do usuario) - forca
         # expandido e trava o retratil, lembrando o estado de antes pra devolver ao sair
@@ -1431,7 +1441,15 @@ class FichaClienteScreen(QWidget):
     def _cancelar_edicao_cliente(self) -> None:
         """Descarta o que foi digitado e volta pra leitura - rele o cliente do disco
         (mais simples e sempre correto do que guardar um snapshot a parte; _preencher_ficha
-        ja volta pro modo leitura sozinho)."""
+        ja volta pro modo leitura sozinho). Cliente novo (ainda sem CPF salvo): nao ha o
+        que reler - descarta o rascunho inteiro e volta pra pagina vazia."""
+        if self._modo_novo_cliente:
+            self._modo_novo_cliente = False
+            self._botao_nova_proposta.setVisible(True)
+            self._botao_excluir_proposta.setVisible(True)
+            self._aplicar_modo_edicao_cliente(leitura=True)
+            self._painel_stack.setCurrentIndex(0)
+            return
         if not self._cpf_selecionado:
             return
         cliente = clientes_mod.buscar_por_cpf(self._cpf_selecionado)
@@ -1449,7 +1467,7 @@ class FichaClienteScreen(QWidget):
             marcar_invalido(self._campo_email, "E-mail inválido - confira o endereço digitado.")
 
     def _salvar_edicao_cliente(self) -> None:
-        if not self._cpf_selecionado:
+        if not self._modo_novo_cliente and not self._cpf_selecionado:
             return
         for campo in (self._campo_nome, self._campo_cpf, self._campo_email, self._campo_cep):
             limpar_invalido(campo)
@@ -1514,7 +1532,10 @@ class FichaClienteScreen(QWidget):
             "UF": self._campo_uf.currentText().strip(),
         }
         try:
-            clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)
+            if self._modo_novo_cliente:
+                clientes_mod.adicionar_cliente(campos)
+            else:
+                clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)
         except clientes_mod.ErroCliente as exc:
             QMessageBox.warning(self, "Não foi possível salvar", str(exc))
             return

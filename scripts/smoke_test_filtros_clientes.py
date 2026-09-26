@@ -22,7 +22,7 @@ import openpyxl
 import pandas as pd
 from PySide6.QtCore import QDate
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -32,7 +32,6 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.validators import apenas_digitos, cpf_cnpj_valido, _digito_verificador_cpf
-from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 
 
@@ -247,51 +246,51 @@ def testar_tela(app: QApplication, msgs: _Mensagens, arquivo: Path) -> None:
     print("OK: ficha continua aberta enquanto o cliente está na lista; some junto se um filtro o exclui.")
 
     linha("4) Cadastrar/editar com filtro ativo não pode 'sumir' com o cliente")
-    original_exec = ClienteDialog.exec
-    try:
-        _escolher(tela._filtro_vendedor, "ANA")
-        _escolher(tela._filtro_tipo, "Cliente")
-        assert tela._contador.text() == "4 cliente(s)"
+    _escolher(tela._filtro_vendedor, "ANA")
+    _escolher(tela._filtro_tipo, "Cliente")
+    assert tela._contador.text() == "4 cliente(s)"
 
-        cpf_novo = _cpf(50)
+    cpf_novo = _cpf(50)
 
-        def _exec_cadastro(self):  # simula preencher e salvar um cliente do vendedor BIA (fora do filtro ANA)
-            clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_novo, "CLIENTE": "IRENE NOVA", "TIPO": "Cliente", "VENDEDOR": "BIA"})
-            self.cpf_salvo = cpf_novo
-            self.accept()
-            return QDialog.DialogCode.Accepted
+    # "+ Novo Cliente" e inline (nao abre mais o ClienteDialog): preenche direto os
+    # campos da ficha, ja em modo edicao, e salva - um cliente do vendedor BIA, fora
+    # do filtro ANA que esta ativo agora
+    tela._iniciar_novo_cliente()
+    assert tela._painel_stack.currentIndex() == 1 and not tela._modo_leitura_cliente
+    tela._campo_cpf.setText(cpf_novo)
+    tela._campo_nome.setText("IRENE NOVA")
+    tela._campo_vendedor.setCurrentText("BIA")
+    tela._salvar_edicao_cliente()
+    assert tela._filtro_vendedor.currentIndex() == 0 and tela._filtro_tipo.currentIndex() == 0, "filtros limpos pra mostrar o novo"
+    # o campo de CPF tem mascara: o texto digitado sem pontuacao (setText, no teste, pula
+    # a mascara que so reage a digitacao de verdade) fica formatado depois de salvar -
+    # compara por DIGITOS, mesma logica usada mais abaixo pra edicao
+    assert tela._cpf_selecionado is not None and apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
+    assert tela._campo_nome.text() == "IRENE NOVA" and tela._painel_stack.currentIndex() == 1
+    assert tela._contador.text() == "9 cliente(s)"
+    print("OK: cliente novo fora do filtro atual: filtros limpos e a ficha dele abre.")
 
-        ClienteDialog.exec = _exec_cadastro
-        tela._abrir_cadastro_cliente()
-        assert tela._filtro_vendedor.currentIndex() == 0 and tela._filtro_tipo.currentIndex() == 0, "filtros limpos pra mostrar o novo"
-        assert tela._cpf_selecionado == cpf_novo and tela._campo_nome.text() == "IRENE NOVA" and tela._painel_stack.currentIndex() == 1
-        assert tela._contador.text() == "9 cliente(s)"
-        print("OK: cliente novo fora do filtro atual: filtros limpos e a ficha dele abre.")
+    # editar mantendo o cliente dentro do filtro: filtro e ficha atualizada continuam
+    _escolher(tela._filtro_vendedor, "BIA")
+    tela._selecionar_por_cpf(cpf_novo)
 
-        # editar mantendo o cliente dentro do filtro: filtro e ficha atualizada continuam
-        # (a edicao agora e INLINE - nao abre mais o ClienteDialog pra um cliente existente)
-        _escolher(tela._filtro_vendedor, "BIA")
-        tela._selecionar_por_cpf(cpf_novo)
+    tela._alternar_edicao_cliente()
+    tela._campo_email.setText("irene@exemplo.com")
+    tela._salvar_edicao_cliente()
+    assert tela._filtro_vendedor.currentText() == "BIA", "continua no filtro: nao precisa limpar"
+    assert "irene@exemplo.com" in tela._campo_email.text(), "ficha aberta tem que mostrar o que acabou de ser salvo"
+    print("OK: editar quem continua no filtro mantém o filtro e atualiza a ficha aberta.")
 
-        tela._alternar_edicao_cliente()
-        tela._campo_email.setText("irene@exemplo.com")
-        tela._salvar_edicao_cliente()
-        assert tela._filtro_vendedor.currentText() == "BIA", "continua no filtro: nao precisa limpar"
-        assert "irene@exemplo.com" in tela._campo_email.text(), "ficha aberta tem que mostrar o que acabou de ser salvo"
-        print("OK: editar quem continua no filtro mantém o filtro e atualiza a ficha aberta.")
-
-        # editar tirando o cliente do filtro (troca de vendedor)
-        tela._alternar_edicao_cliente()
-        tela._campo_vendedor.setCurrentText("ANA")
-        tela._salvar_edicao_cliente()
-        # o campo de CPF tem mascara (como o do ClienteDialog): salvar sem MUDAR o cpf de
-        # verdade ainda reescreve o valor com a formatacao ("123.456.830-66"), entao
-        # compara por DIGITOS (mesma logica que _salvar_edicao_cliente usa em cpf_mudou)
-        assert tela._filtro_vendedor.currentIndex() == 0 and apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
-        assert tela._campo_vendedor.currentText() == "ANA"
-        print("OK: editar e sair do filtro atual: filtros limpos e a ficha continua na tela.")
-    finally:
-        ClienteDialog.exec = original_exec
+    # editar tirando o cliente do filtro (troca de vendedor)
+    tela._alternar_edicao_cliente()
+    tela._campo_vendedor.setCurrentText("ANA")
+    tela._salvar_edicao_cliente()
+    # o campo de CPF tem mascara: salvar sem MUDAR o cpf de verdade ainda reescreve o
+    # valor com a formatacao ("123.456.830-66"), entao compara por DIGITOS (mesma
+    # logica que _salvar_edicao_cliente usa em cpf_mudou)
+    assert tela._filtro_vendedor.currentIndex() == 0 and apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
+    assert tela._campo_vendedor.currentText() == "ANA"
+    print("OK: editar e sair do filtro atual: filtros limpos e a ficha continua na tela.")
 
     linha("5) Vendedores novos aparecem no filtro")
     _escolher(tela._filtro_vendedor, "BIA")

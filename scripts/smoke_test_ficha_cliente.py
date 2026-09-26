@@ -579,6 +579,67 @@ def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
     tela.close()
 
 
+def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
+    linha("3d) '+ Novo Cliente' inline (nao abre mais o ClienteDialog): valida, salva, cancela descarta")
+    tela = FichaClienteScreen()
+    tela.resize(1300, 800)
+    tela.show()
+    app.processEvents()
+
+    assert tela._painel_stack.currentIndex() == 0, "comeca sem cliente selecionado"
+    tela._iniciar_novo_cliente()
+    app.processEvents()
+    assert tela._painel_stack.currentIndex() == 1 and not tela._modo_leitura_cliente
+    assert tela._cpf_selecionado is None and tela._modo_novo_cliente
+    assert tela._campo_nome.text() == "" and tela._campo_cpf.text() == ""
+    assert tela._resumo_label.text() == "Nenhuma proposta registrada ainda."
+    assert not tela._botao_nova_proposta.isVisible() and not tela._botao_excluir_proposta.isVisible()
+    assert not tela._botao_novo_cliente.isEnabled(), "nao pode abrir um segundo rascunho ao mesmo tempo"
+    print("OK: abre em branco, já em edição - sem histórico/botões de proposta (cliente ainda não existe).")
+
+    # nome/CPF vazios sao rejeitados do mesmo jeito que na edicao de um cliente existente
+    antes = len(msgs.textos)
+    tela._salvar_edicao_cliente()
+    assert tela._campo_cpf.property("invalido") is True
+    assert tela._modo_novo_cliente, "continua no rascunho - nao salvou"
+    assert len(msgs.textos) == antes, "erro de validação não deveria abrir QMessageBox"
+    print("OK: CPF/nome vazios são rejeitados (campo marcado, sem QMessageBox, nada gravado).")
+
+    cpf_novo = _cpf(80)
+    tela._campo_cpf.setText(cpf_novo)
+    tela._campo_nome.setText("BEATRIZ NOVA")
+    tela._campo_email.setText("não é um e-mail")
+    tela._salvar_edicao_cliente()
+    assert tela._campo_email.property("invalido") is True
+    assert tela._modo_novo_cliente
+    assert clientes_mod.buscar_por_cpf(cpf_novo) is None, "nada gravado enquanto o e-mail for inválido"
+    print("OK: e-mail inválido também é rejeitado antes de gravar.")
+
+    tela._campo_email.setText("beatriz@exemplo.com")
+    tela._salvar_edicao_cliente()
+    assert not tela._modo_novo_cliente and tela._modo_leitura_cliente
+    assert apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
+    assert tela._campo_nome.text() == "BEATRIZ NOVA" and tela._painel_stack.currentIndex() == 1
+    assert tela._botao_nova_proposta.isVisible() and tela._botao_excluir_proposta.isVisible()
+    assert tela._botao_novo_cliente.isEnabled()
+    gravado = clientes_mod.buscar_por_cpf(cpf_novo)
+    assert gravado is not None and gravado["CLIENTE"] == "BEATRIZ NOVA" and gravado["EMAIL"] == "beatriz@exemplo.com"
+    print("OK: corrigido, salvar grava de verdade (adicionar_cliente) e reabre a ficha do cliente criado.")
+
+    # Cancelar um rascunho descarta tudo e volta pra pagina vazia (nao ha o que reler do disco)
+    tela._iniciar_novo_cliente()
+    cpf_descartado = _cpf(81)
+    tela._campo_cpf.setText(cpf_descartado)
+    tela._campo_nome.setText("CLIENTE DESCARTADO")
+    tela._cancelar_edicao_cliente()
+    assert tela._painel_stack.currentIndex() == 0 and not tela._modo_novo_cliente
+    assert tela._modo_leitura_cliente and tela._botao_novo_cliente.isEnabled()
+    assert clientes_mod.buscar_por_cpf(cpf_descartado) is None, "cancelar não pode ter gravado nada"
+    print("OK: 'Cancelar' num rascunho de cliente novo descarta tudo e volta pra 'Selecione um cliente'.")
+
+    tela.close()
+
+
 def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     linha("5) Endereço retraído (uma linha por extenso) e expandido (7 campos)")
     tela = FichaClienteScreen()
@@ -971,6 +1032,7 @@ def main() -> None:
             testar_ficha(app)
             testar_dados_sem_buraco_e_multiplos_emails(app)
             testar_edicao_inline(app, msgs)
+            testar_novo_cliente_inline(app, msgs)
             cpfs = _cadastrar_clientes_de_endereco()
             testar_endereco_retratil(app, cpfs)
             testar_endereco_como_os_outros_campos(app, cpfs)

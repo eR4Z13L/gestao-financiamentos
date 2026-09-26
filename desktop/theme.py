@@ -470,6 +470,13 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         border: 1px solid {p['destaque_hover']};
         color: white;
     }}
+    /* "+ Novo Cliente" desabilitado (rascunho em edicao) - sem isso o botao continua
+       na cor de destaque, sem sinalizar visualmente que o clique nao faz nada agora */
+    QPushButton[role="botao_primario"]:disabled {{
+        background-color: transparent;
+        border: 1px solid {p['borda']};
+        color: {p['texto_secundario']};
+    }}
 
     /* o "+ Nova proposta" da barra lateral recolhida vira so o "+": sem o padding lateral um botao
        normal, o "+" nao cabe nos ~32 px e aparece cortado */
