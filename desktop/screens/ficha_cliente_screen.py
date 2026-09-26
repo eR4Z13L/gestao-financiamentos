@@ -47,6 +47,7 @@ from core.formatting import (
     formatar_tempo,
     iniciais_do_nome,
 )
+from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
@@ -56,7 +57,7 @@ from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
 from desktop.widgets.combo_travavel import ComboTravavel
 from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.expansor_proposta import ExpansorDeProposta
-from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
+from desktop.widgets.formatters import conectar_mascara, formatar_cep_parcial, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 from desktop.widgets.identidade_usuario import _Avatar
 from desktop.widgets.lista_cartoes import ContentorDeListaAutomatica, ListaCartoes, ModeloCartoes, chave_cor_etapa
 from desktop.widgets.lista_clientes import ListaClientes, rotulo_do_tipo
@@ -623,8 +624,11 @@ class FichaClienteScreen(QWidget):
         coluna_endereco.addLayout(linha_legenda_endereco)
         coluna_endereco.addWidget(self._endereco_resumo)
 
-        # expandido: cada campo do endereco tem seu botao de copiar (a ideia e
-        # copiar um de cada vez pra colar em outro sistema)
+        # expandido: cada campo do endereco EDITAVEL (mesmo padrao Editar/OK/Cancelar do
+        # resto do card - ver _aplicar_modo_edicao_cliente), com seu botao de copiar (a
+        # ideia e copiar um de cada vez pra colar em outro sistema). Posicao FIXA na
+        # grade (nao passa pelo "esconde se vazio" da grade de dados la em cima - os 7
+        # campos sempre aparecem juntos quando o endereco esta expandido).
         self._endereco_campos = QWidget()
         self._endereco_campos.setProperty("role", "transparente")
         grade_endereco = self._nova_grade()
@@ -634,19 +638,58 @@ class FichaClienteScreen(QWidget):
         coluna_endereco.addWidget(self._endereco_campos)
         layout_cartao.addWidget(self._secao_endereco)
 
-        self._campo_cep = self._criar_campo_copiavel(grade_endereco, 0, 0, "CEP")
-        self._campo_logradouro = self._criar_campo_copiavel(grade_endereco, 0, 1, "Logradouro")
-        self._campo_numero = self._criar_campo_copiavel(grade_endereco, 0, 2, "Número")
-        self._campo_complemento = self._criar_campo_copiavel(grade_endereco, 1, 0, "Complemento")
-        self._campo_bairro = self._criar_campo_copiavel(grade_endereco, 1, 1, "Bairro")
+        self._campo_cep = QLineEdit()
+        self._campo_cep.setPlaceholderText("00000-000")
+        conectar_mascara(self._campo_cep, formatar_cep_parcial)
+        wrap_cep, self._botao_copiar_cep = self._criar_campo_com_widget(
+            "CEP", self._campo_cep, lambda: self._campo_cep.text()
+        )
+        grade_endereco.addWidget(wrap_cep, 0, 0)
+
+        self._campo_logradouro = QLineEdit()
+        self._campo_logradouro.setPlaceholderText("—")
+        wrap_logradouro, self._botao_copiar_logradouro = self._criar_campo_com_widget(
+            "Logradouro", self._campo_logradouro, lambda: self._campo_logradouro.text()
+        )
+        grade_endereco.addWidget(wrap_logradouro, 0, 1)
+
+        self._campo_numero = QLineEdit()
+        self._campo_numero.setPlaceholderText("—")
+        wrap_numero, self._botao_copiar_numero = self._criar_campo_com_widget(
+            "Número", self._campo_numero, lambda: self._campo_numero.text()
+        )
+        grade_endereco.addWidget(wrap_numero, 0, 2)
+
+        self._campo_complemento = QLineEdit()
+        self._campo_complemento.setPlaceholderText("—")
+        wrap_complemento, self._botao_copiar_complemento = self._criar_campo_com_widget(
+            "Complemento", self._campo_complemento, lambda: self._campo_complemento.text()
+        )
+        grade_endereco.addWidget(wrap_complemento, 1, 0)
+
+        self._campo_bairro = QLineEdit()
+        self._campo_bairro.setPlaceholderText("—")
+        wrap_bairro, self._botao_copiar_bairro = self._criar_campo_com_widget(
+            "Bairro", self._campo_bairro, lambda: self._campo_bairro.text()
+        )
+        grade_endereco.addWidget(wrap_bairro, 1, 1)
+
         # Cidade e UF dividem a 3a coluna (a UF e curta) - assim a grade
         # continua com as mesmas 3 colunas da grade de dados, la em cima
-        caixa_cidade, self._campo_cidade = self._caixa_copiavel("Cidade")
-        caixa_uf, self._campo_uf = self._caixa_copiavel("UF")
+        self._campo_cidade = QLineEdit()
+        self._campo_cidade.setPlaceholderText("—")
+        wrap_cidade, self._botao_copiar_cidade = self._criar_campo_com_widget(
+            "Cidade", self._campo_cidade, lambda: self._campo_cidade.text()
+        )
+        self._campo_uf = ComboTravavel()
+        self._campo_uf.addItem("")  # UF e opcional
+        self._campo_uf.addItems(sorted(UFS_VALIDAS))
+        self._campo_uf.definir_travado(True)
+        wrap_uf, _ = self._criar_campo_com_widget("UF", self._campo_uf)
         linha_cidade_uf = QHBoxLayout()
         linha_cidade_uf.setSpacing(12)
-        linha_cidade_uf.addLayout(caixa_cidade, 3)
-        linha_cidade_uf.addLayout(caixa_uf, 1)
+        linha_cidade_uf.addWidget(wrap_cidade, 3)
+        linha_cidade_uf.addWidget(wrap_uf, 1)
         grade_endereco.addLayout(linha_cidade_uf, 1, 2)
 
         # so aparece pra quem tem endereco antigo que a migracao nao separou
@@ -755,27 +798,14 @@ class FichaClienteScreen(QWidget):
         return wrapper, botao
 
     @staticmethod
-    def _linha_copiavel() -> tuple[QHBoxLayout, QLabel]:
-        """Valor + botao Copiar ao lado, numa linha. Devolve o layout (pra
-        quem chamou encaixar onde quiser) e o QLabel do valor. O que o botao
-        copia e o texto CRU guardado na propriedade "texto_cru" (ver
-        _definir_valor_copiavel), nunca o que aparece no QLabel: la o texto
-        tem "—" quando vazio e pontos de quebra invisiveis (texto_quebravel)."""
-        valor = FichaClienteScreen._criar_rotulo_valor()
-        valor.setProperty("caixa", True)  # mesmo contorno dos outros campos (pedido do usuario)
-        botao = BotaoCopiar(lambda: valor.property("texto_cru") or "")
-        linha = QHBoxLayout()
-        linha.setSpacing(4)
-        linha.addWidget(valor, stretch=1)
-        linha.addWidget(botao, alignment=Qt.AlignmentFlag.AlignTop)
-        return linha, valor
-
-    @staticmethod
     def _linha_copiavel_compacta() -> tuple[QHBoxLayout, RotuloUmaLinha]:
-        """Como _linha_copiavel, mas pro endereco por extenso: o valor tem o
-        MESMO estilo e altura dos outros campos (nao a altura do botao) e ocupa
-        so a largura do proprio texto, com o botao de copiar logo ao lado - em
-        vez de uma barra pela largura toda. So quebra em mais linhas se nao couber."""
+        """Valor + botao Copiar ao lado, numa linha - pro endereco por extenso: o valor
+        tem o MESMO estilo e altura dos outros campos (nao a altura do botao) e ocupa so
+        a largura do proprio texto, em vez de uma barra pela largura toda. So quebra em
+        mais linhas se nao couber. O que o botao copia e o texto CRU guardado na
+        propriedade "texto_cru" (ver _definir_valor_copiavel), nunca o que aparece no
+        QLabel: la o texto tem "—" quando vazio e pontos de quebra invisiveis
+        (texto_quebravel)."""
         valor = RotuloUmaLinha("—")
         valor.setProperty("role", "campo_valor")
         botao = BotaoCopiar(lambda: valor.property("texto_cru") or "")
@@ -789,29 +819,6 @@ class FichaClienteScreen(QWidget):
         linha.addWidget(botao, alignment=Qt.AlignmentFlag.AlignVCenter)
         linha.addStretch(1)
         return linha, valor
-
-    @staticmethod
-    def _caixa_copiavel(titulo: str) -> tuple[QVBoxLayout, QLabel]:
-        """Legenda + valor + botao Copiar ao lado do valor (ver _linha_copiavel).
-        Devolve o layout e o QLabel do valor."""
-        caixa = QVBoxLayout()
-        caixa.setSpacing(2)
-        legenda = QLabel(titulo)
-        legenda.setProperty("role", "campo_rotulo")
-        caixa.addWidget(legenda)
-
-        linha, valor = FichaClienteScreen._linha_copiavel()
-        caixa.addLayout(linha)
-        return caixa, valor
-
-    @staticmethod
-    def _criar_campo_copiavel(grade: QGridLayout, row: int, col: int, titulo: str) -> QLabel:
-        """Legenda + valor + botão Copiar ao lado do valor, já posicionado numa posição
-        FIXA da grade (ver _caixa_copiavel/_linha_copiavel) - pra campos que não somem
-        (ex.: o endereço expandido, onde os 7 campos são sempre mostrados juntos)."""
-        caixa, valor = FichaClienteScreen._caixa_copiavel(titulo)
-        grade.addLayout(caixa, row, col)
-        return valor
 
     @staticmethod
     def _definir_valor_copiavel(rotulo: QLabel, texto: str) -> None:
@@ -1159,13 +1166,17 @@ class FichaClienteScreen(QWidget):
         self._dados_mostrar_vazios = False
         self._atualizar_visibilidade_dados()
 
-        self._definir_valor_copiavel(self._campo_cep, cliente["CEP"])
-        self._definir_valor_copiavel(self._campo_logradouro, cliente["LOGRADOURO"])
-        self._definir_valor_copiavel(self._campo_numero, cliente["NÚMERO"])
-        self._definir_valor_copiavel(self._campo_complemento, cliente["COMPLEMENTO"])
-        self._definir_valor_copiavel(self._campo_bairro, cliente["BAIRRO"])
-        self._definir_valor_copiavel(self._campo_cidade, cliente["CIDADE"])
-        self._definir_valor_copiavel(self._campo_uf, cliente["UF"])
+        self._campo_cep.setText(cliente["CEP"] or "")
+        self._campo_logradouro.setText(cliente["LOGRADOURO"] or "")
+        self._campo_logradouro.setCursorPosition(0)
+        self._campo_numero.setText(cliente["NÚMERO"] or "")
+        self._campo_complemento.setText(cliente["COMPLEMENTO"] or "")
+        self._campo_complemento.setCursorPosition(0)
+        self._campo_bairro.setText(cliente["BAIRRO"] or "")
+        self._campo_bairro.setCursorPosition(0)
+        self._campo_cidade.setText(cliente["CIDADE"] or "")
+        self._campo_cidade.setCursorPosition(0)
+        self._definir_texto_uf(cliente["UF"])
         # o mesmo endereco por extenso, pro estado retraido (o campo vazio simplesmente fica de fora)
         self._definir_valor_copiavel(
             self._campo_endereco_completo,
@@ -1311,6 +1322,22 @@ class FichaClienteScreen(QWidget):
             self._campo_tipo.addItem(tipo_atual)
             self._campo_tipo.setCurrentText(tipo_atual)
 
+    def _definir_texto_uf(self, uf_crua: str) -> None:
+        # tira qualquer item "fora do padrao" de uma rodada anterior, antes de adicionar o novo
+        while self._campo_uf.count() > len(UFS_VALIDAS) + 1:  # +1 do item vazio ("")
+            self._campo_uf.removeItem(self._campo_uf.count() - 1)
+        uf_atual = (uf_crua or "").strip().upper()
+        if not uf_atual:
+            self._campo_uf.setCurrentIndex(0)
+            return
+        if uf_atual in UFS_VALIDAS:
+            self._campo_uf.setCurrentText(uf_atual)
+        else:
+            # valor fora do padrao (ex.: editado direto no Excel) - mostra como esta,
+            # em vez de trocar pra vazio sem avisar
+            self._campo_uf.addItem(uf_atual)
+            self._campo_uf.setCurrentText(uf_atual)
+
     def _recarregar_vendedores_do_cabecalho(self, selecionado: str = "") -> None:
         self._campo_vendedor.blockSignals(True)
         self._campo_vendedor.clear()
@@ -1337,12 +1364,15 @@ class FichaClienteScreen(QWidget):
         for campo in (
             self._campo_nome, self._campo_cpf, self._campo_celular, self._campo_rede_social,
             self._campo_nome_pai, self._campo_nome_mae, self._campo_profissao, self._campo_vinculado,
+            self._campo_cep, self._campo_logradouro, self._campo_numero, self._campo_complemento,
+            self._campo_bairro, self._campo_cidade,
         ):
             campo.setReadOnly(leitura)
         self._campo_email.setReadOnly(leitura)
         self._campo_nascimento.definir_somente_leitura(leitura)
         self._campo_tipo.definir_travado(leitura)
         self._campo_vendedor.definir_travado(leitura)
+        self._campo_uf.definir_travado(leitura)
 
         self._pilha_email.setCurrentIndex(0 if leitura else 1)
 
@@ -1350,7 +1380,9 @@ class FichaClienteScreen(QWidget):
             self._botao_copiar_cpf, self._botao_copiar_celular, self._botao_copiar_email,
             self._botao_copiar_rede_social, self._botao_copiar_nascimento, self._botao_copiar_pai,
             self._botao_copiar_mae, self._botao_copiar_profissao, self._botao_copiar_vinculado,
-            self._botao_copiar_cadastro,
+            self._botao_copiar_cadastro, self._botao_copiar_cep, self._botao_copiar_logradouro,
+            self._botao_copiar_numero, self._botao_copiar_complemento, self._botao_copiar_bairro,
+            self._botao_copiar_cidade,
         ):
             botao.setVisible(leitura)
 
@@ -1375,7 +1407,7 @@ class FichaClienteScreen(QWidget):
             self._cabecalho_endereco.setEnabled(False)
 
         if leitura:
-            for campo in (self._campo_nome, self._campo_cpf, self._campo_email):
+            for campo in (self._campo_nome, self._campo_cpf, self._campo_email, self._campo_cep):
                 limpar_invalido(campo)
             limpar_invalido(self._campo_nascimento.campo)
         self._atualizar_visibilidade_dados()  # editando, mostra TODOS os campos (mesmo vazios)
@@ -1410,7 +1442,7 @@ class FichaClienteScreen(QWidget):
     def _salvar_edicao_cliente(self) -> None:
         if not self._cpf_selecionado:
             return
-        for campo in (self._campo_nome, self._campo_cpf, self._campo_email):
+        for campo in (self._campo_nome, self._campo_cpf, self._campo_email, self._campo_cep):
             limpar_invalido(campo)
         limpar_invalido(self._campo_nascimento.campo)
 
@@ -1424,6 +1456,7 @@ class FichaClienteScreen(QWidget):
         cpf_texto = self._campo_cpf.text().strip()
         nome_texto = self._campo_nome.text().strip()
         email_texto = self._campo_email.text().strip()
+        cep_texto = self._campo_cep.text().strip()
 
         if not cpf_texto:
             marcar_invalido(self._campo_cpf, "CPF/CNPJ é obrigatório.")
@@ -1442,6 +1475,13 @@ class FichaClienteScreen(QWidget):
             marcar_invalido(self._campo_email, "E-mail inválido - confira o endereço digitado.")
             self._campo_email.setFocus()
             return
+        # a mascara ja limita a 8 digitos - so falta rejeitar um CEP incompleto (a mesma
+        # regra de core.clientes._normalizar_cep, checada aqui antes pra marcar o campo
+        # em vez de abrir um QMessageBox)
+        if cep_texto and len(apenas_digitos(cep_texto)) != 8:
+            marcar_invalido(self._campo_cep, "CEP inválido - o CEP tem 8 números (ex.: 60165-120).")
+            self._campo_cep.setFocus()
+            return
 
         campos = {
             "CPF/CNPJ": cpf_texto,
@@ -1456,6 +1496,13 @@ class FichaClienteScreen(QWidget):
             "NOME DO PAI": self._campo_nome_pai.text().strip(),
             "NOME DA MÃE": self._campo_nome_mae.text().strip(),
             "PROFISSÃO": self._campo_profissao.text().strip(),
+            "CEP": cep_texto,
+            "LOGRADOURO": self._campo_logradouro.text().strip(),
+            "NÚMERO": self._campo_numero.text().strip(),
+            "COMPLEMENTO": self._campo_complemento.text().strip(),
+            "BAIRRO": self._campo_bairro.text().strip(),
+            "CIDADE": self._campo_cidade.text().strip(),
+            "UF": self._campo_uf.currentText().strip(),
         }
         try:
             clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)

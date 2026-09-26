@@ -275,22 +275,31 @@ def testar_ficha(app: QApplication) -> None:
     assert tela._campos_opcionais_dados[indice_pai].isHidden()
     print("OK: campos não essenciais vazios ficam escondidos atrás de um link ('+N campos vazios').")
     assert (tela._campo_logradouro.text(), tela._campo_numero.text(), tela._campo_bairro.text(), tela._campo_cidade.text(),
-            tela._campo_uf.text()) == ("Rua das Flores", "SN", "Centro", "Curitiba", "PR")
-    assert tela._campo_cep.text() == "—" and tela._campo_complemento.text() == "—" and not tela._aviso_endereco_revisar.isVisible()
+            tela._campo_uf.currentText()) == ("Rua das Flores", "SN", "Centro", "Curitiba", "PR")
+    # agora sao QLineEdit editaveis: vazio de verdade e SEM texto (o "—" e so o
+    # placeholder, como os outros campos que viraram editaveis nesta sessao)
+    assert tela._campo_cep.text() == "" and tela._campo_complemento.text() == "" and not tela._aviso_endereco_revisar.isVisible()
+    assert tela._campo_cep.placeholderText() == "00000-000" and tela._campo_complemento.placeholderText() == "—"
     # a grade do endereco: CEP/Logradouro/Numero na 1a linha; Complemento/Bairro/(Cidade+UF) na 2a
-    assert y(tela._campo_cep) == y(tela._campo_logradouro) == y(tela._campo_numero)
-    assert y(tela._campo_complemento) == y(tela._campo_bairro) == y(tela._campo_cidade) == y(tela._campo_uf) > y(tela._campo_cep)
+    # (tolerancia de poucos pixels: QLineEdit e ComboTravavel tem altura NATURAL levemente
+    # diferente, o centro de cada HBox - legenda + campo + botao - arredonda diferente)
+    linha1 = [y(tela._campo_cep), y(tela._campo_logradouro), y(tela._campo_numero)]
+    assert max(linha1) - min(linha1) <= 2, linha1
+    linha2 = [y(tela._campo_complemento), y(tela._campo_bairro), y(tela._campo_cidade), y(tela._campo_uf)]
+    assert max(linha2) - min(linha2) <= 2, linha2
+    assert min(linha2) > max(linha1)
     assert tela._campo_cidade.mapTo(tela, QPoint(0, 0)).x() < tela._campo_uf.mapTo(tela, QPoint(0, 0)).x(), "UF ao lado da cidade"
     print("OK: endereço em 7 campos (CEP vazio e complemento vazio mostram '—'); UF ao lado da cidade; sem aviso de revisar.")
 
     botoes = _botoes_de_copia(tela)
     # essenciais com copiar (CPF, Nascimento, Celular, E-mail, Cadastrado em - Tipo e
-    # Vendedor são combos, sem botão) + os 7 do endereço expandido; os 5 não essenciais
-    # continuam escondidos (não têm valor)
-    assert len(botoes) == 12, f"deveria haver 12 botões de copiar (5 essenciais + 7 do endereço), há {len(botoes)}"
-    cpf_copiar, nascimento_copiar, celular_copiar, email_copiar, cadastro_copiar, cep, logr, num, compl, bairro, cidade, uf = botoes
+    # Vendedor são combos, sem botão) + 6 do endereço expandido (CEP/Logradouro/Número/
+    # Complemento/Bairro/Cidade - UF também é combo agora que é editável, sem botão,
+    # mesmo padrão de Tipo/Vendedor); os 5 não essenciais continuam escondidos (sem valor)
+    assert len(botoes) == 11, f"deveria haver 11 botões de copiar (5 essenciais + 6 do endereço), há {len(botoes)}"
+    cpf_copiar, nascimento_copiar, celular_copiar, email_copiar, cadastro_copiar, cep, logr, num, compl, bairro, cidade = botoes
     clipboard = QApplication.clipboard()
-    for botao, esperado in ((logr, "Rua das Flores"), (num, "SN"), (bairro, "Centro"), (cidade, "Curitiba"), (uf, "PR")):
+    for botao, esperado in ((logr, "Rua das Flores"), (num, "SN"), (bairro, "Centro"), (cidade, "Curitiba")):
         botao.click()
         assert clipboard.text() == esperado and botao.estado == botao_copiar_mod.ESTADO_COPIADO, (esperado, clipboard.text())
     clipboard.setText("anterior")
@@ -504,6 +513,17 @@ def testar_edicao_inline(app: QApplication, msgs: _Mensagens) -> None:
     assert len(msgs.textos) == antes
     print("OK: e-mail inválido é rejeitado (campo marcado, sem QMessageBox).")
 
+    # CEP incompleto (menos de 8 dígitos)
+    tela._campo_email.setText("oscar@exemplo.com")
+    tela._campo_cep.setText("80000")
+    tela._salvar_edicao_cliente()
+    assert tela._campo_cep.property("invalido") is True
+    assert not tela._modo_leitura_cliente
+    assert len(msgs.textos) == antes
+    assert not clientes_mod.buscar_por_cpf(cpf)["CEP"], "nada foi gravado"
+    print("OK: CEP incompleto é rejeitado (campo marcado, sem QMessageBox, nada gravado).")
+    tela._campo_cep.setText("")
+
     # corrige tudo: salva de verdade, volta pra leitura, grava no disco
     tela._campo_email.setText("oscar.novo@exemplo.com")
     tela._campo_celular.setText("11987654321")
@@ -589,8 +609,8 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     assert "Voltar" in cabecalho.toolTip(), "a dica muda: agora recolhe"
     assert cabecalho.grab().toImage() != imagem_fechado, "a seta muda de direção"
     botoes = _botoes_de_copia(tela)
-    assert len(botoes) == 12, f"expandido: 5 essenciais + um botão de copiar por campo de endereço (7), há {len(botoes)}"
-    esperado = ["80000-000", "Rua das Palmeiras", "211", "Apto 301", "Centro", "Curitiba", "PR"]
+    assert len(botoes) == 11, f"expandido: 5 essenciais + um botão de copiar por campo de endereço (6 - UF é combo, sem botão), há {len(botoes)}"
+    esperado = ["80000-000", "Rua das Palmeiras", "211", "Apto 301", "Centro", "Curitiba"]
     for botao, texto in zip(botoes[5:], esperado):  # botoes[0..4] = os 5 essenciais
         clipboard.setText("")
         botao.click()
@@ -605,7 +625,7 @@ def testar_endereco_retratil(app: QApplication, cpfs: dict[str, str]) -> None:
     tela._selecionar_por_cpf(cpfs["parcial"])
     app.processEvents()
     assert cabecalho.isChecked() and tela._endereco_campos.isVisible(), "expandido segue expandido ao abrir outro cliente"
-    assert (tela._campo_logradouro.text(), tela._campo_cidade.text(), tela._campo_cep.text()) == ("Avenida Central", "Curitiba", "—")
+    assert (tela._campo_logradouro.text(), tela._campo_cidade.text(), tela._campo_cep.text()) == ("Avenida Central", "Curitiba", "")
     cabecalho.setChecked(False)
     tela._selecionar_por_cpf(cpfs["completo"])
     app.processEvents()
@@ -695,24 +715,15 @@ def testar_endereco_como_os_outros_campos(app: QApplication, cpfs: dict[str, str
                 f"{tema}: o título 'Endereço' deveria ter a cor de 'titulo_secao' do tema"
             assert titulo.font().pixelSize() == 12, f"{tema}: título de seção deveria ter 12px (era {titulo.font().pixelSize()})"
 
-            # o valor (endereço por extenso) compara com outro campo "campo_valor" - agora que
-            # Contato/Pessoal viraram widgets editaveis (QLineEdit/CampoData, sem o role
-            # "campo_valor"), a unica referencia que sobrou com a mesma fabrica
-            # (_criar_rotulo_valor) sao os proprios campos do endereco expandido. Usa uma
-            # tela EXTRA e descartavel pra pegar essa referencia, pra nao mexer no scroll/
-            # estado da tela principal (os proximos testes desta função dependem dela
-            # continuar exatamente como abriu, retraída).
+            # o valor (endereço por extenso) compara com outro campo "campo_valor" - agora
+            # que TODOS os outros campos da ficha viraram widgets editaveis (QLineEdit/
+            # CampoData/ComboTravavel, sem o role "campo_valor"), a unica referencia que
+            # sobrou com a mesma fabrica (_criar_rotulo_valor) e o rotulo de e-mail em
+            # LEITURA (_rotulo_email, com a propriedade "caixa" - ver _preencher_ficha).
             valor = tela._campo_endereco_completo
-            tela_referencia = FichaClienteScreen()
-            tela_referencia.resize(1300, 800)
-            tela_referencia.show()
-            tela_referencia._selecionar_por_cpf(cpfs["completo"])
-            tela_referencia._cabecalho_endereco.setChecked(True)
-            app.processEvents()
-            referencia = tela_referencia._campo_cidade
+            referencia = tela._rotulo_email
             assert _mesma_fonte(valor, referencia) and _cor_do_texto(valor) == _cor_do_texto(referencia), \
                 f"{tema}: o endereço tem a mesma fonte/cor do valor dos outros campos"
-            tela_referencia.close()
             for _ in range(6):
                 app.processEvents()
             # a altura e a de UMA LINHA DE TEXTO (nao a do botao de copiar do lado -
