@@ -51,6 +51,7 @@ from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
 from desktop.dialogs.cliente_dialog import ClienteDialog
 from desktop.widgets.botao_copiar import BotaoCopiar
+from desktop.widgets.botao_icone_link import BotaoIconeLink
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
@@ -491,9 +492,7 @@ class FichaClienteScreen(QWidget):
         self._campo_celular.setReadOnly(True)
         self._campo_celular.setMaximumWidth(140)
         conectar_mascara(self._campo_celular, formatar_telefone_parcial)
-        self._botao_whatsapp = QPushButton("WhatsApp")
-        self._botao_whatsapp.setProperty("role", "botao_link")
-        self._botao_whatsapp.clicked.connect(self._abrir_whatsapp)
+        self._botao_whatsapp = BotaoIconeLink("whatsapp", self._abrir_whatsapp)
         wrap_celular, self._botao_copiar_celular = self._criar_campo_com_widget(
             "Celular", self._campo_celular, lambda: self._campo_celular.text(), extras=[self._botao_whatsapp]
         )
@@ -523,14 +522,13 @@ class FichaClienteScreen(QWidget):
 
         # rede social: SEMPRE o mesmo QLineEdit (mostra o link/handle cru, igual editando)
         # - o botao do lado abre o link (mesmo padrao do WhatsApp), com o nome da rede
-        # detectada ("Instagram ↗", "Facebook ↗"...); sem link reconhecido, o botao some
+        # detectada aparece no tooltip do icone ("Abrir no Instagram", "Abrir no
+        # Facebook"...); sem link reconhecido, o botao some
         self._campo_rede_social = QLineEdit()
         self._campo_rede_social.setReadOnly(True)
         self._campo_rede_social.setMaximumWidth(260)
         self._campo_rede_social.textChanged.connect(self._atualizar_botao_rede_social)
-        self._botao_abrir_rede_social = QPushButton("")
-        self._botao_abrir_rede_social.setProperty("role", "botao_link")
-        self._botao_abrir_rede_social.clicked.connect(self._abrir_rede_social)
+        self._botao_abrir_rede_social = BotaoIconeLink("link_externo", self._abrir_rede_social)
         self._botao_abrir_rede_social.setVisible(False)
         wrap_rede_social, self._botao_copiar_rede_social = self._criar_campo_com_widget(
             "Rede social", self._campo_rede_social, lambda: self._campo_rede_social.text(),
@@ -878,14 +876,14 @@ class FichaClienteScreen(QWidget):
             QDesktopServices.openUrl(QUrl(f"https://wa.me/{numero}"))
 
     def _atualizar_botao_rede_social(self, texto: str) -> None:
-        """O botao mostra o nome da rede detectada ("Instagram ↗", "Facebook ↗"...) e some
-        quando o texto nao parece um link de verdade - mesmo padrao do WhatsApp ao lado
-        do celular, so que a rede muda de acordo com o link (varias sao reconhecidas, ver
-        _REDES_CONHECIDAS)."""
+        """O botao (um icone de "abrir link") mostra no tooltip a rede detectada ("Abrir
+        no Instagram", "Abrir no Facebook"...) e some quando o texto nao parece um link
+        de verdade - mesmo padrao do WhatsApp ao lado do celular, so que a rede muda de
+        acordo com o link (varias sao reconhecidas, ver _REDES_CONHECIDAS)."""
         link = _link_da_rede_social(texto)
         self._botao_abrir_rede_social.setVisible(link is not None)
         if link is not None:
-            self._botao_abrir_rede_social.setText(f"{link[0]} ↗")
+            self._botao_abrir_rede_social.setToolTip(f"Abrir no {link[0]}")
 
     def _abrir_rede_social(self) -> None:
         link = _link_da_rede_social(self._campo_rede_social.text())
@@ -1151,7 +1149,9 @@ class FichaClienteScreen(QWidget):
         numero_whats = _numero_whatsapp(celular)
         self._botao_whatsapp.setProperty("numero_whatsapp", numero_whats)
         self._botao_whatsapp.setEnabled(bool(numero_whats))
-        self._botao_whatsapp.setToolTip("" if numero_whats else "Celular sem DDD/dígitos suficientes para abrir o WhatsApp")
+        self._botao_whatsapp.setToolTip(
+            "Abrir no WhatsApp" if numero_whats else "Celular sem DDD/dígitos suficientes para abrir o WhatsApp"
+        )
 
         email = cliente["EMAIL"] or ""
         self._rotulo_email.setText(self._texto_com_link_de_email(email))

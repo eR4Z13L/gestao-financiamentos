@@ -1,7 +1,8 @@
-"""Icones de linha (um traco fino, sem preenchimento) desenhados por codigo: o QSS nao sabe
-colorir icone e emoji nao acompanha o tema. Cada icone usa a cor que quem desenha passar
-(a do tema ativo, ou a de destaque quando selecionado), entao se refaz sozinho quando o
-tema muda.
+"""Icones de linha (um traco fino, quase todos sem preenchimento) desenhados por codigo: o
+QSS nao sabe colorir icone e emoji nao acompanha o tema. Cada icone usa a cor que quem
+desenha passar (a do tema ativo, ou a de destaque quando selecionado), entao se refaz
+sozinho quando o tema muda. Excecao: "whatsapp" preenche o fone e a caudinha do balao,
+pra ficar reconhecivel como o icone oficial.
 
 Os desenhos vivem num quadrado de 24 x 24 e sao escalados pra area pedida:
 
@@ -85,6 +86,50 @@ def _lua(p: QPainter) -> None:
     p.drawPath(disco.subtracted(recorte))  # o disco menos um disco deslocado = o crescente
 
 
+def _whatsapp(p: QPainter) -> None:
+    # o balao (anel grosso) e o fone (preenchido) do icone oficial - unico icone
+    # desta lista que preenche em vez de so contornar, pra ficar reconhecivel
+    cor = p.pen().color()
+    p.setPen(QPen(cor, 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawEllipse(QPointF(12, 11), 7.5, 7.5)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(cor)
+    cauda = QPainterPath(QPointF(7.6, 16.8))
+    cauda.lineTo(4.9, 20.6)
+    cauda.lineTo(9.3, 18.2)
+    cauda.closeSubpath()
+    p.drawPath(cauda)
+    fone = QPainterPath(QPointF(8.8, 7.6))
+    fone.cubicTo(9.1, 7.3, 9.5, 7.3, 9.8, 7.5)
+    fone.lineTo(11.4, 9.0)
+    fone.cubicTo(11.7, 9.3, 11.7, 9.7, 11.4, 10.0)
+    fone.lineTo(10.7, 10.7)
+    fone.cubicTo(11.3, 11.7, 12.1, 12.5, 13.1, 13.1)
+    fone.lineTo(13.8, 12.4)
+    fone.cubicTo(14.1, 12.1, 14.5, 12.1, 14.8, 12.4)
+    fone.lineTo(16.3, 14.0)
+    fone.cubicTo(16.5, 14.3, 16.5, 14.7, 16.2, 15.0)
+    fone.cubicTo(15.3, 15.9, 14.0, 16.2, 12.8, 15.7)
+    fone.cubicTo(11.5, 15.0, 8.8, 11.5, 7.8, 10.7)
+    fone.cubicTo(7.3, 9.5, 7.6, 8.2, 8.5, 7.3)
+    fone.closeSubpath()
+    p.drawPath(fone)
+
+
+def _link_externo(p: QPainter) -> None:
+    caixa = QPainterPath(QPointF(18, 13))
+    caixa.lineTo(18, 19)
+    caixa.lineTo(5, 19)
+    caixa.lineTo(5, 7)
+    caixa.lineTo(11, 7)
+    p.drawPath(caixa)
+    seta_canto = QPainterPath(QPointF(14, 4))
+    seta_canto.lineTo(20, 4)
+    seta_canto.lineTo(20, 10)
+    p.drawPath(seta_canto)
+    p.drawLine(QPointF(10, 14), QPointF(20, 4))
+
+
 _DESENHOS = {
     "dashboard": _dashboard,
     "ficha": _ficha,
@@ -94,6 +139,8 @@ _DESENHOS = {
     "sair": _sair,
     "sol": _sol,
     "lua": _lua,
+    "whatsapp": _whatsapp,
+    "link_externo": _link_externo,
 }
 
 

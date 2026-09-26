@@ -349,11 +349,11 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
 
         # a Rede Social mostra a URL crua no campo (como QLineEdit, não estica o layout -
         # ele rola por dentro, ao contrário de um QLabel com word-wrap); o botão do lado
-        # mostra um link CURTO (domínio + seta), que precisa continuar levando pro
-        # endereço INTEIRO
+        # e so um icone (largura fixa, nao pesa no layout) - o dominio CURTO (sem a URL
+        # inteira) aparece no tooltip, que precisa continuar levando pro endereço INTEIRO
         assert tela._campo_rede_social.text() == url_longa, "o campo deveria mostrar a URL exata, como foi digitada"
-        assert tela._botao_abrir_rede_social.text() == "maapp.com.br ↗", "o botão deveria mostrar um link curto, não a URL crua"
-        print("OK: a Rede Social mostra a URL crua no campo, com um botão de link curto ('maapp.com.br ↗') do lado.")
+        assert tela._botao_abrir_rede_social.toolTip() == "Abrir no maapp.com.br", "o tooltip deveria mostrar um link curto, não a URL crua"
+        print("OK: a Rede Social mostra a URL crua no campo, com um ícone (tooltip 'Abrir no maapp.com.br') do lado.")
 
         if not historico.empty:
             # os cards do historico nao mostram as observacoes (ficam na tela de leitura da proposta):
