@@ -469,7 +469,7 @@ class FichaClienteScreen(QWidget):
 
         self._campo_cpf = QLineEdit()
         self._campo_cpf.setReadOnly(True)
-        self._campo_cpf.setMaximumWidth(150)
+        self._campo_cpf.setMaximumWidth(170)
         conectar_mascara(self._campo_cpf, formatar_cpf_cnpj_parcial)
         wrap_cpf, self._botao_copiar_cpf = self._criar_campo_com_widget(
             "CPF/CNPJ", self._campo_cpf, lambda: self._cpf_selecionado or ""
@@ -526,6 +526,7 @@ class FichaClienteScreen(QWidget):
         # detectada ("Instagram ↗", "Facebook ↗"...); sem link reconhecido, o botao some
         self._campo_rede_social = QLineEdit()
         self._campo_rede_social.setReadOnly(True)
+        self._campo_rede_social.setMaximumWidth(260)
         self._campo_rede_social.textChanged.connect(self._atualizar_botao_rede_social)
         self._botao_abrir_rede_social = QPushButton("")
         self._botao_abrir_rede_social.setProperty("role", "botao_link")
@@ -539,7 +540,7 @@ class FichaClienteScreen(QWidget):
         self._campo_vinculado = QLineEdit()
         self._campo_vinculado.setReadOnly(True)
         self._campo_vinculado.setPlaceholderText("—")
-        self._campo_vinculado.setMaximumWidth(220)
+        self._campo_vinculado.setMaximumWidth(260)
         wrap_vinculado, self._botao_copiar_vinculado = self._criar_campo_com_widget(
             "Vinculado a", self._campo_vinculado, lambda: self._campo_vinculado.text()
         )
@@ -554,21 +555,21 @@ class FichaClienteScreen(QWidget):
         self._campo_nome_pai = QLineEdit()
         self._campo_nome_pai.setReadOnly(True)
         self._campo_nome_pai.setPlaceholderText("—")
-        self._campo_nome_pai.setMaximumWidth(220)
+        self._campo_nome_pai.setMaximumWidth(260)
         wrap_pai, self._botao_copiar_pai = self._criar_campo_com_widget(
             "Nome do pai", self._campo_nome_pai, lambda: self._campo_nome_pai.text()
         )
         self._campo_nome_mae = QLineEdit()
         self._campo_nome_mae.setReadOnly(True)
         self._campo_nome_mae.setPlaceholderText("—")
-        self._campo_nome_mae.setMaximumWidth(220)
+        self._campo_nome_mae.setMaximumWidth(260)
         wrap_mae, self._botao_copiar_mae = self._criar_campo_com_widget(
             "Nome da mãe", self._campo_nome_mae, lambda: self._campo_nome_mae.text()
         )
         self._campo_profissao = QLineEdit()
         self._campo_profissao.setReadOnly(True)
         self._campo_profissao.setPlaceholderText("—")
-        self._campo_profissao.setMaximumWidth(220)
+        self._campo_profissao.setMaximumWidth(260)
         wrap_profissao, self._botao_copiar_profissao = self._criar_campo_com_widget(
             "Profissão", self._campo_profissao, lambda: self._campo_profissao.text()
         )
@@ -787,7 +788,10 @@ class FichaClienteScreen(QWidget):
             return wrapper, None
         linha = QHBoxLayout()
         linha.setSpacing(4)
-        linha.addWidget(widget, 1)
+        # stretch bem maior que o do espacador do final (1, alguns campos abaixo): senao os
+        # dois disputam o espaço sobrando quase de igual pra igual e o campo fica bem mais
+        # estreito que a largura maxima dele, mesmo tendo espaco de sobra na coluna
+        linha.addWidget(widget, 100)
         botao = None
         if copiar is not None:
             botao = BotaoCopiar(copiar)
