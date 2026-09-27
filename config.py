@@ -15,11 +15,13 @@ DIRETORIO_DADOS = DIRETORIO_BASE / "data"
 VERSAO_APP = "1.0.0"
 
 # Arquivo que funciona como banco de dados local - por dentro e um .xlsx de
-# verdade (o openpyxl le/grava pelo CONTEUDO, nao pela extensao), mas o nome
-# termina em .dat de proposito: um clique duplo no Explorer nao abre mais
-# sozinho no Excel mostrando todos os dados - so quem sabe (Abrir com... >
-# Excel) consegue. O nome da variavel ficou historico (CAMINHO_XLSX), mesmo
-# a extensao real sendo .dat.
+# verdade, mas o nome termina em .dat de proposito: um clique duplo no
+# Explorer nao abre mais sozinho no Excel mostrando todos os dados - so quem
+# sabe (Abrir com... > Excel) consegue. O openpyxl grava normalmente nesse
+# caminho (wb.save() nao liga pra extensao), mas recusaria LER um caminho
+# .dat direto - core.data_store contorna isso abrindo o arquivo e passando o
+# handle (a checagem de extensao so roda pra string/Path). O nome da
+# variavel ficou historico (CAMINHO_XLSX), mesmo a extensao real sendo .dat.
 CAMINHO_XLSX = DIRETORIO_DADOS / "controle_financiamentos.dat"
 
 # Bancos/financeiras parceiros conhecidos (apenas para preencher a lista de
@@ -50,3 +52,15 @@ CAMINHO_CREDENCIAIS_ADMIN = DIRETORIO_BASE / "credentials" / "admin_senha.json"
 # Liga/desliga a sincronizacao - usado pelos smoke tests pra nunca mandar
 # dado de teste pra planilha real na nuvem (veja scripts/smoke_test_*.py).
 SINCRONIZACAO_GOOGLE_ATIVADA = True
+
+# Config local opcional de DESENVOLVIMENTO/TESTE - nunca commitada (.gitignore).
+# Se config_local.py existir, ele roda AGORA e redefine so as variaveis que quiser
+# (normalmente CAMINHO_XLSX/DIRETORIO_DADOS, GOOGLE_SHEETS_ID e
+# CAMINHO_CREDENCIAIS_GOOGLE) - assim da pra testar/desenvolver numa planilha e
+# num Google Sheets separados, sem risco de mexer nos dados reais por engano.
+# Sem esse arquivo, nada muda (usa sempre a config real de cima). Copie
+# config_local.exemplo.py pra config_local.py e ajuste os caminhos/IDs.
+try:
+    from config_local import *  # noqa: F401,F403 - so sobrescreve o que o arquivo definir
+except ImportError:
+    pass

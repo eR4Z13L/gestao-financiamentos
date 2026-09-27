@@ -21,6 +21,12 @@ token.json
 .env
 credentials/
 
+# Config local de desenvolvimento/teste (planilha e Sheets separados dos reais -
+# ver config_local.exemplo.py) e a planilha/credenciais de teste que ela aponta
+config_local.py
+data_teste/
+credentials_teste/
+
 # Ambiente virtual Python
 venv/
 .venv/
