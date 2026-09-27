@@ -3,7 +3,13 @@
 Dois casos:
 - ADMIN ainda nao tem senha definida (primeira execucao nesta maquina) ->
   pede pra criar uma senha agora, em vez de mostrar o formulario de login.
-- Caso normal -> usuario ("Administrador" ou o nome de um vendedor) + senha.
+- Caso normal -> senha do Administrador.
+
+Por enquanto SO o Administrador loga por aqui - o modo vendedor (usuario +
+senha, conferidos no Google Sheets - core.vendedores.verificar_login) fica
+pausado ate a fase de rollout pros vendedores. O CADASTRO de vendedores
+(Administracao > Usuarios) continua funcionando normalmente - so o login
+deles que esta desligado nesta tela.
 """
 
 from __future__ import annotations
@@ -21,7 +27,6 @@ from PySide6.QtWidgets import (
 
 from core import auth
 from core import sessao as sessao_mod
-from core import vendedores as vendedores_mod
 
 USUARIO_ADMIN = "Administrador"
 
@@ -57,12 +62,9 @@ class LoginDialog(QDialog):
             layout.addLayout(form)
         else:
             form = QFormLayout()
-            self._usuario = QLineEdit()
-            self._usuario.setPlaceholderText("Administrador, ou o seu nome (vendedor)")
-            form.addRow("Usuário", self._usuario)
             self._senha = QLineEdit()
             self._senha.setEchoMode(QLineEdit.EchoMode.Password)
-            form.addRow("Senha", self._senha)
+            form.addRow("Senha do Administrador", self._senha)
             layout.addLayout(form)
 
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -94,34 +96,13 @@ class LoginDialog(QDialog):
         self.accept()
 
     def _fazer_login(self) -> None:
-        usuario = self._usuario.text().strip()
         senha = self._senha.text()
-        if not usuario or not senha:
-            QMessageBox.warning(self, "Campos obrigatórios", "Preencha usuário e senha.")
+        if not senha:
+            QMessageBox.warning(self, "Campo obrigatório", "Preencha a senha.")
             return
 
-        if usuario.upper() == USUARIO_ADMIN.upper():
-            if auth.verificar_senha_admin(senha):
-                self.sessao_criada = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario=USUARIO_ADMIN)
-                self.accept()
-            else:
-                QMessageBox.warning(self, "Não foi possível entrar", "Usuário ou senha incorretos.")
-            return
-
-        try:
-            nome_oficial = vendedores_mod.verificar_login(usuario, senha)
-        except Exception as exc:  # falha de rede/API ao consultar o Google Sheets
-            QMessageBox.critical(
-                self,
-                "Erro ao conectar",
-                "Não foi possível verificar o login agora - confira sua conexão com a internet "
-                f"e tente de novo.\n\nDetalhe técnico: {exc}",
-            )
-            return
-
-        if nome_oficial is None:
-            QMessageBox.warning(self, "Não foi possível entrar", "Usuário ou senha incorretos.")
-            return
-
-        self.sessao_criada = sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario=nome_oficial)
-        self.accept()
+        if auth.verificar_senha_admin(senha):
+            self.sessao_criada = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario=USUARIO_ADMIN)
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Não foi possível entrar", "Senha incorreta.")
