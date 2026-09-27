@@ -230,7 +230,11 @@ def _detectar_formato(ws, nome_arquivo: str) -> str:
 def planejar(caminho_xlsx: Path) -> tuple[list[dict], Relatorio]:
     """Le e classifica os enderecos SEM gravar nada (nem backup) - serve pra
     mostrar o que a migracao faria antes de rodar de verdade."""
-    wb = openpyxl.load_workbook(caminho_xlsx, data_only=False)
+    # load_workbook recusa um CAMINHO cuja extensao nao seja .xlsx/.xlsm/.xltx/.xltm - o
+    # arquivo real usa .dat de proposito (ver config.py); passar o file handle pula essa
+    # checagem (so roda pra string/Path, nao pra quem ja tem .read())
+    with open(caminho_xlsx, "rb") as arquivo:
+        wb = openpyxl.load_workbook(arquivo, data_only=False)
     try:
         ws = wb[bd.ABA_CLIENTES]
         formato = _detectar_formato(ws, caminho_xlsx.name)
@@ -263,8 +267,10 @@ def _verificar_resultado(
     colunas_antigas = _COLUNAS_POR_FORMATO[formato]
     linhas_separadas_agora = {i.linha_planilha for i in relatorio.separados}
 
-    antes = openpyxl.load_workbook(caminho_original, data_only=False)
-    depois = openpyxl.load_workbook(caminho_novo, data_only=False)
+    with open(caminho_original, "rb") as arquivo:
+        antes = openpyxl.load_workbook(arquivo, data_only=False)
+    with open(caminho_novo, "rb") as arquivo:
+        depois = openpyxl.load_workbook(arquivo, data_only=False)
     try:
         if antes.sheetnames != depois.sheetnames:
             raise ErroMigracao(f"abas mudaram: {antes.sheetnames} -> {depois.sheetnames}")
@@ -342,7 +348,8 @@ def migrar_planilha(caminho_xlsx: Path, sincronizar: bool = False) -> Relatorio:
 
     # 2) monta o resultado num arquivo temporario e o confere; o real ainda nao foi tocado
     temporario = caminho_xlsx.with_name(f"{caminho_xlsx.stem}.migrando{caminho_xlsx.suffix}")
-    wb = openpyxl.load_workbook(caminho_xlsx, data_only=False)
+    with open(caminho_xlsx, "rb") as arquivo:
+        wb = openpyxl.load_workbook(arquivo, data_only=False)
     try:
         _reescrever_aba(wb[bd.ABA_CLIENTES], novos)
         wb.save(temporario)

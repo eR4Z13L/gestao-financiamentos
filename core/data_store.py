@@ -215,7 +215,14 @@ def _carregar_planilha(caminho_xlsx: Path):
     coletor_estava_ligado = gc.isenabled()
     gc.disable()
     try:
-        wb = openpyxl.load_workbook(caminho_xlsx, data_only=False)
+        # load_workbook recusa um CAMINHO cuja extensao nao seja .xlsx/.xlsm/.xltx/.xltm
+        # (ve openpyxl/reader/excel.py:_validate_archive) - o arquivo real usa .dat de
+        # proposito (ver config.py, CAMINHO_XLSX), entao abre o arquivo e passa o file
+        # handle: a checagem de extensao so roda pra string/Path, nunca pra quem ja tem
+        # .read() - o handle pode fechar logo depois (load_workbook nao e "read_only",
+        # le tudo pra memoria na hora, nao precisa do arquivo aberto depois de carregar)
+        with open(caminho_xlsx, "rb") as arquivo:
+            wb = openpyxl.load_workbook(arquivo, data_only=False)
         try:
             yield wb
         finally:
@@ -450,7 +457,7 @@ def _salvar_planilha(wb, caminho_xlsx: Path) -> None:
             f"O arquivo '{caminho_xlsx.name}' esta aberto no Excel. "
             "Feche-o e tente salvar novamente."
         )
-    tmp_fd, tmp_nome = tempfile.mkstemp(suffix=".xlsx", dir=str(caminho_xlsx.parent))
+    tmp_fd, tmp_nome = tempfile.mkstemp(suffix=caminho_xlsx.suffix, dir=str(caminho_xlsx.parent))
     os.close(tmp_fd)
     caminho_temporario = Path(tmp_nome)
     try:

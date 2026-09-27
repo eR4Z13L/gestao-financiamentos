@@ -37,7 +37,10 @@ from core import data_store as bd
 def _valores_fora_do_tempo(caminho: Path) -> list[tuple]:
     """Todas as celulas da planilha, EXCETO a coluna TEMPO da aba PROPOSTAS -
     o que tem que ficar identico antes e depois."""
-    wb = openpyxl.load_workbook(caminho, data_only=False)
+    # load_workbook recusa um CAMINHO cuja extensao nao seja .xlsx/.xlsm/.xltx/.xltm - o
+    # arquivo real usa .dat de proposito (ver config.py); o file handle pula essa checagem
+    with open(caminho, "rb") as arquivo_aberto:
+        wb = openpyxl.load_workbook(arquivo_aberto, data_only=False)
     try:
         resultado = []
         for ws in wb.worksheets:

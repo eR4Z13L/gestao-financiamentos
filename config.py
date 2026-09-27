@@ -14,9 +14,13 @@ DIRETORIO_DADOS = DIRETORIO_BASE / "data"
 # Versao mostrada no rodape da barra lateral - o unico lugar a mudar a cada versao nova.
 VERSAO_APP = "1.0.0"
 
-# Arquivo .xlsx que funciona como banco de dados local.
-# Pode ser aberto no Excel a qualquer momento para conferencia manual.
-CAMINHO_XLSX = DIRETORIO_DADOS / "controle_financiamentos.xlsx"
+# Arquivo que funciona como banco de dados local - por dentro e um .xlsx de
+# verdade (o openpyxl le/grava pelo CONTEUDO, nao pela extensao), mas o nome
+# termina em .dat de proposito: um clique duplo no Explorer nao abre mais
+# sozinho no Excel mostrando todos os dados - so quem sabe (Abrir com... >
+# Excel) consegue. O nome da variavel ficou historico (CAMINHO_XLSX), mesmo
+# a extensao real sendo .dat.
+CAMINHO_XLSX = DIRETORIO_DADOS / "controle_financiamentos.dat"
 
 # Bancos/financeiras parceiros conhecidos (apenas para preencher a lista de
 # sugestoes no formulario de proposta - o campo continua sendo texto livre).
