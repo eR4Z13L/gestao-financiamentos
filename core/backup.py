@@ -1,8 +1,11 @@
-"""Backup automático e manual do arquivo .xlsx que funciona como banco de dados.
+"""Backup automático e manual do arquivo (.dat/.xlsx) que funciona como banco de dados.
 
 Cada backup é uma CÓPIA do arquivo real, salva em data/backups/ com o nome
-"controle_financiamentos.<motivo>-<AAAAMMDD-HHMMSS>.xlsx" - o motivo distingue
-backups automáticos (rotina diária, ao abrir o app, limitados às
+"controle_financiamentos.<motivo>-<AAAAMMDD-HHMMSS>.<extensao>" - a extensão é
+sempre a do arquivo real NA HORA do backup (hoje .dat - ver config.py), mas
+backups antigos feitos quando o arquivo real ainda era .xlsx continuam
+reconhecidos normalmente (ver _PADRAO_NOME). O motivo distingue backups
+automáticos (rotina diária, ao abrir o app, limitados às
 MAXIMO_BACKUPS_AUTOMATICOS cópias mais recentes) de manuais e de
 pré-restauração (esses dois NUNCA são apagados sozinhos, só a própria pessoa,
 direto na pasta). Ficam numa pasta PRÓPRIA (nunca direto em data/, junto dos
@@ -38,9 +41,11 @@ _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # "-N" opcional no final) - qualquer outro arquivo na pasta (colocado à mão, por exemplo) é
 # ignorado pela listagem e nunca é candidato a apagar na limpeza automática. O sufixo "-N"
 # existe pra desempatar dois backups feitos dentro do mesmo segundo (ver _destino_disponivel) -
-# sem ele, o segundo simplesmente sobrescreveria o arquivo do primeiro, calado.
+# sem ele, o segundo simplesmente sobrescreveria o arquivo do primeiro, calado. Aceita tanto
+# .dat (extensao atual do arquivo real) quanto .xlsx (extensao antiga, de backups feitos antes
+# da troca - ver config.py) - assim nenhum backup ja existente some da listagem.
 _PADRAO_NOME = re.compile(
-    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.xlsx$"
+    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
 )
 
 
@@ -83,7 +88,9 @@ def listar_backups(caminho_xlsx: Path | None = None) -> list[Backup]:
     if not pasta.exists():
         return []
     encontrados = []
-    for arquivo in pasta.glob(f"{caminho_xlsx.stem}.*.xlsx"):
+    # glob so pelo stem (sem extensao) - _analisar_nome que filtra .dat/.xlsx e o resto do
+    # padrao, entao um backup antigo (.xlsx) e um novo (.dat) aparecem juntos na mesma lista.
+    for arquivo in pasta.glob(f"{caminho_xlsx.stem}.*"):
         analisado = _analisar_nome(arquivo.name)
         if analisado is None:
             continue
@@ -93,23 +100,24 @@ def listar_backups(caminho_xlsx: Path | None = None) -> list[Backup]:
     return encontrados
 
 
-def _destino_disponivel(pasta: Path, base: str, motivo: str, quando: str) -> Path:
-    """O nome "<base>.<motivo>-<quando>.xlsx" - ou, se dois backups caíram no mesmo segundo
-    (dois cliques rápidos em "Fazer backup agora", ou o backup de segurança logo antes de uma
-    restauração), "<base>.<motivo>-<quando>-2.xlsx", "-3"... nunca sobrescreve um backup que
-    já existe."""
-    candidato = pasta / f"{base}.{motivo}-{quando}.xlsx"
+def _destino_disponivel(pasta: Path, base: str, motivo: str, quando: str, extensao: str) -> Path:
+    """O nome "<base>.<motivo>-<quando><extensao>" - ou, se dois backups caíram no mesmo
+    segundo (dois cliques rápidos em "Fazer backup agora", ou o backup de segurança logo
+    antes de uma restauração), "<base>.<motivo>-<quando>-2<extensao>", "-3"... nunca
+    sobrescreve um backup que já existe."""
+    candidato = pasta / f"{base}.{motivo}-{quando}{extensao}"
     contador = 2
     while candidato.exists():
-        candidato = pasta / f"{base}.{motivo}-{quando}-{contador}.xlsx"
+        candidato = pasta / f"{base}.{motivo}-{quando}-{contador}{extensao}"
         contador += 1
     return candidato
 
 
 def fazer_backup(motivo: str = MOTIVO_MANUAL, caminho_xlsx: Path | None = None) -> Path:
-    """Copia o .xlsx real para a pasta de backups com o timestamp de agora. Não verifica
-    se o arquivo está aberto no Excel - um backup é só uma FOTO do que está no disco
-    agora, não precisa do mesmo cuidado (bloqueio/gravação atômica) de uma escrita."""
+    """Copia o arquivo real para a pasta de backups com o timestamp de agora, mantendo a
+    MESMA extensão do arquivo real (.dat hoje). Não verifica se o arquivo está aberto no
+    Excel - um backup é só uma FOTO do que está no disco agora, não precisa do mesmo
+    cuidado (bloqueio/gravação atômica) de uma escrita."""
     caminho_xlsx = caminho_xlsx or CAMINHO_XLSX
     if not caminho_xlsx.exists():
         raise FileNotFoundError(f"Arquivo '{caminho_xlsx}' não existe - nada para fazer backup.")
@@ -117,7 +125,7 @@ def fazer_backup(motivo: str = MOTIVO_MANUAL, caminho_xlsx: Path | None = None) 
     pasta = _pasta_backups(caminho_xlsx)
     pasta.mkdir(parents=True, exist_ok=True)
     quando = datetime.now().strftime(_FORMATO_TIMESTAMP)
-    destino = _destino_disponivel(pasta, caminho_xlsx.stem, motivo, quando)
+    destino = _destino_disponivel(pasta, caminho_xlsx.stem, motivo, quando, caminho_xlsx.suffix)
     shutil.copy2(caminho_xlsx, destino)
     return destino
 
@@ -163,7 +171,7 @@ def restaurar_backup(backup: Path, caminho_xlsx: Path | None = None) -> Path:
 
     seguranca = fazer_backup(MOTIVO_PRE_RESTAURACAO, caminho_xlsx)
 
-    tmp_fd, tmp_nome = tempfile.mkstemp(suffix=".xlsx", dir=str(caminho_xlsx.parent))
+    tmp_fd, tmp_nome = tempfile.mkstemp(suffix=caminho_xlsx.suffix, dir=str(caminho_xlsx.parent))
     os.close(tmp_fd)
     caminho_temporario = Path(tmp_nome)
     try:
