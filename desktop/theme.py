@@ -436,6 +436,36 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         border-bottom: 1px solid {p['borda']};
         font-weight: 600;
     }}
+    /* tabela de um cartao do Dashboard (Por banco/Por vendedor): sem borda/cantos
+       proprios - o CartaoDoPainel que a envolve ja tem, senao vira "caixa dentro
+       de caixa" (as outras cores/zebra continuam vindo da regra generica acima) */
+    QTableView[role="tabela_painel"] {{
+        border: none;
+        border-radius: 0px;
+    }}
+
+    /* abas do Dashboard ("Visão geral" / "Mais detalhes") */
+    QTabWidget::pane {{
+        border: none;
+        border-top: 1px solid {p['borda']};
+        top: -1px;
+    }}
+    QTabBar::tab {{
+        background-color: transparent;
+        color: {p['texto_secundario']};
+        padding: 8px 16px;
+        border: none;
+        border-bottom: 2px solid transparent;
+        font-weight: 600;
+        font-size: 13px;
+    }}
+    QTabBar::tab:selected {{
+        color: {p['texto']};
+        border-bottom: 2px solid {p['destaque']};
+    }}
+    QTabBar::tab:hover:!selected {{
+        color: {p['texto']};
+    }}
 
     QPushButton {{
         background-color: {p['bg_card']};

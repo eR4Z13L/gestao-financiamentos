@@ -34,12 +34,10 @@ from core import clientes as clientes_mod
 from core import dashboard as dash
 from core import propostas as propostas_mod
 from core.formatting import formatar_reais
-from core.validators import apenas_digitos
 from desktop.theme import CORES_STATUS, PALETAS, TEMA_CLARO, TEMA_ESCURO
 from desktop.widgets.linha_clicavel import LinhaClicavel
 from desktop.widgets.lista_cartoes import chave_cor_etapa
 from desktop.widgets.linha_de_qualidade import LinhaDeQualidade
-from desktop.widgets.linha_para_reenviar import LinhaParaReenviar
 from desktop.widgets.tabela_de_painel import COR_AVISO, COR_ERRO
 
 TEMAS = (TEMA_ESCURO, TEMA_CLARO)
@@ -215,7 +213,6 @@ def testar_periodo_e_comparacao(amb: Ambiente, msgs: Mensagens, tema: str) -> No
     assert isinstance(mensagem, QLabel) and mensagem.text() == "Tudo em dia: nenhuma proposta pedindo atenção nos últimos 7 dias."
     assert mensagem.property("role") == "positivo"
     assert all(c.percentual is None for c in dash.qualidade_dos_dados(tela._no_periodo))
-    assert [w.text() for w in _widgets(tela._cartao_reenviar)] == ["Nenhum cliente com todas as propostas negadas nos últimos 7 dias."]
     tela._hoje = lambda: hoje
     tela.definir_periodo("tudo")
     print("OK: periodo sem dados -> zeros, '—', 'Tudo em dia' e as mensagens vazias de cada bloco.")
@@ -428,85 +425,8 @@ def testar_por_banco(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     msgs.exigir_sem_erros("por banco")
 
 
-def testar_para_reenviar(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"5) Para reenviar: 'Duplicar' abre a Ficha com a Nova proposta preenchida [{tema}]")
-    janela = amb.nova_janela("admin", tema)
-    tela = _dashboard(janela)
-    propostas = propostas_mod.listar_propostas()
-    esperados = dash.para_reenviar(propostas)
-    assert len(esperados) >= 9, "a fixture tem (por construcao) 9 ou mais clientes com todas as propostas negadas"
-
-    linhas = [w for w in _widgets(tela._cartao_reenviar) if isinstance(w, LinhaParaReenviar)]
-    extra = [w for w in _widgets(tela._cartao_reenviar) if isinstance(w, QLabel)]
-    assert len(linhas) == 8 and len(extra) == 1 and extra[0].text().startswith(f"e mais {len(esperados) - 8}"), "8 linhas e 'e mais N'"
-    assert [l.item().cpf for l in linhas] == [e.cpf for e in esperados[:8]]
-    primeira = linhas[0]
-    assert "negada" in primeira.texto_das_negadas() and primeira.texto_das_sugestoes().startswith("Ainda não tentou: ")
-    assert f"{len(esperados)} clientes com todas as propostas negadas" in tela._cartao_reenviar.legenda()
-    print("OK: os clientes de core (mais recentes primeiro), bancos tentados e os que faltam, e 'e mais N' depois de 8.")
-
-    # Duplicar: abre a ficha do cliente com o card "Nova proposta" preenchido pela regra de duplicar
-    item = primeira.item()
-    original = propostas.loc[item.indice_da_proposta]
-    primeira.botao_duplicar().click()
-    assert janela.chave_atual() == "ficha"
-    ficha = janela._tela_ficha
-    assert apenas_digitos(ficha._cpf_selecionado) == item.cpf and ficha._campo_nome.text() == item.cliente
-    assert ficha._expansor.eh_rascunho() and ficha._modelo_historico.tem_rascunho()
-    formulario = ficha._expansor.formulario()
-    assert formulario._equipamento.currentText() == original["EQUIPAMENTO"] and formulario._banco.currentText() == "", "o banco fica em branco: quem duplica escolhe"
-    assert formulario._status.currentText() == propostas_mod.STATUS_EM_ANALISE, "nunca herda 'Negado'"
-    if not pd.isna(original["VALOR (R$)"]):
-        assert formulario._valor.value() == original["VALOR (R$)"]
-    assert len(propostas_mod.listar_propostas()) == len(propostas), "duplicar nao grava nada ate confirmar"
-    print("OK: Duplicar abre a Ficha do cliente com 'Nova proposta' (equipamento e valor da mais recente, sem banco, em análise) e nada e gravado.")
-
-    # confirmar: cria uma proposta NOVA e a original continua negada; o cliente sai da lista de reenvio
-    if formulario._valor.value() == 0:
-        formulario._valor.setValue(10000)
-    formulario._banco.setCurrentText("Smart")
-    formulario._salvar()
-    depois = propostas_mod.listar_propostas()
-    assert len(depois) == len(propostas) + 1
-    nova = depois.loc[max(depois.index)]
-    assert nova["BANCO"] == "Smart" and nova["STATUS"] == propostas_mod.STATUS_EM_ANALISE and nova["CPF"] == original["CPF"]
-    assert depois.loc[item.indice_da_proposta, "STATUS"] == propostas_mod.STATUS_NEGADO, "a original nao muda"
-    janela.ir_para("dashboard")  # voltar ao Dashboard rele os dados (as outras telas gravaram)
-    assert item.cpf not in [l.item().cpf for l in _widgets(tela._cartao_reenviar) if isinstance(l, LinhaParaReenviar)], "agora tem proposta em analise: sai da lista"
-    propostas_mod.remover_proposta(max(depois.index))  # devolve a fixture ao que era (o proximo tema usa a mesma)
-    print("OK: gravar cria uma proposta nova (Smart, em análise), a original segue negada e o cliente sai de 'Para reenviar' ao voltar ao Dashboard.")
-
-    # clicar no nome abre a ficha; cliente sem cadastro nao duplica
-    janela.ir_para("dashboard")
-    tela._carregar_dados()
-    outra = [w for w in _widgets(tela._cartao_reenviar) if isinstance(w, LinhaParaReenviar)][0]
-    outra.botao_cliente().click()
-    assert janela.chave_atual() == "ficha" and apenas_digitos(janela._tela_ficha._cpf_selecionado) == outra.item().cpf and not janela._tela_ficha._expansor.eh_rascunho()
-    orfa = LinhaParaReenviar(dash.ClienteParaReenviar("12345678900", "", False, 0, 1, ("Santander",), (), None))
-    assert not orfa.botao_duplicar().isEnabled() and not orfa.botao_cliente().isEnabled() and "sem cadastro" in orfa.botao_cliente().text().lower()
-    assert orfa.texto_das_sugestoes() == "Já tentou todos os bancos conhecidos" and "não tem cliente cadastrado" in orfa.botao_duplicar().toolTip()
-    print("OK: o nome abre a ficha; sem cadastro, os botoes ficam desativados com o motivo no tooltip.")
-
-    # o periodo olha a ULTIMA proposta do cliente
-    janela.ir_para("dashboard")
-    tela.definir_periodo("7d")
-    hoje = tela._hoje()
-    esperados_7d = dash.para_reenviar(propostas, dash.intervalo_do_periodo("7d", hoje))
-    assert [l.item().cpf for l in _widgets(tela._cartao_reenviar) if isinstance(l, LinhaParaReenviar)] == [e.cpf for e in esperados_7d[:8]]
-    tela.definir_periodo("tudo")
-
-    # o VENDEDOR nao cria proposta: nem o bloco existe, e a rota "Duplicar" por codigo nao faz nada
-    vendedor = amb.nova_janela("vendedor", tema)
-    assert not hasattr(_dashboard(vendedor), "_cartao_reenviar")
-    vendedor.ir_para("dashboard")
-    vendedor.abrir_nova_proposta_duplicada(item.cpf, 0)
-    assert vendedor.chave_atual() == "dashboard" and not vendedor._tela_ficha._expansor.eh_rascunho()
-    print("OK: VENDEDOR nao tem o bloco 'Para reenviar' nem consegue duplicar por codigo.")
-    msgs.exigir_sem_erros("para reenviar")
-
-
 def testar_qualidade_e_resumo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"6) Qualidade dos dados e resumo para copiar [{tema}]")
+    linha(f"5) Qualidade dos dados e resumo para copiar [{tema}]")
     janela = amb.nova_janela("admin", tema)
     tela = _dashboard(janela)
     paleta = PALETAS[tema]
@@ -538,14 +458,14 @@ def testar_qualidade_e_resumo(amb: Ambiente, msgs: Mensagens, tema: str) -> None
 
 
 def testar_visao_do_vendedor(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"7) Visao do VENDEDOR: so o dele, sem nome de outro vendedor [{tema}]")
+    linha(f"6) Visao do VENDEDOR: so o dele, sem nome de outro vendedor [{tema}]")
     for nome, outro in (("Vendedor Exemplo", NOME_DA_OUTRA_VENDEDORA), (NOME_DA_OUTRA_VENDEDORA, "Vendedor Exemplo")):
         janela = amb.nova_janela("vendedor", tema, nome=nome)
         tela = _dashboard(janela)
         minhas = propostas_mod.listar_propostas()  # ja filtrada pelo vendedor logado (a "rede" e simulada pelo Ambiente)
         assert 0 < len(minhas) < len(bd_todas(amb)), "o vendedor so ve as proprias propostas"
 
-        for ausente in ("_cartao_atencao", "_cartao_reenviar", "_cartao_qualidade", "_tabela_vendedores", "_cartao_vendedores"):
+        for ausente in ("_cartao_atencao", "_cartao_qualidade", "_tabela_vendedores", "_cartao_vendedores"):
             assert not hasattr(tela, ausente), f"o vendedor nao tem {ausente}"
         topo = dash.indicadores_do_topo(minhas)
         assert tela._card_em_analise.valor() == str(topo["em_analise"]["quantidade"]) and tela._card_a_efetivar.valor() == str(topo["a_efetivar"]["quantidade"])
@@ -589,7 +509,7 @@ def testar_visao_do_vendedor(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
 
 
 def testar_vendedor_sem_nada_e_planilha_vazia(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"8) Bordas: vendedor sem nenhuma proposta e planilha sem propostas [{tema}]")
+    linha(f"7) Bordas: vendedor sem nenhuma proposta e planilha sem propostas [{tema}]")
     # o app inteiro abre pra um vendedor recem-cadastrado (antes o Dashboard quebrava e a janela nao abria)
     janela = amb.nova_janela("vendedor", tema, nome="Fulano Sem Propostas")
     tela = _dashboard(janela)
@@ -604,14 +524,13 @@ def testar_vendedor_sem_nada_e_planilha_vazia(amb: Ambiente, msgs: Mensagens, te
     tela._propostas = fx.propostas_vazias()
     tela._atualizar()
     assert tela._card_em_analise.valor() == "0" and tela._tabela_vendedores.total_de_linhas() == 0
-    assert [w.text() for w in _widgets(tela._cartao_reenviar)] == ["Nenhum cliente com todas as propostas negadas."]
     assert all(isinstance(w, LinhaDeQualidade) and w.texto_do_valor() == "—" for w in _widgets(tela._cartao_qualidade))
     print("OK: sem propostas nenhum bloco quebra e cada um mostra a sua mensagem.")
     msgs.exigir_sem_erros("bordas")
 
 
 def testar_tema_e_recarga(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"9) Fundo dos rotulos, cores do funil, troca de tema e recarga [{tema}]")
+    linha(f"8) Fundo dos rotulos, cores do funil, troca de tema e recarga [{tema}]")
     janela = amb.nova_janela("admin", tema)
     tela = _dashboard(janela)
     paleta = PALETAS[tema]
@@ -683,7 +602,6 @@ def main() -> None:
                     testar_periodo_e_comparacao,
                     testar_atencao_e_cliques,
                     testar_por_banco,
-                    testar_para_reenviar,
                     testar_qualidade_e_resumo,
                     testar_visao_do_vendedor,
                     testar_vendedor_sem_nada_e_planilha_vazia,

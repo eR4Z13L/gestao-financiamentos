@@ -5,14 +5,17 @@ nada fica salvo, so exibido. A pagina rola; no topo ficam o titulo, o seletor de
 TODOS os blocos) e o botao "Atualizar", que rele os dados do zero (pro caso do arquivo ter sido editado
 direto no Excel com o app aberto).
 
-ADMIN ve: os numeros do topo, "Precisa de atencao", o funil por etapa, o desempenho por banco, os clientes
-"Para reenviar", a qualidade dos dados, o resumo para copiar e o desempenho por vendedor.
-VENDEDOR ve so o dele (as propostas ja vem filtradas): os numeros do topo, "minhas em analise", "minhas
-aprovadas para efetivar", "meus clientes sem proposta", o funil, o desempenho por banco e o resumo -
-nunca o nome de outro vendedor, nem os blocos de correcao de dados e de reenvio (que exigem escrever).
+ADMIN ve: os numeros do topo, e duas abas - "Visao geral" (funil por etapa, desempenho por banco) e
+"Mais detalhes" (precisa de atencao, qualidade dos dados, resumo para copiar, desempenho por vendedor).
+VENDEDOR ve so o dele (as propostas ja vem filtradas), numa unica grade sem abas (ja e enxuta): os numeros
+do topo, "minhas em analise", "minhas aprovadas para efetivar", "meus clientes sem proposta", o funil, o
+desempenho por banco e o resumo - nunca o nome de outro vendedor, nem os blocos que exigem escrever.
 
-A tela nao navega sozinha: cada linha clicavel EMITE um sinal (`filtro_pedido`, `ficha_pedida`,
-`duplicacao_pedida`) e a janela principal leva a pessoa pra Todas as Propostas ja filtrada ou pra Ficha.
+A tela nao navega sozinha: cada linha clicavel EMITE um sinal (`filtro_pedido`, `ficha_pedida`) e a janela
+principal leva a pessoa pra Todas as Propostas ja filtrada ou pra Ficha. `duplicacao_pedida` continua
+declarado (cpf, posicao real da proposta - Ficha com "Nova proposta" a partir dela) mas sem nenhum bloco
+que o emita hoje: era do card "Para reenviar", removido da tela (a logica em core/dashboard.py e o widget
+desktop/widgets/linha_para_reenviar.py continuam, caso o bloco volte no futuro).
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -45,12 +49,11 @@ from desktop.widgets.cartao_do_painel import CartaoDoPainel
 from desktop.widgets.funil_de_etapas import FunilDeEtapas
 from desktop.widgets.linha_clicavel import LinhaClicavel
 from desktop.widgets.linha_de_qualidade import LinhaDeQualidade
-from desktop.widgets.linha_para_reenviar import LinhaParaReenviar
 from desktop.widgets.metric_card import MetricCard
 from desktop.widgets.seletor_de_periodo import SeletorDePeriodo
 from desktop.widgets.tabela_de_painel import COR_AVISO, COR_ERRO, Celula, TabelaDePainel
 
-_MAXIMO_DE_LINHAS = 8  # nas listas curtas (para reenviar, "minhas...", clientes sem proposta); o resto vira "e mais N"
+_MAXIMO_DE_LINHAS = 8  # nas listas curtas ("minhas...", clientes sem proposta); o resto vira "e mais N"
 _ROTULOS_DE_PENDENTES = {
     dashboard_mod.ATENCAO_SEM_VALOR: "Sem valor preenchido",
     dashboard_mod.FILTRO_SEM_MESES: "Sem meses preenchido",
@@ -114,7 +117,7 @@ class DashboardScreen(QWidget):
         corpo.setContentsMargins(0, 0, 12, 0)  # a folga da direita e da barra de rolagem
         corpo.setSpacing(16)
         corpo.addLayout(self._construir_topo())
-        corpo.addLayout(self._construir_grade())
+        corpo.addWidget(self._construir_grade())
         corpo.addStretch(1)
 
         self._carregar_dados()
@@ -151,13 +154,28 @@ class DashboardScreen(QWidget):
             topo.addWidget(card, 1)
         return topo
 
-    def _construir_grade(self) -> QGridLayout:
+    @staticmethod
+    def _nova_grade() -> QGridLayout:
         grade = QGridLayout()
         grade.setHorizontalSpacing(16)
         grade.setVerticalSpacing(16)
         grade.setColumnStretch(0, 1)
         grade.setColumnStretch(1, 1)
+        return grade
 
+    @staticmethod
+    def _pagina(layout: QGridLayout) -> QWidget:
+        pagina = QWidget()
+        pagina.setProperty("role", "transparente")
+        pagina.setLayout(layout)
+        return pagina
+
+    def _construir_grade(self) -> QWidget:
+        """Funil/Por banco/Resumo sao compartilhados pelos dois papeis. ADMIN ve o
+        resto (Precisa de atenção, Qualidade dos dados, Por vendedor) numa 2a aba,
+        mais discreta - o que importa no dia a dia (funil + banco) fica na 1a, junto
+        dos numeros do topo. VENDEDOR ve tudo numa unica grade: a visao dele ja e
+        enxuta, sem precisar de abas."""
         self._cartao_funil = CartaoDoPainel("Funil por etapa", "Clique numa etapa para ver as propostas dela")
         self._funil = FunilDeEtapas()
         self._funil.etapa_clicada.connect(self._pedir_filtro_de_etapa)
@@ -183,14 +201,20 @@ class DashboardScreen(QWidget):
         self._cartao_resumo.corpo.addLayout(linha_do_resumo)
 
         if self._vendedor:
+            grade = self._nova_grade()
             self._construir_blocos_do_vendedor(grade)
-        else:
-            self._construir_blocos_do_admin(grade)
-        return grade
+            return self._pagina(grade)
+        return self._construir_abas_do_admin()
 
-    def _construir_blocos_do_admin(self, grade: QGridLayout) -> None:
+    def _construir_abas_do_admin(self) -> QTabWidget:
+        visao_geral = self._nova_grade()
+        # bancos precisa da largura toda (7 colunas de tabela) - o mesmo espaco que ja
+        # tinha antes das abas; funil fica sozinho na linha de cima (nada mais sobra
+        # pra por do lado dele nesta aba - "Precisa de atencao" foi pra "Mais detalhes")
+        visao_geral.addWidget(self._cartao_funil, 0, 0, 1, 2)
+        visao_geral.addWidget(self._cartao_bancos, 1, 0, 1, 2)
+
         self._cartao_atencao = CartaoDoPainel("Precisa de atenção", "Clique para ver as propostas")
-        self._cartao_reenviar = CartaoDoPainel("Para reenviar", "Clientes cujas propostas foram todas negadas")
         self._cartao_qualidade = CartaoDoPainel("Qualidade dos dados", "Quanto das propostas tem cada campo preenchido")
         self._cartao_vendedores = CartaoDoPainel("Por vendedor", "Clique no cabeçalho para ordenar")
         self._tabela_vendedores = TabelaDePainel(_COLUNAS_DE_VENDEDOR, colunas_a_direita=(1, 2, 3, 4, 5, 6, 7))
@@ -202,12 +226,15 @@ class DashboardScreen(QWidget):
         direita.addWidget(self._cartao_resumo)
         direita.addStretch(1)  # a sobra de altura (o cartao da esquerda e mais alto) fica embaixo, nao dentro dos cartoes
 
-        grade.addWidget(self._cartao_atencao, 0, 0)
-        grade.addWidget(self._cartao_funil, 0, 1)
-        grade.addWidget(self._cartao_bancos, 1, 0, 1, 2)
-        grade.addWidget(self._cartao_reenviar, 2, 0)
-        grade.addLayout(direita, 2, 1)
-        grade.addWidget(self._cartao_vendedores, 3, 0, 1, 2)
+        mais_detalhes = self._nova_grade()
+        mais_detalhes.addWidget(self._cartao_atencao, 0, 0)
+        mais_detalhes.addLayout(direita, 0, 1)
+        mais_detalhes.addWidget(self._cartao_vendedores, 1, 0, 1, 2)
+
+        abas = QTabWidget()
+        abas.addTab(self._pagina(visao_geral), "Visão geral")
+        abas.addTab(self._pagina(mais_detalhes), "Mais detalhes")
+        return abas
 
     def _construir_blocos_do_vendedor(self, grade: QGridLayout) -> None:
         self._cartao_minhas_em_analise = CartaoDoPainel("Minhas em análise")
@@ -290,7 +317,6 @@ class DashboardScreen(QWidget):
             self._atualizar_listas_do_vendedor()
         else:
             self._atualizar_atencao(hoje)
-            self._atualizar_reenviar()
             self._atualizar_qualidade()
             self._atualizar_vendedores()
 
@@ -402,31 +428,6 @@ class DashboardScreen(QWidget):
         self._texto_do_resumo = dashboard_mod.resumo_para_copiar(self._no_periodo, self._periodo)
         self._rotulo_do_resumo.setText(self._texto_do_resumo)
 
-    # -- para reenviar ------------------------------------------------------------------------------
-
-    def _atualizar_reenviar(self) -> None:
-        cartao = self._cartao_reenviar
-        cartao.limpar_corpo()
-        itens = dashboard_mod.para_reenviar(self._propostas, self._intervalo)
-        quando = dashboard_mod.descricao_do_periodo(self._periodo)
-        if not itens:
-            cartao.definir_legenda("Clientes cujas propostas foram todas negadas")
-            mensagem = QLabel(f"Nenhum cliente com todas as propostas negadas{' ' + quando if quando else ''}.")
-            mensagem.setProperty("role", "secundario")
-            mensagem.setWordWrap(True)
-            cartao.corpo.addWidget(mensagem)
-            return
-        cartao.definir_legenda(f"{len(itens)} cliente{'s' if len(itens) > 1 else ''} com todas as propostas negadas · Duplicar abre a ficha com uma nova proposta")
-        for item in itens[:_MAXIMO_DE_LINHAS]:
-            linha = LinhaParaReenviar(item)
-            linha.duplicar_pedido.connect(self.duplicacao_pedida)
-            linha.ficha_pedida.connect(self.ficha_pedida)
-            cartao.corpo.addWidget(linha)
-        if len(itens) > _MAXIMO_DE_LINHAS:
-            resto = QLabel(f"e mais {len(itens) - _MAXIMO_DE_LINHAS} — use o filtro de status \"Negado\" em Todas as Propostas")
-            resto.setProperty("role", "secundario")
-            resto.setWordWrap(True)
-            cartao.corpo.addWidget(resto)
 
     # -- qualidade dos dados --------------------------------------------------------------------------
 

@@ -103,6 +103,7 @@ class TabelaDePainel(QTableView):
     ):
         """`colunas_a_direita`: as colunas de numero - o cabecalho delas fica encostado na direita, como as celulas."""
         super().__init__(parent)
+        self.setProperty("role", "tabela_painel")  # sem borda propria - ver QSS em theme.py
         self._modelo = QStandardItemModel(0, len(colunas), self)
         self._modelo.setHorizontalHeaderLabels(colunas)
         for coluna in range(len(colunas)):
