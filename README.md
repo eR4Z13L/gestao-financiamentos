@@ -9,7 +9,7 @@ taxas de aprovação e desempenho por vendedor.
 ## Stack
 
 - **Python 3 + [PySide6](https://doc.qt.io/qtforpython-6/)** — interface desktop nativa
-- **[openpyxl](https://openpyxl.readthedocs.io/)** — o banco de dados do ADMIN é um arquivo `.xlsx` local (4 abas: `CLIENTES`, `EQUIPAMENTOS`, `PROPOSTAS`, `VENDEDORES`), que também pode ser aberto direto no Excel
+- **[openpyxl](https://openpyxl.readthedocs.io/)** — o banco de dados do ADMIN é um arquivo `.xlsx` de verdade por dentro (4 abas: `CLIENTES`, `EQUIPAMENTOS`, `PROPOSTAS`, `VENDEDORES`), só que salvo com a extensão `.dat` (`data/controle_financiamentos.dat`) de propósito — um clique duplo não abre mais sozinho no Excel; pra conferir manualmente, "Abrir com..." e escolher o Excel continua funcionando normalmente
 - **pandas** — cálculos do dashboard e filtros
 - **[gspread](https://docs.gspread.org/) + google-auth** — sincronização automática (background, best-effort) do `.xlsx` local para uma planilha no Google Sheets, e leitura (só-leitura) de lá quando quem loga é um VENDEDOR
 
@@ -28,7 +28,8 @@ core/       # leitura/escrita do .xlsx + regras de negócio (sem nada de interfa
 desktop/    # interface PySide6 (janela principal, telas, diálogos, tema)
 scripts/    # testes automatizados e utilitários (gerar planilha de exemplo, etc.)
 exemplo/    # planilha de exemplo com dados fictícios (estrutura de referência)
-data/       # onde o .xlsx REAL fica (não versionado - ver abaixo)
+data/       # onde o .dat (.xlsx por dentro) REAL fica (não versionado - ver abaixo)
+installer/  # receita do instalador (Inno Setup) - ver "Gerar o instalador" abaixo
 ```
 
 ## Como rodar localmente
@@ -45,14 +46,16 @@ data/       # onde o .xlsx REAL fica (não versionado - ver abaixo)
    venv\Scripts\pip install -r requirements.txt
    ```
 
-3. **Coloque sua planilha de dados em `data/controle_financiamentos.xlsx`.**
+3. **Coloque sua planilha de dados em `data/controle_financiamentos.dat`.**
    Esse arquivo **não vem no repositório** (contém dados reais de clientes:
-   CPF, telefone, endereço, valores — está no `.gitignore` de propósito).
-   Use `exemplo/controle_financiamentos_exemplo.xlsx` como referência da
+   CPF, telefone, endereço, valores — está no `.gitignore` de propósito). É
+   um `.xlsx` normal por dentro, só com a extensão trocada (ver "Stack" acima)
+   — se você já tem uma planilha `.xlsx` pronta, basta renomear a extensão
+   dela para `.dat` e copiar para dentro de `data/`. Use
+   `exemplo/controle_financiamentos_exemplo.xlsx` como referência da
    estrutura esperada (mesmas abas, mesmas colunas) se for começar do
-   zero, ou copie sua planilha real com esse nome para dentro de `data/` — se
-   ela ainda não tiver a aba `VENDEDORES`, o app cria e popula essa aba
-   sozinho na primeira leitura.
+   zero — se ela ainda não tiver a aba `VENDEDORES`, o app cria e popula essa
+   aba sozinho na primeira leitura.
 
    **Estrutura da aba `CLIENTES`** (21 colunas): `DATA CADASTRO`, `CPF/CNPJ`,
    `VENDEDOR`, `TIPO`, `CLIENTE` (A–E, não mudam de lugar: as fórmulas de
@@ -116,7 +119,7 @@ data/       # onde o .xlsx REAL fica (não versionado - ver abaixo)
 ## Testes
 
 Os testes rodam contra cópias temporárias dos dados (nunca contra
-`data/controle_financiamentos.xlsx`):
+`data/controle_financiamentos.dat`):
 
 ```bash
 venv\Scripts\python.exe scripts\smoke_test_data_store.py
@@ -179,10 +182,23 @@ comando.)
 O `.exe` sai em `dist/GestaoFinanciamentos.exe` (~100 MB, já inclui Python,
 Qt, pandas e tudo mais — não precisa de Python instalado na máquina de
 destino). Ele **não** embute nenhum dado: continua lendo/escrevendo
-`data/controle_financiamentos.xlsx` numa pasta `data/` ao lado de onde o
-`.exe` estiver, exatamente como a versão rodando com `python`. Pra distribuir
-o app, copie `dist/GestaoFinanciamentos.exe` + a pasta `data/` (com a
-planilha real) juntos para o destino final.
+`data/controle_financiamentos.dat` numa pasta `data/` ao lado de onde o
+`.exe` estiver, exatamente como a versão rodando com `python`.
+
+Pra instalar/distribuir em outro PC, copie estas DUAS pastas junto do `.exe`
+(sem elas, o app abre mas pede senha de ADMIN nova, como se fosse a primeira
+vez, e a sincronização com o Google Sheets não funciona):
+
+```
+GestaoFinanciamentos.exe
+data/                       # a planilha real (controle_financiamentos.dat) + backups/
+credentials/                # admin_senha.json + service_account_admin.json
+```
+
+`credentials/` não é mencionado em nenhum lugar do processo de build (o
+`.spec` não empacota nada de fora - `datas=[]`) - é sempre uma cópia manual,
+igual `data/`. Trate o PC de destino com o mesmo cuidado que o seu: essas
+duas pastas são os dados reais e a chave de acesso à nuvem.
 
 O primeiro lançamento de uma sessão do Windows costuma demorar alguns
 segundos a mais (o `--onefile` extrai tudo pra uma pasta temporária antes de
@@ -192,3 +208,53 @@ O ícone (`desktop/assets/icone_app.ico`) é provisório - gerado por
 `scripts/gerar_icone.py` (precisa do Pillow: `venv\Scripts\pip install
 pillow`, só pra essa ferramenta de build). Troque o `.ico` por um definitivo
 quando tiver um, sem precisar mudar nada no `.spec`.
+
+## Gerar o instalador
+
+Em vez de mandar o `.exe` + as duas pastas soltos, dá pra gerar um instalador
+único (assistente com "Avançar/Concluir", atalho no Menu Iniciar e na Área de
+Trabalho, e entrada em "Adicionar ou remover programas"). A receita fica em
+`installer/GestaoFinanciamentos.iss`, pro [Inno Setup](https://jrsoftware.org/isinfo.php)
+(grátis).
+
+1. Gere o `.exe` normal primeiro (passo acima) - o instalador espera achar
+   `dist/GestaoFinanciamentos.exe`.
+2. Instale o Inno Setup (só uma vez, na máquina de quem gera o instalador -
+   não precisa no PC de destino):
+   ```bash
+   winget install JRSoftware.InnoSetup
+   ```
+3. Compile o instalador:
+   ```bash
+   iscc installer\GestaoFinanciamentos.iss
+   ```
+   O instalador pronto sai em `installer/saida/GestaoFinanciamentos-Setup.exe`.
+
+**Onde ele instala e por quê**: em `%LocalAppData%\Programs\GestaoFinanciamentos`
+(pasta do próprio usuário do Windows), não em `C:\Program Files\`. Program
+Files é protegido contra escrita pra quem não é administrador - e este app
+grava a planilha na própria pasta onde está instalado a cada proposta salva,
+então instalar lá exigiria pedir permissão de administrador toda vez que
+abrisse. Instalando na pasta do usuário, ninguém precisa disso.
+
+**O instalador NÃO embute** a planilha real nem as credenciais do Google
+dentro do próprio `.exe` de instalação - de propósito, pra essas duas coisas
+sensíveis nunca ficarem fixas num arquivo que pode ser copiado ou enviado por
+engano. Em vez disso, o assistente **pergunta** (duas telas, logo depois de
+escolher a pasta de instalação, ambas opcionais):
+
+- Se já existe a planilha (`.dat` ou `.xlsx`) de uma instalação anterior ou
+  backup - aponte o arquivo e o instalador copia sozinho pra `data/`, já
+  renomeada para `controle_financiamentos.dat`.
+- Se já existe a pasta `credentials/` de uma instalação anterior ou backup -
+  aponte a pasta e o instalador copia os arquivos (`admin_senha.json` e/ou
+  `service_account_admin.json`) que encontrar dentro dela.
+
+Deixando as duas telas em branco (primeira instalação, do zero - não tem o
+que apontar ainda), o instalador só cria as pastas vazias, e
+`installer/LEIA-ME-primeira-instalacao.txt` (aberto automaticamente no fim)
+explica o que ainda falta copiar à mão.
+
+Ao lançar uma versão nova do app, atualize `MyAppVersion` no topo do `.iss`
+para o mesmo valor de `config.VERSAO_APP` (são dois lugares porque o Inno
+Setup não lê arquivo `.py`).

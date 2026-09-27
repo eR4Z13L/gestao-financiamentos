@@ -1,10 +1,18 @@
 # Banco de dados local (dados reais de clientes - CPF, telefone, endereco,
 # valores) - NUNCA deve ir para o repositorio. Uma copia de exemplo com
 # dados ficticios fica em exemplo/controle_financiamentos_exemplo.xlsx.
+# O arquivo de verdade usa extensao .dat (nao .xlsx) de proposito - so pra
+# nao abrir sozinho no Excel com um clique duplo (ver config.py). Backups
+# antigos em data/backups/ ainda sao .xlsx (extensao de quando foram feitos),
+# os novos ja saem .dat (core/backup.py) - por isso os dois padroes abaixo
+# (data/backups/ inteira ja fica de fora, mas o padrao cobre tambem um
+# eventual arquivo solto direto em data/, fora da pasta de backups).
 data/*.xlsx
+data/*.dat
 data/backups/
 !data/.gitkeep
 ~$*.xlsx
+~$*.dat
 
 # Credenciais (Google Sheets API e afins - ainda nao usadas, mas o projeto
 # ja reserva esses nomes de arquivo pra quando a sincronizacao for feita)
@@ -27,6 +35,10 @@ __pycache__/
 # quando existir, ja que e a "receita" customizada do build)
 build/
 dist/
+
+# Instalador compilado (gerado pelo Inno Setup - o .iss fica versionado,
+# o .exe de saida nao, mesma logica do dist/ acima)
+installer/saida/
 
 # Preferencias locais do editor/IDE, se houver
 .vscode/

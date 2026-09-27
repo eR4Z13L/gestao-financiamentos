@@ -1,0 +1,28 @@
+﻿Gestão de Financiamentos - depois de instalar
+==============================================
+
+Durante a instalação, o assistente perguntou se você já tinha a planilha
+("controle_financiamentos.dat") e a pasta de credenciais ("credentials") de
+uma instalação anterior ou backup, e - se você indicou os caminhos - já
+copiou os dois sozinho. Se você pulou essas duas telas (ou não tinha nada
+pra indicar, por ser a primeira instalação mesmo, do zero), ainda faltam:
+
+1. Pasta "data": copie o arquivo "controle_financiamentos.dat" (a planilha
+   de verdade) pra dentro da pasta "data" que o instalador criou aqui.
+
+2. Pasta "credentials": copie os dois arquivos de credencial
+   ("admin_senha.json" e "service_account_admin.json") pra dentro da pasta
+   "credentials" que o instalador criou aqui.
+
+Essas duas coisas nunca vêm dentro do próprio instalador de propósito (são
+a planilha com dados reais de clientes e a chave de acesso à nuvem - itens
+sensíveis demais pra ir dentro de um arquivo que pode circular por
+e-mail/pendrive).
+
+Depois de garantir as duas pastas, abra o programa normalmente pelo atalho
+que o instalador criou. Se "admin_senha.json" não estiver lá, o programa
+vai pedir pra definir uma senha nova do Administrador na primeira vez que
+abrir (aí ele fica só nesta instalação, diferente da senha da instalação
+de onde a planilha veio).
+
+Em caso de dúvida, fale com quem configurou o programa pra você.
