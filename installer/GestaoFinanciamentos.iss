@@ -9,10 +9,11 @@
 ; O QUE ELE NAO FAZ (de proposito): nao embute a planilha real nem as credenciais
 ; do Google DENTRO do .exe do instalador (isso ficaria fixo pra sempre num arquivo
 ; que pode ser copiado/enviado por engano). Em vez disso, o assistente PERGUNTA
-; (duas telas, ambas opcionais) se a pessoa ja tem esses arquivos de uma instalacao
-; anterior/backup - se sim, aponta o caminho e o instalador copia sozinho ([Code]
-; abaixo). Se deixar em branco (primeira instalacao mesmo, do zero), fica igual a
-; antes: pastas vazias, e o LEIA-ME-primeira-instalacao.txt explica o que falta.
+; (uma tela com tres campos opcionais, um por arquivo: planilha, admin_senha.json e
+; service_account_admin.json) se a pessoa ja tem esses arquivos - cada um escolhido
+; separadamente, de qualquer pasta - e o instalador copia cada um pro lugar certo
+; ([Code] abaixo). Campo em branco = arquivo fica faltando, e o
+; LEIA-ME-primeira-instalacao.txt explica o que fazer.
 ;
 ; COMO GERAR O INSTALADOR (depois de ter o Inno Setup instalado):
 ;   1. Gere o .exe normal do app (pyinstaller GestaoFinanciamentos.spec) - o
@@ -70,82 +71,106 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Abrir o {#MyAppName} agora"; Fl
 Filename: "{win}\notepad.exe"; Parameters: """{app}\LEIA-ME-primeira-instalacao.txt"""; Description: "Ver o que falta copiar (planilha e credenciais)"; Flags: postinstall skipifsilent
 
 [Code]
+const
+  CAMPO_PLANILHA = 0;
+  CAMPO_SENHA = 1;
+  CAMPO_CHAVE = 2;
+
 var
-  PaginaPlanilha: TInputFileWizardPage;
-  PaginaCredenciais: TInputDirWizardPage;
+  PaginaArquivos: TInputFileWizardPage;
 
 procedure InitializeWizard;
 begin
-  PaginaPlanilha := CreateInputFilePage(wpSelectDir,
-    'Planilha de dados (opcional)',
-    'Você já tem a planilha de uma instalação anterior ou de um backup?',
-    'Se já tem o arquivo "controle_financiamentos.dat" (ou ainda ".xlsx", de antes da troca de '
-    + 'extensão), selecione ele abaixo - o instalador copia pra pasta certa sozinho, já com o '
-    + 'nome certo. Se esta é a primeira instalação, do zero, deixe em branco e clique em Avançar.');
-  PaginaPlanilha.Add('Arquivo da planilha:',
+  // uma tela, um campo (com o proprio botao "Procurar...") por arquivo: da pra juntar os tres
+  // numa pasta qualquer (pendrive, Downloads) e escolher um por um, sem depender de estrutura de pasta
+  PaginaArquivos := CreateInputFilePage(wpSelectDir,
+    'Arquivos de uma instalação anterior (opcionais)',
+    'Selecione cada arquivo que você já tem. O instalador copia cada um para o lugar certo.',
+    'Deixe em branco o que você não tiver. Sem a planilha, o programa começa vazio; sem a senha, '
+    + 'ele pede para criar uma senha nova de Administrador ao abrir; sem a chave do Google, '
+    + 'funciona só neste computador, sem sincronizar com a nuvem.');
+  PaginaArquivos.Add('Planilha de dados (controle_financiamentos.dat ou .xlsx):',
     'Planilha (*.dat, *.xlsx)|*.dat;*.xlsx|Todos os arquivos (*.*)|*.*', '');
+  PaginaArquivos.Add('Senha do Administrador (admin_senha.json):',
+    'Senha do Administrador (admin_senha.json)|admin_senha*.json|Arquivos JSON (*.json)|*.json|Todos os arquivos (*.*)|*.*', '');
+  PaginaArquivos.Add('Chave do Google Sheets (service_account_admin.json):',
+    'Chave do Google (*.json)|*.json|Todos os arquivos (*.*)|*.*', '');
+end;
 
-  PaginaCredenciais := CreateInputDirPage(PaginaPlanilha.ID,
-    'Credenciais de acesso (opcional)',
-    'Você já tem a pasta "credentials" de uma instalação anterior ou de um backup?',
-    'Se já tem essa pasta (com "admin_senha.json" e/ou "service_account_admin.json" dentro), '
-    + 'selecione ela abaixo - o instalador copia os arquivos sozinho. Se esta é a primeira '
-    + 'instalação, deixe em branco - o programa pede pra você definir uma senha nova de '
-    + 'Administrador na primeira vez que abrir.',
-    False, '');
-  PaginaCredenciais.Add('');
+function ConteudoDe(Caminho: String): AnsiString;
+begin
+  Result := '';
+  if not LoadStringFromFile(Caminho, Result) then
+    Result := '';
+end;
+
+// Confere o arquivo de cada campo pelo CONTEUDO (nao pelo nome), pra pegar arquivo trocado de campo.
+function ArquivoConfere(Campo: Integer; Caminho: String; var Motivo: String): Boolean;
+var
+  Conteudo: AnsiString;
+begin
+  Result := False;
+  if not FileExists(Caminho) then
+  begin
+    Motivo := 'o arquivo indicado não existe';
+    exit;
+  end;
+  Conteudo := ConteudoDe(Caminho);
+  case Campo of
+    CAMPO_PLANILHA:
+      // .dat e .xlsx sao um .zip por dentro: sempre comecam com "PK"
+      if Copy(Conteudo, 1, 2) <> 'PK' then
+        Motivo := 'não parece ser a planilha do programa (.dat ou .xlsx)'
+      else
+        Result := True;
+    CAMPO_SENHA:
+      if Pos('senha_hash', Conteudo) = 0 then
+        Motivo := 'não parece ser o arquivo de senha do Administrador (admin_senha.json)'
+      else
+        Result := True;
+    CAMPO_CHAVE:
+      if (Pos('service_account', Conteudo) = 0) or (Pos('private_key', Conteudo) = 0) then
+        Motivo := 'não parece ser a chave do Google (service_account_admin.json)'
+      else
+        Result := True;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Campo: Integer;
+  Motivo: String;
 begin
   Result := True;
-  if (CurPageID = PaginaPlanilha.ID) and (PaginaPlanilha.Values[0] <> '')
-     and (not FileExists(PaginaPlanilha.Values[0])) then
-  begin
-    MsgBox('O arquivo indicado não existe. Corrija o caminho ou deixe em branco.', mbError, MB_OK);
-    Result := False;
-  end
-  else if (CurPageID = PaginaCredenciais.ID) and (PaginaCredenciais.Values[0] <> '')
-     and (not DirExists(PaginaCredenciais.Values[0])) then
-  begin
-    MsgBox('A pasta indicada não existe. Corrija o caminho ou deixe em branco.', mbError, MB_OK);
-    Result := False;
-  end;
+  if CurPageID <> PaginaArquivos.ID then
+    exit;
+  for Campo := CAMPO_PLANILHA to CAMPO_CHAVE do
+    if (Trim(PaginaArquivos.Values[Campo]) <> '')
+       and (not ArquivoConfere(Campo, Trim(PaginaArquivos.Values[Campo]), Motivo)) then
+    begin
+      MsgBox(PaginaArquivos.PromptLabels[Campo].Caption + #13#10#13#10 + 'O arquivo escolhido ' + Motivo
+        + '. Escolha o arquivo certo ou deixe esse campo em branco.', mbError, MB_OK);
+      Result := False;
+      exit;
+    end;
+end;
+
+procedure CopiarSeEscolhido(Campo: Integer; Destino, Nome: String);
+var
+  Origem: String;
+begin
+  Origem := Trim(PaginaArquivos.Values[Campo]);
+  if Origem = '' then
+    exit;
+  if not CopyFile(Origem, ExpandConstant(Destino), False) then
+    MsgBox('Não foi possível copiar ' + Nome + '. Copie manualmente depois (veja o LEIA-ME).', mbError, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  OrigemPlanilha, OrigemCredenciais: String;
-  AchouAlgumaCredencial: Boolean;
 begin
   if CurStep <> ssPostInstall then
     exit;
-
-  OrigemPlanilha := PaginaPlanilha.Values[0];
-  if OrigemPlanilha <> '' then
-  begin
-    if not CopyFile(OrigemPlanilha, ExpandConstant('{app}\data\controle_financiamentos.dat'), False) then
-      MsgBox('Não foi possível copiar a planilha selecionada. Copie manualmente depois pra pasta "data".',
-        mbError, MB_OK);
-  end;
-
-  OrigemCredenciais := PaginaCredenciais.Values[0];
-  if OrigemCredenciais <> '' then
-  begin
-    AchouAlgumaCredencial := False;
-    if FileExists(OrigemCredenciais + '\admin_senha.json') then
-    begin
-      CopyFile(OrigemCredenciais + '\admin_senha.json', ExpandConstant('{app}\credentials\admin_senha.json'), False);
-      AchouAlgumaCredencial := True;
-    end;
-    if FileExists(OrigemCredenciais + '\service_account_admin.json') then
-    begin
-      CopyFile(OrigemCredenciais + '\service_account_admin.json',
-        ExpandConstant('{app}\credentials\service_account_admin.json'), False);
-      AchouAlgumaCredencial := True;
-    end;
-    if not AchouAlgumaCredencial then
-      MsgBox('A pasta selecionada não tinha "admin_senha.json" nem "service_account_admin.json". '
-        + 'Nada foi copiado - copie manualmente depois.', mbError, MB_OK);
-  end;
+  CopiarSeEscolhido(CAMPO_PLANILHA, '{app}\data\controle_financiamentos.dat', 'a planilha');
+  CopiarSeEscolhido(CAMPO_SENHA, '{app}\credentials\admin_senha.json', 'a senha do Administrador');
+  CopiarSeEscolhido(CAMPO_CHAVE, '{app}\credentials\service_account_admin.json', 'a chave do Google');
 end;

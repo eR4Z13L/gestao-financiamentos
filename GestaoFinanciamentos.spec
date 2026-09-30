@@ -10,7 +10,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # config_local.py e so do ambiente de desenvolvimento (planilha/Google de TESTE): se entrasse no
+    # .exe, o app instalado usaria os dados de teste no lugar dos reais
+    excludes=['config_local'],
     noarchive=False,
     optimize=0,
 )
