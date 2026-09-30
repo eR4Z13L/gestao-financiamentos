@@ -38,6 +38,7 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.formatting import formatar_data, formatar_tempo
+from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.expansor_proposta import ExpansorDeProposta
@@ -118,6 +119,7 @@ class PropostasScreen(QWidget):
         super().__init__(parent)
 
         self._todas = pd.DataFrame(columns=_COLUNAS_EXIBICAO)  # dados crus; indice = posicao real no arquivo
+        self._vigia = VigiaDoArquivo()
         self._estado_periodo: tuple = (None, None, ())  # ultimo periodo aplicado (ver _ao_mudar_periodo)
         # o filtro que o Dashboard pediu (ex.: "em aberto ha mais de 7 dias"); vale junto com os demais
         self._filtro_dashboard: dashboard_mod.FiltroDoDashboard | None = None
@@ -301,6 +303,7 @@ class PropostasScreen(QWidget):
         self._carregar_dados(selecionar=indice)
 
     def _carregar_dados(self, *_args, selecionar: int | None = None) -> None:
+        self._vigia.registrar_leitura()
         try:
             self._todas = propostas_mod.listar_propostas()
         except FileNotFoundError:
@@ -380,9 +383,14 @@ class PropostasScreen(QWidget):
 
     def showEvent(self, evento) -> None:
         super().showEvent(evento)
+        # o arquivo mudou desde a ultima leitura (outra tela gravou, baixou da nuvem, restaurou backup):
+        # rele tudo - menos com um card em edicao nao salva, que nunca e descartado sem perguntar (o botao
+        # Atualizar pergunta)
+        if self._vigia.mudou_desde_a_leitura() and not self._expansor.tem_alteracoes():
+            self._carregar_dados()
         # alguem pode ter cadastrado um vendedor em outra tela (Usuarios) desde a
         # ultima vez que esta tela apareceu
-        if self._recarregar_vendedores_filtro():
+        elif self._recarregar_vendedores_filtro():
             self._aplicar_filtros(manter_pagina=True)
 
     def _ao_mudar_periodo(self) -> None:

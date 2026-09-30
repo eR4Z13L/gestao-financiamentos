@@ -48,6 +48,7 @@ from core.formatting import (
 )
 from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
+from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.botao_icone_link import BotaoIconeLink
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
@@ -166,6 +167,7 @@ class FichaClienteScreen(QWidget):
         self._cpf_selecionado: str | None = None
         self._modo_leitura_cliente = True  # False = dados do cliente (grade de campos) em edicao
         self._modo_novo_cliente = False  # True = a ficha esta em branco, editando um cliente AINDA NAO salvo
+        self._vigia = VigiaDoArquivo()
         self._dados_mostrar_vazios = False  # link "+N campos vazios" (campos NAO essenciais da grade)
         self._endereco_estava_expandido = False  # lembrado ao forcar expandido durante a edicao (ver _aplicar_modo_edicao_cliente)
         self._endereco_forcado_expandido = False
@@ -988,10 +990,25 @@ class FichaClienteScreen(QWidget):
         # ultima vez que esta tela apareceu - e uma proposta pode ter mudado de
         # status em "Todas as Propostas": a bolinha "Em aberto" precisa refletir isso
         self._invalidar_em_aberto()
-        if self._recarregar_vendedores_filtro():
+        arquivo_mudou = self._vigia.mudou_desde_a_leitura()
+        vendedores_mudaram = self._recarregar_vendedores_filtro()
+        if arquivo_mudou or vendedores_mudaram:
             self._atualizar_lista()
+            if arquivo_mudou and self._ficha_pode_ser_relida():
+                self._recarregar_ficha_atual()
         else:
             self._atualizar_indicadores_em_aberto()
+
+    def _ficha_pode_ser_relida(self) -> bool:
+        """A ficha aberta so e relida do disco se ninguem esta editando nada nela: dados do cliente
+        destravados, cliente novo ainda nao salvo ou proposta com alteracao pendente ficam como estao."""
+        return (
+            self._cpf_selecionado is not None
+            and self._painel_stack.currentIndex() == 1
+            and self._modo_leitura_cliente
+            and not self._modo_novo_cliente
+            and not self.tem_edicao_pendente()
+        )
 
     def _invalidar_em_aberto(self) -> None:
         """Algo pode ter mudado (cliente ou proposta): na proxima vez, relê quem tem proposta em aberto."""
@@ -1017,6 +1034,7 @@ class FichaClienteScreen(QWidget):
         """Le a lista de novo com a busca + filtros + ordenacao atuais (todos
         combinados) e atualiza o contador. *_args absorve o valor que os
         sinais dos controles mandam."""
+        self._vigia.registrar_leitura()
         termo = self._busca.text().strip()
         inicio, fim, avisos = self._ler_periodo()
         try:

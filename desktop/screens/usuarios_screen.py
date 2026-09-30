@@ -48,6 +48,7 @@ from core import sincronizacao as sincronizacao_mod
 from core import vendedores as vendedores_mod
 from desktop import settings as settings_mod
 from desktop.table_model import PandasTableModel
+from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.shadow import aplicar_sombra_suave
 
@@ -96,6 +97,7 @@ class UsuariosScreen(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self._vigia = VigiaDoArquivo()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -121,6 +123,8 @@ class UsuariosScreen(QWidget):
         # reaparecer, do mesmo jeito que Propostas rele os vendedores (mostrar_screen).
         self._carregar_backups()
         self._carregar_bancos()
+        if self._vigia.mudou_desde_a_leitura():  # ex.: baixou da nuvem ou restaurou um backup
+            self._carregar_vendedores()
 
     # -- aba "Usuários" ----------------------------------------------------------------
 
@@ -673,6 +677,7 @@ class UsuariosScreen(QWidget):
         )
 
     def _carregar_vendedores(self) -> None:
+        self._vigia.registrar_leitura()
         try:
             df = vendedores_mod.listar_vendedores_detalhado()
         except Exception as exc:  # nunca falhar em silencio

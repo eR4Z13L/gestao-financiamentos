@@ -44,6 +44,7 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core.dashboard import FiltroDoDashboard
 from core.formatting import formatar_reais, formatar_tempo
+from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.cartao_do_painel import CartaoDoPainel
 from desktop.widgets.funil_de_etapas import FunilDeEtapas
@@ -98,6 +99,7 @@ class DashboardScreen(QWidget):
         self._intervalo = None
         self._texto_do_resumo = ""
         self._desatualizado = False
+        self._vigia = VigiaDoArquivo()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -270,10 +272,11 @@ class DashboardScreen(QWidget):
 
     def showEvent(self, evento) -> None:
         super().showEvent(evento)
-        if self._desatualizado:
+        if self._desatualizado or self._vigia.mudou_desde_a_leitura():
             self._carregar_dados()
 
     def _carregar_dados(self, *_args) -> None:
+        self._vigia.registrar_leitura()
         try:
             propostas = propostas_mod.listar_propostas()
             clientes = clientes_mod.listar_clientes() if self._vendedor else self._clientes

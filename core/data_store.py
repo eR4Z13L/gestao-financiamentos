@@ -195,6 +195,17 @@ def _caminho_arquivo_bloqueio(caminho_xlsx: Path) -> Path:
     return caminho_xlsx.with_name(f"~${caminho_xlsx.name}")
 
 
+def assinatura_do_arquivo(caminho_xlsx: Path) -> tuple[int, int] | None:
+    """(momento da ultima gravacao em ns, tamanho) do arquivo, ou None se ele nao existe. Muda a cada
+    gravacao (a do app troca o arquivo inteiro), inclusive as feitas por fora: e o que as telas comparam
+    pra saber se precisam reler ao aparecer."""
+    try:
+        info = caminho_xlsx.stat()
+    except FileNotFoundError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
+
+
 def arquivo_esta_bloqueado(caminho_xlsx: Path) -> bool:
     """True se tudo indica que o Excel esta com o arquivo aberto agora."""
     return _caminho_arquivo_bloqueio(caminho_xlsx).exists()
