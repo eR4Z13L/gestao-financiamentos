@@ -27,6 +27,11 @@ credentials/
 config_local.py
 data_teste/
 credentials_teste/
+# outros perfis locais (ex.: config_local_oficial.py = desenvolver contra o Sheets OFICIAL), a pasta
+# de dados dele (dados REAIS baixados da nuvem) e o atalho que abre com ele
+config_local_*.py
+data_dev_oficial/
+Abrir dev com Sheets oficial.bat
 
 # Documentos de planejamento gerados a partir dos dados reais (numeros de negocio,
 # desempenho por vendedor por nome) - o repositorio e PUBLICO no GitHub, isso nao

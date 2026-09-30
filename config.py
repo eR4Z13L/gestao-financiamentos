@@ -63,8 +63,21 @@ SINCRONIZACAO_GOOGLE_ATIVADA = True
 # config_local.exemplo.py pra config_local.py e ajuste os caminhos/IDs.
 # GESTAO_IGNORAR_CONFIG_LOCAL=1 (variavel de ambiente) pula o arquivo: e o que os poucos testes
 # que usam uma COPIA da planilha real como base ligam, pra nao pegarem a de teste por engano.
+# GESTAO_CONFIG_LOCAL=<modulo> escolhe OUTRO arquivo de config local no lugar de config_local.py
+# (ex.: config_local_oficial, pra desenvolver contra o Google Sheets oficial) - pedido de proposito,
+# entao se esse arquivo nao existir o app para com erro em vez de cair na config real calado.
+# Opcional nesse arquivo: NOME_DO_COMPUTADOR, o nome com que este app se identifica na nuvem.
 if not os.environ.get("GESTAO_IGNORAR_CONFIG_LOCAL"):
+    _perfil_local = os.environ.get("GESTAO_CONFIG_LOCAL", "").strip()
     try:
-        from config_local import *  # noqa: F401,F403 - so sobrescreve o que o arquivo definir
-    except ImportError:
-        pass
+        _modulo_local = __import__(_perfil_local or "config_local")
+    except ImportError as _erro:
+        if _perfil_local:
+            if getattr(_erro, "name", None) == _perfil_local:
+                raise ImportError(
+                    f"GESTAO_CONFIG_LOCAL={_perfil_local}, mas o arquivo {_perfil_local}.py não foi encontrado."
+                ) from None
+            raise  # o arquivo existe mas tem um erro dentro: mostra o erro de verdade
+    else:
+        # o mesmo que "from config_local import *": so os nomes publicos do arquivo
+        globals().update({nome: valor for nome, valor in vars(_modulo_local).items() if not nome.startswith("_")})

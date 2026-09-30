@@ -325,7 +325,9 @@ def _preparar_linhas(df: pd.DataFrame) -> list[list]:
 # -- META: leitura e escrita -----------------------------------------------------------
 
 def nome_desta_maquina() -> str:
-    return _NOME_DA_MAQUINA or socket.gethostname()
+    """Como este app aparece na META (ultimo escritor, "outro computador ativo"). NOME_DO_COMPUTADOR na
+    config local separa dois apps no MESMO computador (ex.: o instalado e o de desenvolvimento)."""
+    return _NOME_DA_MAQUINA or getattr(config, "NOME_DO_COMPUTADOR", "") or socket.gethostname()
 
 
 def _agora_utc() -> datetime:

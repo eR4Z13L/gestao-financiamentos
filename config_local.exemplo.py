@@ -6,6 +6,17 @@ pessoa que desenvolve tem o seu, com os próprios dados fictícios.
 Defina só o que quiser sobrescrever - o que não estiver aqui continua vindo
 de config.py normalmente (a config REAL). Pra rodar 100% isolado dos dados
 reais, normalmente isso quer dizer os três abaixo.
+
+Outros perfis: um arquivo "config_local_<nome>.py" (também fora do git) é usado
+no lugar deste quando o app abre com a variável de ambiente
+GESTAO_CONFIG_LOCAL=config_local_<nome> (num .bat: "set GESTAO_CONFIG_LOCAL=...").
+Ex.: um perfil que desenvolve contra o Google Sheets OFICIAL, com a própria
+pasta de dados - nele, tudo o que for gravado vai para a planilha real. Se o
+perfil pedido não existir, o app para com erro (nunca cai calado na config real).
+
+NOME_DO_COMPUTADOR (opcional): o nome com que este app aparece na nuvem ("outro
+computador ativo", último a gravar). Use um nome diferente do app instalado no
+mesmo computador (ex.: "MEU-PC (dev)") para um enxergar o outro.
 """
 
 from pathlib import Path
