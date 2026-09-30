@@ -70,6 +70,24 @@ def _formatar_tamanho(tamanho_bytes: int) -> str:
     return f"{tamanho_bytes / (1024 * 1024):.1f} MB"
 
 
+def texto_do_download(resultado: sincronizacao_mod.ResultadoDoDownload) -> str:
+    """A mensagem de "dados baixados" (usada aqui e na primeira abertura, sem planilha)."""
+    linhas = resultado.linhas
+    texto = (
+        f"Os dados deste computador agora são os da nuvem: {linhas.get(bd.ABA_CLIENTES, 0)} cliente(s), "
+        f"{linhas.get(bd.ABA_PROPOSTAS, 0)} proposta(s), {linhas.get(bd.ABA_EQUIPAMENTOS, 0)} equipamento(s) e "
+        f"{linhas.get(bd.ABA_VENDEDORES, 0)} vendedor(es)."
+    )
+    if resultado.backup is not None:
+        texto += f"\n\nO arquivo de antes foi guardado em:\n{resultado.backup}"
+    if resultado.ligou_controle:
+        texto += (
+            "\n\nO controle de versão da nuvem foi ligado agora: a partir daqui, este computador só envia "
+            "para a nuvem se ninguém tiver gravado lá no meio-tempo."
+        )
+    return texto
+
+
 class UsuariosScreen(QWidget):
     # emitido depois de restaurar um backup: pode ter mudado TUDO (clientes, propostas,
     # vendedores) - quem escuta (MainWindow) reaproveita o mesmo sinal que Propostas/Ficha
@@ -347,11 +365,12 @@ class UsuariosScreen(QWidget):
         if resposta == QMessageBox.StandardButton.Yes:
             self.executar_download_da_nuvem()
 
-    def executar_download_da_nuvem(self) -> bool:
-        """Baixa da nuvem SEM perguntar (quem chama ja perguntou) e mostra o resultado. True se deu certo."""
+    def executar_download_da_nuvem(self, *, ligar_controle: bool = False) -> bool:
+        """Baixa da nuvem SEM perguntar (quem chama ja perguntou) e mostra o resultado. True se deu certo.
+        `ligar_controle`: aceita uma nuvem ainda sem controle de versao e liga o controle depois de baixar."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            resultado = sincronizacao_mod.baixar_da_nuvem()
+            resultado = sincronizacao_mod.baixar_da_nuvem(ligar_controle=ligar_controle)
         except bd.ErroArquivoBloqueado as exc:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
@@ -370,14 +389,7 @@ class UsuariosScreen(QWidget):
             return False
         QApplication.restoreOverrideCursor()
         self.recarregar_apos_mudar_os_dados()
-        linhas = resultado.linhas
-        QMessageBox.information(
-            self,
-            "Dados baixados",
-            f"Os dados deste computador agora são os da nuvem: {linhas.get(bd.ABA_CLIENTES, 0)} cliente(s), "
-            f"{linhas.get(bd.ABA_PROPOSTAS, 0)} proposta(s), {linhas.get(bd.ABA_EQUIPAMENTOS, 0)} equipamento(s) e "
-            f"{linhas.get(bd.ABA_VENDEDORES, 0)} vendedor(es).\n\nO arquivo de antes foi guardado em:\n{resultado.backup}",
-        )
+        QMessageBox.information(self, "Dados baixados", texto_do_download(resultado))
         return True
 
     def executar_envio_substituindo_a_nuvem(self, *, copia_obrigatoria: bool) -> bool:

@@ -125,9 +125,16 @@ installer/  # receita do instalador (Inno Setup) - ver "Gerar o instalador" abai
      a cada minuto. Ao abrir, se outro computador deu sinal nos últimos 5 minutos, o app avisa
      (é só um aviso: o sinal expira sozinho se o outro fechou ou travou). A trava de versão é a
      proteção de verdade, mesmo que você escolha continuar.
-   - **Primeira vez:** uma planilha na nuvem que ainda não tem a aba `META` recebe os dados do
-     computador em que você aceitar "Enviar os dados deste computador" - faça isso no computador
-     com os dados mais recentes. Até lá nada é enviado (as alterações ficam salvas aqui).
+   - **Nuvem sem controle ainda:** uma planilha na nuvem sem a aba `META` (de antes desta
+     versão) faz o app perguntar qual lado tem os dados certos: **"Baixar da nuvem para este
+     computador"** (fica com os dados de lá e liga o controle, sem reenviar nada) ou **"Enviar
+     os dados deste computador"** (a nuvem fica com os daqui). Até decidir, nada é enviado (as
+     alterações ficam salvas aqui).
+   - **Sem planilha neste computador** (instalação nova): antes de abrir a janela, o app
+     consulta a nuvem. Se ela tem dados, oferece baixar; se está vazia, não há chave do Google
+     ou não há internet, oferece começar com uma planilha vazia (as 4 abas, só com os
+     cabeçalhos) - ou fechar, para copiar o arquivo de outro computador. Começar vazio não
+     apaga nada na nuvem: a trava de versão impede, e com internet o app oferece baixar.
    - O Google limita a 60 leituras por minuto para a conta de serviço (dividido entre os
      computadores); o uso normal fica bem abaixo disso, e um envio que esbarrar no limite
      é repetido sozinho.
@@ -270,18 +277,20 @@ abrisse. Instalando na pasta do usuário, ninguém precisa disso.
 **O instalador NÃO embute** a planilha real nem as credenciais do Google
 dentro do próprio `.exe` de instalação - de propósito, pra essas duas coisas
 sensíveis nunca ficarem fixas num arquivo que pode ser copiado ou enviado por
-engano. Em vez disso, o assistente **pergunta** (duas telas, logo depois de
-escolher a pasta de instalação, ambas opcionais):
+engano. Em vez disso, o assistente **pergunta** (uma tela, logo depois de
+escolher a pasta de instalação) por três arquivos, cada um no seu campo com o
+próprio "Procurar..." - dá pra juntar os três numa pasta qualquer e escolher
+um por um; todos são opcionais, e cada um é conferido pelo conteúdo (para não
+trocar um pelo outro):
 
-- Se já existe a planilha (`.dat` ou `.xlsx`) de uma instalação anterior ou
-  backup - aponte o arquivo e o instalador copia sozinho pra `data/`, já
-  renomeada para `controle_financiamentos.dat`.
-- Se já existe a pasta `credentials/` de uma instalação anterior ou backup -
-  aponte a pasta e o instalador copia os arquivos (`admin_senha.json` e/ou
-  `service_account_admin.json`) que encontrar dentro dela.
+- a planilha (`.dat` ou `.xlsx`) - vai pra `data/`, já com o nome
+  `controle_financiamentos.dat`;
+- a senha do Administrador (`admin_senha.json`) - vai pra `credentials/`;
+- a chave do Google (`service_account_admin.json`) - vai pra `credentials/`.
 
-Deixando as duas telas em branco (primeira instalação, do zero - não tem o
-que apontar ainda), o instalador só cria as pastas vazias, e
+Campo em branco não é problema: sem planilha, o app oferece baixar da nuvem ou
+começar com uma vazia na primeira abertura; sem senha, pede para criar uma;
+sem a chave, funciona só neste computador. O
 `installer/LEIA-ME-primeira-instalacao.txt` (aberto automaticamente no fim)
 explica o que ainda falta copiar à mão.
 

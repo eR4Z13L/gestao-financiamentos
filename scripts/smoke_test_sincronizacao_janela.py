@@ -256,15 +256,35 @@ def main() -> None:
                 preparar_app(versao_conhecida=None)
                 meta = sheets_sync.ler_meta_da_nuvem()
                 assert not meta.com_controle
-                escolhas.responder(1)  # Agora nao
+                escolhas.responder(2)  # Agora nao
                 janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_SEM_CONTROLE, meta))
+                assert escolhas.vistas[0][2] == ["Baixar da nuvem para este computador", "Enviar os dados deste computador", "Agora não"]
                 assert nuvem.escritas == [] and sheets_sync.estado_atual().conflito == sheets_sync.TIPO_SEM_CONTROLE
                 sheets_sync.limpar_conflito()
-                escolhas.responder(0)  # Enviar
+                escolhas.responder(1)  # Enviar
                 janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_SEM_CONTROLE, meta))
                 t._esperar_envios()
                 assert nuvem.revisao() >= 5 and t._normalizado(amb.caminho) is not None
-                print("OK: sem controle: 'Agora nao' nao escreve nada; 'Enviar' liga o controle e manda as 4 abas.")
+                print("OK: sem controle: 3 opcoes; 'Agora nao' nao escreve nada; 'Enviar' liga o controle e manda as 4 abas.")
+
+                # 4c' sem controle, e a nuvem e que tem os dados certos: 'Baixar' traz os dados e liga o controle
+                repor_nuvem_do_dono()
+                sem_controle = t._copia_sem_controle(nuvem)
+                t._usar_nuvem(sem_controle)
+                sheets_sync._reiniciar_estado()
+                preparar_app(versao_conhecida=None)
+                meta = sheets_sync.ler_meta_da_nuvem()
+                assert not meta.com_controle and not igual_ao_dono()
+                escolhas.responder(0)  # Baixar da nuvem
+                msgs.limpar()
+                janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_SEM_CONTROLE, meta))
+                assert igual_ao_dono(), "o app ficou com os dados da nuvem"
+                assert sem_controle.revisao() == 1 and estado_mod.ler(amb.caminho).revisao_conhecida == 1
+                assert {e[1] for e in sem_controle.escritas} == {sheets_sync.ABA_META}, "so a META e escrita"
+                assert any(m[1] == "Dados baixados" and "controle de versão da nuvem foi ligado" in m[2] for m in msgs.registro), msgs.registro
+                assert sheets_sync.estado_atual().conflito == ""
+                t._usar_nuvem(nuvem)
+                print("OK: sem controle + 'Baixar': o app fica igual a nuvem, a META e criada (versao 1) e a mensagem explica.")
 
                 # 4d pendencias que sobreviveram a fechar o app: reenvia sem perguntar
                 repor_nuvem_do_dono(); rev = nuvem.revisao()
@@ -331,6 +351,92 @@ def main() -> None:
                 config.SINCRONIZACAO_GOOGLE_ATIVADA = True
                 assert nuvem.escritas == [] and not escolhas.vistas
                 print("OK: o VENDEDOR e a sincronizacao desligada nao consultam a nuvem nem ligam o sinal.")
+
+                # ------------------------------------------------------------------------------------
+                linha("8) Primeira abertura SEM planilha: criar vazia, baixar da nuvem, sem internet, sem chave")
+                from desktop import primeira_abertura as pa
+
+                repor_nuvem_do_dono()
+                chave_original = config.CAMINHO_CREDENCIAIS_GOOGLE
+                chave_falsa = raiz / "chave_falsa.json"
+                chave_falsa.write_text("{}", encoding="utf-8")
+                pasta_nova = raiz / "instalacao_nova"
+                nova = pasta_nova / "data" / "controle_financiamentos.dat"
+                try:
+                    # 8a sem chave do Google: "Fechar" nao cria nada; "Comecar vazia" cria
+                    config.CAMINHO_CREDENCIAIS_GOOGLE = raiz / "nao_existe.json"
+                    escolhas.responder(1)
+                    assert pa.garantir_planilha(None, nova) is False and not nova.exists()
+                    titulo, texto, opcoes = escolhas.vistas[0]
+                    assert titulo == "Planilha de dados não encontrada" and "chave do Google" in texto and str(nova.parent) in texto
+                    assert opcoes == ["Começar com uma planilha vazia", "Fechar o aplicativo"]
+                    msgs.limpar(); escolhas.responder(0)
+                    assert pa.garantir_planilha(None, nova) is True and nova.exists()
+                    assert len(bd.ler_clientes(nova)) == 0 and msgs.ultima()[1] == "Planilha criada"
+                    print("OK: sem chave: explica, 'Fechar' nao cria nada, 'Comecar vazia' cria a planilha (e avisa).")
+
+                    escolhas.responder()
+                    assert pa.garantir_planilha(None, nova) is True and not escolhas.vistas, "com planilha, nao pergunta nada"
+                    print("OK: com a planilha no lugar, a primeira abertura nao pergunta nada.")
+
+                    # 8b nuvem com dados (com controle): baixa e cria o arquivo igual a nuvem
+                    config.CAMINHO_CREDENCIAIS_GOOGLE = chave_falsa
+                    nova.unlink()
+                    msgs.limpar(); escolhas.responder(0)
+                    assert pa.garantir_planilha(None, nova) is True
+                    titulo, texto, _ = escolhas.vistas[0]
+                    assert titulo == "Baixar os dados da nuvem" and f"{len(bd.ler_clientes(dono.arquivo))} cliente(s)" in texto
+                    assert t._normalizado(nova) == t._normalizado(dono.arquivo)
+                    assert msgs.ultima()[1] == "Dados baixados" and "guardado" not in msgs.ultima()[2], "nao havia arquivo de antes"
+                    print("OK: nuvem com dados: mostra quanto tem, baixa e o arquivo novo fica igual a nuvem.")
+
+                    # 8c sem internet: 'Tentar de novo' pergunta de novo; 'Comecar vazia' cria
+                    nova.unlink(); estado_mod._arquivo(nova).unlink(missing_ok=True)
+                    nuvem.sem_rede = True
+                    escolhas.responder(0, 1)
+                    assert pa.garantir_planilha(None, nova) is True
+                    nuvem.sem_rede = False
+                    assert [v[0] for v in escolhas.vistas] == ["Sem conexão com a nuvem"] * 2 and "sem internet" in escolhas.vistas[0][1]
+                    assert nova.exists() and len(bd.ler_clientes(nova)) == 0
+                    print("OK: sem internet: 'Tentar de novo' consulta de novo; 'Comecar vazia' cria a planilha.")
+
+                    # 8d nuvem SEM controle com dados: baixa e liga o controle
+                    nova.unlink(); estado_mod._arquivo(nova).unlink(missing_ok=True)
+                    sem_controle = t._copia_sem_controle(nuvem)
+                    t._usar_nuvem(sem_controle)
+                    escolhas.responder(0)
+                    assert pa.garantir_planilha(None, nova) is True
+                    assert t._normalizado(nova) == t._normalizado(dono.arquivo) and sem_controle.revisao() == 1
+                    assert estado_mod.ler(nova).revisao_conhecida == 1
+                    print("OK: nuvem sem controle: baixa, cria o arquivo e liga o controle (versao 1).")
+
+                    # 8e nuvem vazia
+                    nova.unlink(); estado_mod._arquivo(nova).unlink(missing_ok=True)
+                    t._usar_nuvem(t.NuvemFalsa())
+                    escolhas.responder(0)
+                    assert pa.garantir_planilha(None, nova) is True and nova.exists()
+                    assert "A nuvem também não tem dados" in escolhas.vistas[0][1]
+                    print("OK: nuvem vazia: explica e cria a planilha vazia.")
+
+                    # 8f erro ao baixar: avisa e pergunta de novo (nunca em silencio)
+                    nova.unlink(); estado_mod._arquivo(nova).unlink(missing_ok=True)
+                    t._usar_nuvem(nuvem)
+                    nuvem.abas_que_falham_ao_ler = {"VENDEDORES"}
+                    consulta_original = S.consultar_nuvem_para_primeira_abertura
+                    S.consultar_nuvem_para_primeira_abertura = lambda: S.NuvemParaPrimeiraAbertura(S.NUVEM_COM_DADOS, {bd.ABA_CLIENTES: 1})
+                    msgs.limpar(); escolhas.responder(0, 1)  # Baixar (falha) -> Fechar
+                    try:
+                        assert pa.garantir_planilha(None, nova) is False
+                    finally:
+                        S.consultar_nuvem_para_primeira_abertura = consulta_original
+                        nuvem.abas_que_falham_ao_ler = set()
+                    assert any(m[0] == "critical" and m[1] == "Erro ao baixar da nuvem" for m in msgs.registro), msgs.registro
+                    assert not nova.exists() and len(escolhas.vistas) == 2
+                    print("OK: se o download falha, a janela explica, nao deixa arquivo pela metade e pergunta de novo.")
+                finally:
+                    config.CAMINHO_CREDENCIAIS_GOOGLE = chave_original
+                    t._usar_nuvem(nuvem)
+                    nuvem.sem_rede = False
 
             linha("TUDO OK")
     finally:

@@ -471,6 +471,26 @@ def _salvar_planilha(wb, caminho_xlsx: Path) -> None:
         ) from exc
 
 
+def criar_planilha_vazia(caminho_xlsx: Path) -> None:
+    """Cria o arquivo de dados do zero: as 4 abas, na ordem do arquivo real, so com os cabecalhos. E o
+    que a primeira abertura usa quando nao ha planilha (instalacao nova). Nunca sobrescreve: se ja
+    existe um arquivo nesse caminho, levanta FileExistsError sem tocar nele."""
+    if caminho_xlsx.exists():
+        raise FileExistsError(f"Já existe um arquivo de dados em '{caminho_xlsx}' - nada foi criado.")
+    caminho_xlsx.parent.mkdir(parents=True, exist_ok=True)
+    wb = openpyxl.Workbook()
+    wb.active.title = ABA_CLIENTES
+    for nome_aba, colunas in (
+        (ABA_CLIENTES, CLIENTES_COLUNAS),
+        (ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS),
+        (ABA_PROPOSTAS, PROPOSTAS_COLUNAS),
+        (ABA_VENDEDORES, VENDEDORES_COLUNAS),
+    ):
+        ws = wb[nome_aba] if nome_aba in wb.sheetnames else wb.create_sheet(nome_aba)
+        ws.append(colunas)
+    _salvar_planilha(wb, caminho_xlsx)
+
+
 def _aplicar_formato(cell, nome_aba: str, nome_coluna: str) -> None:
     if nome_coluna in _COLUNAS_DE_DATA.get(nome_aba, ()):
         cell.number_format = "dd/mm/yyyy"

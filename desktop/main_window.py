@@ -478,12 +478,20 @@ class MainWindow(QMainWindow):
             escolha = escolha_dialog.escolher(
                 self,
                 "Ligar o controle de versão na nuvem",
-                "A planilha na nuvem ainda não tem controle de versão, e por isso nada está sendo enviado para ela.\n\n"
-                "Enviar agora os dados DESTE computador e ligar o controle? Faça isso no computador que tem os "
-                "dados mais recentes. O que a nuvem tem hoje é guardado antes em Backups.",
-                ["Enviar os dados deste computador", "Agora não"],
+                "A planilha na nuvem ainda não tem controle de versão, e por isso nada está sendo enviado para ela. "
+                "Escolha qual lado tem os dados certos:\n\n"
+                "• Baixar da nuvem: este computador fica com os dados da nuvem (o arquivo daqui é guardado antes "
+                "em Backups).\n"
+                "• Enviar os dados deste computador: a nuvem fica com os dados daqui (o que ela tem hoje é "
+                "guardado antes em Backups).\n\n"
+                "Nos dois casos o controle de versão é ligado.",
+                ["Baixar da nuvem para este computador", "Enviar os dados deste computador", "Agora não"],
+                padrao=2,
             )
             if escolha == 0:
+                if not administracao.executar_download_da_nuvem(ligar_controle=True):
+                    sheets_sync.sinalizar_conflito(meta)  # nada mudou: o aviso continua no indicador
+            elif escolha == 1:
                 administracao.executar_envio_substituindo_a_nuvem(copia_obrigatoria=False)
             else:
                 sheets_sync.sinalizar_conflito(meta)

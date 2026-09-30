@@ -1,29 +1,27 @@
-﻿Gestão de Financiamentos - depois de instalar
+Gestão de Financiamentos - depois de instalar
 ==============================================
 
 Durante a instalação, o assistente pediu, um por um, três arquivos de uma
 instalação anterior ou backup: a planilha ("controle_financiamentos.dat"),
 a senha do Administrador ("admin_senha.json") e a chave do Google
 ("service_account_admin.json"). O que você escolheu já foi copiado para o
-lugar certo. Se deixou algum campo em branco (ou esta é a primeira
-instalação, do zero), ainda falta copiar esse arquivo:
+lugar certo. O que ficou em branco funciona assim:
 
-1. Pasta "data": copie o arquivo "controle_financiamentos.dat" (a planilha
-   de verdade) pra dentro da pasta "data" que o instalador criou aqui.
+1. Sem a planilha: na primeira vez que abrir, o programa consulta a nuvem.
+   Se ela tiver dados, oferece baixar; senão, oferece começar com uma
+   planilha vazia. Se preferir usar o arquivo de outro computador, copie
+   "controle_financiamentos.dat" para a pasta "data" daqui antes de abrir.
 
-2. Pasta "credentials": copie os dois arquivos de credencial
-   ("admin_senha.json" e "service_account_admin.json") pra dentro da pasta
-   "credentials" que o instalador criou aqui.
+2. Sem "admin_senha.json": o programa pede para definir uma senha nova do
+   Administrador na primeira vez que abrir.
 
-Essas duas coisas nunca vêm dentro do próprio instalador de propósito (são
-a planilha com dados reais de clientes e a chave de acesso à nuvem - itens
-sensíveis demais pra ir dentro de um arquivo que pode circular por
-e-mail/pendrive).
+3. Sem "service_account_admin.json" (a chave do Google): o programa
+   funciona normalmente, mas só neste computador, sem sincronizar com a
+   nuvem. Para ligar a sincronização, copie esse arquivo para a pasta
+   "credentials" daqui e abra o programa de novo.
 
-Depois de garantir as duas pastas, abra o programa normalmente pelo atalho
-que o instalador criou. Se "admin_senha.json" não estiver lá, o programa
-vai pedir pra definir uma senha nova do Administrador na primeira vez que
-abrir (aí ele fica só nesta instalação, diferente da senha da instalação
-de onde a planilha veio).
+A planilha e a chave nunca vêm dentro do próprio instalador, de propósito:
+são os dados de clientes e a chave de acesso à nuvem, sensíveis demais para
+ir dentro de um arquivo que pode circular por e-mail ou pendrive.
 
-Em caso de dúvida, fale com quem configurou o programa pra você.
+Em caso de dúvida, fale com quem configurou o programa para você.

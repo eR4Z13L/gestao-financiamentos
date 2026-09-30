@@ -562,6 +562,16 @@ def preparar_envio_forcado() -> MetaNuvem:
     return meta
 
 
+def ligar_controle_de_versao() -> MetaNuvem:
+    """Cria a aba META (versao 1) numa nuvem que ainda nao tem controle, SEM enviar nenhuma aba de
+    dados, e devolve a META resultante. E o passo final de "baixar da nuvem sem controle": os dados de la
+    ja estao aqui, e dali em diante os envios passam pela trava. Chamar DENTRO de bloqueio_de_envio()
+    (quem baixa ja segura o portao; esta funcao nao pega o lock de novo). Rede!"""
+    planilha = _obter_planilha()
+    _garantir_meta(planilha)
+    return _ler_meta(planilha)
+
+
 # -- sinal de vida: "outro computador esta editando" ---------------------------------------
 
 def outro_computador_ativo(meta: MetaNuvem, agora: datetime | None = None) -> tuple[str, datetime] | None:

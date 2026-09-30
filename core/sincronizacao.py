@@ -62,9 +62,24 @@ class SituacaoAoAbrir:
 
 @dataclass(frozen=True)
 class ResultadoDoDownload:
-    backup: Path
+    backup: Path | None  # None: nao havia arquivo local para guardar (primeira abertura)
     meta: sheets_sync.MetaNuvem
     linhas: dict[str, int]  # aba -> quantas linhas vieram da nuvem
+    ligou_controle: bool = False  # a nuvem nao tinha controle de versao e passou a ter agora
+
+
+NUVEM_DESATIVADA = "desativada"
+NUVEM_SEM_CHAVE = "sem_chave"  # falta o arquivo da chave do Google neste computador
+NUVEM_SEM_REDE = "sem_rede"
+NUVEM_VAZIA = "vazia"  # a nuvem responde, mas nao tem dado nenhum
+NUVEM_COM_DADOS = "com_dados"
+
+
+@dataclass(frozen=True)
+class NuvemParaPrimeiraAbertura:
+    tipo: str
+    linhas: dict[str, int] | None = None  # aba -> linhas na nuvem (so quando a nuvem respondeu)
+    detalhe: str = ""
 
 
 def sincronizar_tudo_agora(caminho_xlsx: Path | None = None) -> None:
@@ -153,40 +168,98 @@ def _recusar_se_a_nuvem_parece_vazia_por_engano(dados: dict[str, pd.DataFrame], 
             )
 
 
-def baixar_da_nuvem(caminho_xlsx: Path | None = None) -> ResultadoDoDownload:
+def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = False) -> ResultadoDoDownload:
     """Troca os dados LOCAIS pelos da nuvem. Faz backup do arquivo atual antes; e tudo-ou-nada (as 4
     abas numa unica gravacao) e nao manda nada de volta pra nuvem. Alteracoes daqui que ainda nao
-    tinham sido enviadas sao substituidas (por isso o backup). Rede!
+    tinham sido enviadas sao substituidas (por isso o backup). Sem arquivo local (primeira abertura),
+    cria o arquivo com o que veio da nuvem - nao ha o que guardar em backup. Rede!
 
-    Levanta ErroNuvem (nada foi alterado) se a nuvem nao tem controle de versao, mudou durante o
-    download ou parece incompleta, e ErroArquivoBloqueado se o Excel esta com o arquivo aberto."""
+    Uma nuvem SEM controle de versao (ninguem com esta versao do app enviou ainda) so e aceita com
+    `ligar_controle=True`: depois de baixar, cria a aba META (sem reenviar dados) e este PC passa a
+    conhecer essa versao - os envios seguintes ja passam pela trava.
+
+    Levanta ErroNuvem (nada foi alterado) se a nuvem nao tem controle e `ligar_controle` e False, se
+    ela mudou durante o download ou parece incompleta, e ErroArquivoBloqueado se o Excel esta com o
+    arquivo aberto."""
     caminho = caminho_xlsx or CAMINHO_XLSX
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         raise ErroNuvem("A sincronização com o Google Sheets está desativada neste aplicativo.")
-    if bd.arquivo_esta_bloqueado(caminho):
+    existia = caminho.exists()
+    if existia and bd.arquivo_esta_bloqueado(caminho):
         raise bd.ErroArquivoBloqueado(
             f"O arquivo '{caminho.name}' está aberto no Excel. Feche-o e baixe da nuvem de novo."
         )
 
     with sheets_sync.bloqueio_de_envio():  # nenhum envio deste PC no meio da troca
         meta_antes = sheets_sync.ler_meta_da_nuvem()
-        if not meta_antes.com_controle:
+        if not meta_antes.com_controle and not ligar_controle:
             raise ErroNuvem(
                 "A nuvem ainda não recebeu dados com controle de versão (nenhum computador enviou). "
                 "Envie primeiro, no computador que tem os dados certos. Nada foi alterado."
             )
         dados = _ler_dados_da_nuvem()
         meta_depois = sheets_sync.ler_meta_da_nuvem()
+        # sem controle a revisao e 0; se outro PC ligar o controle no meio, ela vira 1 e cai aqui tambem
         if meta_depois.revisao != meta_antes.revisao:
             raise ErroNuvem("A nuvem foi atualizada enquanto baixava. Nada foi alterado - tente de novo.")
-        _recusar_se_a_nuvem_parece_vazia_por_engano(dados, caminho)
 
-        seguranca = backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_NUVEM, caminho)
-        _gravar_dados_no_arquivo(caminho, dados)
-        estado_mod.registrar_download(meta_antes.revisao, caminho)
+        seguranca: Path | None = None
+        if existia:
+            _recusar_se_a_nuvem_parece_vazia_por_engano(dados, caminho)
+            seguranca = backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_NUVEM, caminho)
+        else:
+            bd.criar_planilha_vazia(caminho)
+        try:
+            _gravar_dados_no_arquivo(caminho, dados)
+        except Exception:
+            if not existia:  # nao deixa uma planilha vazia "de verdade" no lugar da que nao chegou
+                caminho.unlink(missing_ok=True)
+            raise
         sheets_sync.descartar_envios_velhos()
+
+        meta_final = meta_antes
+        if not meta_antes.com_controle:
+            try:
+                meta_final = sheets_sync.ligar_controle_de_versao()
+            except Exception as exc:
+                onde = f" O arquivo de antes está em:\n{seguranca}" if seguranca else ""
+                raise ErroNuvem(
+                    "Os dados da nuvem foram baixados para este computador, mas não consegui ligar o controle "
+                    f"de versão na nuvem ({type(exc).__name__}: {exc}). Abra o aplicativo de novo para tentar "
+                    f"outra vez.{onde}"
+                ) from exc
+        estado_mod.registrar_download(meta_final.revisao, caminho)
     sheets_sync.limpar_conflito()
-    return ResultadoDoDownload(seguranca, meta_antes, {aba: len(df) for aba, df in dados.items()})
+    return ResultadoDoDownload(
+        seguranca, meta_final, {aba: len(df) for aba, df in dados.items()}, ligou_controle=not meta_antes.com_controle
+    )
+
+
+def consultar_nuvem_para_primeira_abertura() -> NuvemParaPrimeiraAbertura:
+    """Sem planilha neste computador: a nuvem tem dados para baixar? Le as 4 abas (rede! chamar numa
+    thread). Nunca levanta: qualquer falha vira NUVEM_SEM_REDE com o motivo em `detalhe`."""
+    if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
+        return NuvemParaPrimeiraAbertura(NUVEM_DESATIVADA)
+    if not Path(config.CAMINHO_CREDENCIAIS_GOOGLE).exists():
+        return NuvemParaPrimeiraAbertura(NUVEM_SEM_CHAVE)
+    leitores = {
+        bd.ABA_CLIENTES: nuvem.ler_clientes,
+        bd.ABA_EQUIPAMENTOS: nuvem.ler_equipamentos,
+        bd.ABA_VENDEDORES: nuvem.ler_vendedores,
+        bd.ABA_PROPOSTAS: nuvem.ler_propostas,
+    }
+    linhas: dict[str, int] = {}
+    try:
+        for aba, leitor in leitores.items():
+            try:
+                linhas[aba] = len(leitor())
+            except gspread.WorksheetNotFound:
+                linhas[aba] = 0
+    except Exception as exc:
+        _logger.warning("Nao foi possivel consultar a nuvem na primeira abertura.", exc_info=True)
+        return NuvemParaPrimeiraAbertura(NUVEM_SEM_REDE, detalhe=f"{type(exc).__name__}: {exc}"[:300])
+    tipo = NUVEM_COM_DADOS if any(linhas.values()) else NUVEM_VAZIA
+    return NuvemParaPrimeiraAbertura(tipo, linhas)
 
 
 def salvar_copia_da_nuvem(caminho_xlsx: Path | None = None) -> Path:

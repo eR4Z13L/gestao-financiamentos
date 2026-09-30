@@ -748,6 +748,169 @@ def testar_estado_corrompido_e_atomico(a: Maquina) -> None:
         print("OK: JSON ilegivel -> estado vazio + aviso no log; a gravacao e atomica (sem .tmp sobrando).")
 
 
+def _copia_sem_controle(nuvem: NuvemFalsa) -> NuvemFalsa:
+    """Uma nuvem com as MESMAS abas de dados, mas sem a META (como a planilha real antes da versao nova)."""
+    outra = NuvemFalsa()
+    for nome, aba in nuvem.abas.items():
+        if nome == sheets_sync.ABA_META:
+            continue
+        copia = _AbaFalsa(outra, nome)
+        copia.celulas = dict(aba.celulas)
+        outra.abas[nome] = copia
+    return outra
+
+
+def _usar_nuvem(nuvem: NuvemFalsa) -> None:
+    sheets_sync._obter_cliente = lambda: nuvem
+    leitura_sheets._obter_cliente = lambda: nuvem
+
+
+def testar_planilha_vazia(raiz: Path) -> None:
+    linha("14) Planilha vazia: 4 abas com os cabecalhos certos, e nunca por cima de um arquivo existente")
+    pasta = raiz / "vazia"
+    arquivo = pasta / "controle_financiamentos.dat"
+    bd.criar_planilha_vazia(arquivo)
+    assert arquivo.exists()
+    assert list(bd.ler_clientes(arquivo).columns) == bd.CLIENTES_COLUNAS and len(bd.ler_clientes(arquivo)) == 0
+    assert len(bd.ler_equipamentos(arquivo)) == 0 and len(bd.ler_vendedores(arquivo)) == 0
+    assert list(bd.ler_propostas(arquivo).columns) == bd.PROPOSTAS_COLUNAS and len(bd.ler_propostas(arquivo)) == 0
+    bd.ler_aba(arquivo, bd.ABA_CLIENTES, bd.CLIENTES_COLUNAS, conferir_cabecalho=True)  # cabecalho no formato esperado
+    print("OK: a planilha nova le sem erro, com as 4 abas vazias e os cabecalhos que o app confere.")
+
+    h = hashlib.sha256(arquivo.read_bytes()).hexdigest()
+    try:
+        bd.criar_planilha_vazia(arquivo)
+        raise AssertionError("deveria recusar: o arquivo ja existe")
+    except FileExistsError:
+        pass
+    assert hashlib.sha256(arquivo.read_bytes()).hexdigest() == h
+    print("OK: com arquivo ja existente, recusa e nao toca nele.")
+
+
+def testar_baixar_ligando_o_controle(a: Maquina, b: Maquina, nuvem: NuvemFalsa) -> None:
+    linha("15) Nuvem SEM controle: 'baixar da nuvem' (ligando o controle) traz os dados e liga a trava, sem reenviar nada")
+    sem_controle = _copia_sem_controle(nuvem)
+    with _Ambiente(sem_controle):
+        _usar_nuvem(sem_controle)
+        b.ativar()
+        hash_antes = b.hash()
+        assert _normalizado(b.arquivo) != _normalizado(a.arquivo)
+
+        resultado = sincronizacao_mod.baixar_da_nuvem(b.arquivo, ligar_controle=True)
+        assert _normalizado(b.arquivo) == _normalizado(a.arquivo), "o PC B ficou igual ao que a nuvem tem"
+        assert resultado.ligou_controle and resultado.meta.revisao == 1
+        assert sem_controle.revisao() == 1, "a META foi criada (versao 1)"
+        abas_escritas = {e[1] for e in sem_controle.escritas}
+        assert abas_escritas == {sheets_sync.ABA_META}, f"so a META pode ter sido escrita, nao os dados: {sem_controle.escritas}"
+        assert b.estado().revisao_conhecida == 1 and b.estado().abas_pendentes == ()
+        assert resultado.backup is not None and hashlib.sha256(resultado.backup.read_bytes()).hexdigest() == hash_antes
+        print("OK: dados baixados, META criada (versao 1) sem reenviar nenhuma aba, backup do arquivo de antes guardado.")
+
+        _adicionar_cliente_simples("DEPOIS DE LIGAR O CONTROLE", fx.cpf_ficticio(400_300_000))
+        _esperar_envios()
+        assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK and sem_controle.revisao() == 2
+        assert b.estado().revisao_conhecida == 2
+        print("OK: a gravacao seguinte envia normalmente pela trava (versao 2).")
+
+    linha("15b) Outro computador liga o controle NO MEIO do download: recusa, nada muda")
+    sem_controle = _copia_sem_controle(nuvem)
+    with _Ambiente(sem_controle):
+        _usar_nuvem(sem_controle)
+        b.ativar()
+        original = sincronizacao_mod._ler_dados_da_nuvem
+
+        def ler_e_outro_pc_liga(*args, **kw):
+            dados = original(*args, **kw)
+            sheets_sync._garantir_meta(_PlanilhaFalsa(sem_controle))
+            return dados
+
+        sincronizacao_mod._ler_dados_da_nuvem = ler_e_outro_pc_liga
+        h = b.hash()
+        try:
+            sincronizacao_mod.baixar_da_nuvem(b.arquivo, ligar_controle=True)
+            raise AssertionError("deveria recusar: a nuvem ganhou controle durante o download")
+        except sincronizacao_mod.ErroNuvem as exc:
+            assert "enquanto baixava" in str(exc)
+        finally:
+            sincronizacao_mod._ler_dados_da_nuvem = original
+        assert b.hash() == h
+        print("OK: a META apareceu durante o download -> recusa, arquivo intacto.")
+
+
+def testar_baixar_sem_planilha_local(a: Maquina, nuvem: NuvemFalsa, raiz: Path) -> None:
+    linha("16) Primeira abertura: sem arquivo local, baixar CRIA o arquivo com os dados da nuvem")
+    pasta = raiz / "C"
+    pasta.mkdir()
+    arquivo = pasta / "controle_financiamentos.dat"
+    with _Ambiente(nuvem):
+        fx.apontar_modulos_para(arquivo)
+        sheets_sync._NOME_DA_MAQUINA = "C"
+        escritas_antes = len(nuvem.escritas)
+        resultado = sincronizacao_mod.baixar_da_nuvem(arquivo)
+        assert arquivo.exists() and _normalizado(arquivo) == _normalizado(a.arquivo)
+        assert resultado.backup is None and not resultado.ligou_controle
+        assert estado_mod.ler(arquivo).revisao_conhecida == nuvem.revisao()
+        assert len(nuvem.escritas) == escritas_antes
+        assert not (pasta / "backups").exists() or not list((pasta / "backups").iterdir())
+        print("OK: arquivo criado igual ao da nuvem, sem backup (nao havia o que guardar), nada escrito na nuvem.")
+
+        arquivo.unlink()
+        estado_mod._arquivo(arquivo).unlink(missing_ok=True)
+        original = sincronizacao_mod._gravar_dados_no_arquivo
+        sincronizacao_mod._gravar_dados_no_arquivo = lambda *_a: (_ for _ in ()).throw(OSError("disco cheio (falso)"))
+        try:
+            sincronizacao_mod.baixar_da_nuvem(arquivo)
+            raise AssertionError("deveria falhar")
+        except OSError:
+            pass
+        finally:
+            sincronizacao_mod._gravar_dados_no_arquivo = original
+        assert not arquivo.exists(), "se a gravacao falha, nao pode sobrar uma planilha vazia no lugar"
+        print("OK: se gravar falha, a planilha recem-criada e apagada (nao fica uma vazia 'de verdade').")
+
+    sem_controle = _copia_sem_controle(nuvem)
+    with _Ambiente(sem_controle):
+        _usar_nuvem(sem_controle)
+        fx.apontar_modulos_para(arquivo)
+        resultado = sincronizacao_mod.baixar_da_nuvem(arquivo, ligar_controle=True)
+        assert arquivo.exists() and resultado.ligou_controle and sem_controle.revisao() == 1
+        assert estado_mod.ler(arquivo).revisao_conhecida == 1
+        print("OK: sem arquivo local E nuvem sem controle: baixa, cria o arquivo e liga o controle.")
+
+
+def testar_consulta_da_primeira_abertura(a: Maquina, nuvem: NuvemFalsa, raiz: Path) -> None:
+    linha("17) Consulta da primeira abertura: desativada / sem chave / vazia / com dados / sem internet")
+    S = sincronizacao_mod
+    chave_falsa = raiz / "chave_falsa.json"
+    chave_falsa.write_text("{}", encoding="utf-8")
+    chave_original = config.CAMINHO_CREDENCIAIS_GOOGLE
+    try:
+        with _Ambiente(nuvem):
+            config.SINCRONIZACAO_GOOGLE_ATIVADA = False
+            assert S.consultar_nuvem_para_primeira_abertura().tipo == S.NUVEM_DESATIVADA
+            config.SINCRONIZACAO_GOOGLE_ATIVADA = True
+
+            config.CAMINHO_CREDENCIAIS_GOOGLE = raiz / "nao_existe.json"
+            assert S.consultar_nuvem_para_primeira_abertura().tipo == S.NUVEM_SEM_CHAVE
+            config.CAMINHO_CREDENCIAIS_GOOGLE = chave_falsa
+
+            _usar_nuvem(NuvemFalsa())
+            assert S.consultar_nuvem_para_primeira_abertura().tipo == S.NUVEM_VAZIA
+            _usar_nuvem(nuvem)
+            consulta = S.consultar_nuvem_para_primeira_abertura()
+            assert consulta.tipo == S.NUVEM_COM_DADOS
+            assert consulta.linhas[bd.ABA_CLIENTES] == len(bd.ler_clientes(a.arquivo))
+            assert consulta.linhas[bd.ABA_PROPOSTAS] == len(bd.ler_propostas(a.arquivo))
+
+            nuvem.sem_rede = True
+            consulta = S.consultar_nuvem_para_primeira_abertura()
+            nuvem.sem_rede = False
+            assert consulta.tipo == S.NUVEM_SEM_REDE and "sem internet" in consulta.detalhe
+            print("OK: cada situacao vira o tipo certo (com dados: as contagens batem com as da nuvem; sem rede: nunca levanta).")
+    finally:
+        config.CAMINHO_CREDENCIAIS_GOOGLE = chave_original
+
+
 def main() -> None:
     raiz = Path(tempfile.mkdtemp(prefix="_smoke_sync_versao_"))
     registro_antes = fx.instantaneo_do_registro()
@@ -774,6 +937,11 @@ def main() -> None:
         testar_sinal_de_outro_computador(a, b, nuvem)
         testar_restaurar_backup_marca_pendente(a, nuvem)
         testar_estado_corrompido_e_atomico(a)
+        testar_planilha_vazia(raiz)
+        _restaurar_nuvem_de_a(a, nuvem)
+        testar_baixar_ligando_o_controle(a, b, nuvem)
+        testar_baixar_sem_planilha_local(a, nuvem, raiz)
+        testar_consulta_da_primeira_abertura(a, nuvem, raiz)
 
         assert config.SINCRONIZACAO_GOOGLE_ATIVADA is False
         linha("TUDO OK")

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from core import backup as backup_mod
 from core import sessao as sessao_mod
+from desktop import primeira_abertura
 from desktop import settings as settings_mod
 from desktop.dialogs.login_dialog import LoginDialog
 from desktop.main_window import MainWindow
@@ -98,6 +99,9 @@ def main() -> None:
     app.setStyleSheet(build_stylesheet(settings_mod.obter_tema()))
 
     if not entrar():
+        sys.exit(0)
+    # sem planilha (instalacao nova): cria vazia ou baixa da nuvem ANTES da janela, que le os dados ao nascer
+    if sessao_mod.eh_admin() and not primeira_abertura.garantir_planilha():
         sys.exit(0)
 
     controlador = ControladorDaJanela(app)
