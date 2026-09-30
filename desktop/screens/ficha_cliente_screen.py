@@ -51,6 +51,7 @@ from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.botao_icone_link import BotaoIconeLink
+from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
@@ -187,9 +188,14 @@ class FichaClienteScreen(QWidget):
         layout_principal.setContentsMargins(24, 24, 24, 24)
         layout_principal.setSpacing(16)
 
+        cabecalho = QHBoxLayout()
         titulo = QLabel("🗂️ Ficha de Cliente")
         titulo.setProperty("role", "titulo")
-        layout_principal.addWidget(titulo)
+        cabecalho.addWidget(titulo)
+        cabecalho.addStretch()
+        self._botao_recarregar = criar_botao_recarregar(self._ao_recarregar)
+        cabecalho.addWidget(self._botao_recarregar)
+        layout_principal.addLayout(cabecalho)
 
         layout_principal.addLayout(self._construir_linha_busca_e_ordenacao())
         layout_principal.addLayout(self._construir_linha_filtros())
@@ -998,6 +1004,29 @@ class FichaClienteScreen(QWidget):
                 self._recarregar_ficha_atual()
         else:
             self._atualizar_indicadores_em_aberto()
+
+    def _ao_recarregar(self, *_args) -> None:
+        """Botao Recarregar: rele a lista e a ficha aberta. Com algo em edicao nao salvo (dados do cliente,
+        cliente novo ou proposta), pergunta antes - e so descarta se a pessoa confirmar."""
+        cliente_em_edicao = not self._modo_leitura_cliente or self._modo_novo_cliente
+        if cliente_em_edicao or self.tem_edicao_pendente():
+            resposta = QMessageBox.question(
+                self,
+                "Alterações não salvas",
+                "Há alterações nesta ficha que ainda não foram salvas. Recarregar descarta essas alterações. Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if resposta != QMessageBox.StandardButton.Yes:
+                return
+            self._expansor.descartar()
+            if cliente_em_edicao:
+                self._cancelar_edicao_cliente()  # cliente novo: volta pra pagina vazia; existente: volta pra leitura
+        self._invalidar_em_aberto()
+        self._recarregar_vendedores_filtro()
+        self._atualizar_lista()
+        if self._ficha_pode_ser_relida():
+            self._recarregar_ficha_atual()
 
     def _ficha_pode_ser_relida(self) -> bool:
         """A ficha aberta so e relida do disco se ninguem esta editando nada nela: dados do cliente

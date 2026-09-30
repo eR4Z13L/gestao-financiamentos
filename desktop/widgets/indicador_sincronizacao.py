@@ -106,7 +106,7 @@ def descrever_leitura(ultima_leitura: datetime | None, agora: datetime) -> Descr
         sheets_sync.NIVEL_OK,
         f"Dados de {hora}",
         f"Leitura mais recente do Google Sheets: {_data_e_hora(ultima_leitura)}. "
-        "Use o botão Atualizar de cada tela para ler de novo.",
+        "Use o botão Recarregar de cada tela para ler de novo.",
     )
 
 

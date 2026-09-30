@@ -39,6 +39,7 @@ from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.formatting import formatar_data, formatar_tempo
 from desktop.vigia_do_arquivo import VigiaDoArquivo
+from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.expansor_proposta import ExpansorDeProposta
@@ -133,10 +134,7 @@ class PropostasScreen(QWidget):
         titulo.setProperty("role", "titulo")
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
-        botao_atualizar = QPushButton("Atualizar")
-        botao_atualizar.setProperty("role", "botao_primario")
-        botao_atualizar.clicked.connect(self._ao_atualizar)
-        cabecalho.addWidget(botao_atualizar)
+        cabecalho.addWidget(criar_botao_recarregar(self._ao_recarregar))
         layout.addLayout(cabecalho)
 
         layout.addLayout(self._construir_linha_busca_e_ordenacao())
@@ -293,8 +291,8 @@ class PropostasScreen(QWidget):
 
     # -- carregamento e filtro -----------------------------------------------
 
-    def _ao_atualizar(self, *_args) -> None:
-        """Botao Atualizar: le tudo de novo. Se ha um card com edicao nao salva, pergunta antes."""
+    def _ao_recarregar(self, *_args) -> None:
+        """Botao Recarregar: le tudo de novo. Se ha um card com edicao nao salva, pergunta antes."""
         if self._expansor.liberar():
             self._carregar_dados()
 
@@ -333,7 +331,7 @@ class PropostasScreen(QWidget):
         self._repovoar_filtro(self._filtro_equipamento, propostas_mod.valores_distintos(self._todas, "EQUIPAMENTO"))
         self._recarregar_vendedores_filtro()
 
-        # recarregar (Atualizar, ou depois de editar/excluir/criar) NAO volta
+        # recarregar (botao Recarregar, ou depois de editar/excluir/criar) NAO volta
         # pra primeira pagina: quem ja tinha carregado mais cards continua vendo
         self._aplicar_filtros(manter_pagina=True, selecionar=selecionar)
         self.dados_atualizados.emit()
@@ -385,7 +383,7 @@ class PropostasScreen(QWidget):
         super().showEvent(evento)
         # o arquivo mudou desde a ultima leitura (outra tela gravou, baixou da nuvem, restaurou backup):
         # rele tudo - menos com um card em edicao nao salva, que nunca e descartado sem perguntar (o botao
-        # Atualizar pergunta)
+        # Recarregar pergunta)
         if self._vigia.mudou_desde_a_leitura() and not self._expansor.tem_alteracoes():
             self._carregar_dados()
         # alguem pode ter cadastrado um vendedor em outra tela (Usuarios) desde a

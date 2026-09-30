@@ -2,7 +2,7 @@
 
 Tudo calculado em tempo real a partir de CLIENTES e PROPOSTAS (a regra esta em core/dashboard.py) -
 nada fica salvo, so exibido. A pagina rola; no topo ficam o titulo, o seletor de periodo (que vale pra
-TODOS os blocos) e o botao "Atualizar", que rele os dados do zero (pro caso do arquivo ter sido editado
+TODOS os blocos) e o botao "Recarregar", que rele os dados do zero (pro caso do arquivo ter sido editado
 direto no Excel com o app aberto).
 
 ADMIN ve: os numeros do topo, e duas abas - "Visao geral" (funil por etapa, desempenho por banco) e
@@ -46,6 +46,7 @@ from core.dashboard import FiltroDoDashboard
 from core.formatting import formatar_reais, formatar_tempo
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
+from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.cartao_do_painel import CartaoDoPainel
 from desktop.widgets.funil_de_etapas import FunilDeEtapas
 from desktop.widgets.linha_clicavel import LinhaClicavel
@@ -136,10 +137,7 @@ class DashboardScreen(QWidget):
         self._seletor = SeletorDePeriodo(self._periodo)
         self._seletor.periodo_alterado.connect(self._ao_mudar_periodo)
         cabecalho.addWidget(self._seletor)
-        botao_atualizar = QPushButton("Atualizar")
-        botao_atualizar.setProperty("role", "botao_primario")
-        botao_atualizar.clicked.connect(self._carregar_dados)
-        cabecalho.addWidget(botao_atualizar)
+        cabecalho.addWidget(criar_botao_recarregar(self._carregar_dados))
         return cabecalho
 
     def _construir_topo(self) -> QHBoxLayout:

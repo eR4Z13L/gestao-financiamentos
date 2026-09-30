@@ -28,7 +28,7 @@ class VigiaDoArquivo:
 
     def mudou_desde_a_leitura(self) -> bool:
         """True se o arquivo mudou depois da ultima leitura desta tela. O VENDEDOR le do Google Sheets,
-        nao do arquivo local: pra ele, sempre False (as telas dele seguem o botao Atualizar)."""
+        nao do arquivo local: pra ele, sempre False (as telas dele seguem o botao Recarregar)."""
         if sessao_mod.eh_vendedor():
             return False
         return not self._ja_leu or self._impressao_atual() != self._impressao_lida

@@ -186,6 +186,59 @@ def main() -> None:
             assert vigia.mudou_desde_a_leitura() is False
             print("OK: vendedor -> nunca; admin -> so quando o arquivo mudou desde a leitura.")
 
+            # ------------------------------------------------------------------------------------
+            linha("7) Botao 'Recarregar' (antes 'Atualizar'): nas 3 telas, e o da Ficha respeita quem edita")
+            from PySide6.QtWidgets import QMessageBox, QPushButton
+
+            from desktop.widgets.botao_recarregar import DICA
+
+            assert not [b for b in janela.findChildren(QPushButton) if b.text() == "Atualizar"], "nao sobrou botao 'Atualizar'"
+            for tela in (dashboard, propostas, ficha):
+                botoes = [b for b in tela.findChildren(QPushButton) if b.text() == "Recarregar"]
+                assert len(botoes) == 1 and botoes[0].toolTip() == DICA and "nuvem" in DICA, type(tela).__name__
+            botao_ficha = ficha._botao_recarregar
+            print("OK: Dashboard, Todas as Propostas e Ficha tem 'Recarregar' (com a dica 'nao mexe na nuvem').")
+
+            _ir(janela, PAGINA_PROPOSTAS)
+            antes = len(propostas._todas)
+            propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
+                                              "EQUIPAMENTO": "Equipamento Modelo X", "VALOR (R$)": 777})
+            [b for b in propostas.findChildren(QPushButton) if b.text() == "Recarregar"][0].click()
+            assert len(propostas._todas) == antes + 1
+            print("OK: 'Recarregar' em Todas as Propostas rele na hora, sem trocar de pagina.")
+
+            _ir(janela, PAGINA_FICHA)
+            ficha._mostrar_cliente(cpf_novo)
+            cpf_2 = fx.cpf_ficticio(500_000_002)
+            clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_2, "CLIENTE": "OUTRO POR FORA", "TIPO": "Cliente", "VENDEDOR": "Vendedor Exemplo"})
+            _renomear_por_fora(cpf_novo, "RENOMEADO ENQUANTO ABERTA")
+            msgs.limpar()
+            botao_ficha.click()
+            assert ficha._lista.linha_do_cpf(cpf_2) is not None and ficha._campo_nome.text() == "RENOMEADO ENQUANTO ABERTA"
+            assert not [m for m in msgs.registro if m[0] == "question"], "sem edicao, nao pergunta nada"
+            print("OK: sem edicao, 'Recarregar' rele a lista e a ficha aberta, sem trocar de pagina e sem perguntar.")
+
+            ficha._aplicar_modo_edicao_cliente(leitura=False)
+            ficha._campo_nome.setText("DIGITADO E NAO SALVO")
+            _renomear_por_fora(cpf_novo, "NOME NO DISCO")
+            msgs.limpar(); msgs.resposta_pergunta = QMessageBox.StandardButton.No
+            botao_ficha.click()
+            assert msgs.ultima()[0] == "question" and "não foram salvas" in msgs.ultima()[2]
+            assert ficha._campo_nome.text() == "DIGITADO E NAO SALVO" and not ficha._modo_leitura_cliente
+            print("OK: em edicao, pergunta; respondendo 'Nao', nada muda (o que foi digitado fica).")
+
+            msgs.limpar(); msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
+            botao_ficha.click()
+            assert ficha._modo_leitura_cliente and ficha._campo_nome.text() == "NOME NO DISCO"
+            print("OK: respondendo 'Sim', descarta a edicao e mostra o que esta no disco (em leitura).")
+
+            ficha._iniciar_novo_cliente()
+            assert ficha._modo_novo_cliente
+            msgs.limpar(); msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
+            botao_ficha.click()
+            assert not ficha._modo_novo_cliente and ficha._painel_stack.currentIndex() == 0
+            print("OK: cliente novo nao salvo + 'Sim': o rascunho sai e a ficha volta pra pagina vazia.")
+
             msgs.exigir_sem_erros("trocando de pagina")
         linha("TUDO OK")
     finally:
