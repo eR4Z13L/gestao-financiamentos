@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -60,7 +61,10 @@ SINCRONIZACAO_GOOGLE_ATIVADA = True
 # num Google Sheets separados, sem risco de mexer nos dados reais por engano.
 # Sem esse arquivo, nada muda (usa sempre a config real de cima). Copie
 # config_local.exemplo.py pra config_local.py e ajuste os caminhos/IDs.
-try:
-    from config_local import *  # noqa: F401,F403 - so sobrescreve o que o arquivo definir
-except ImportError:
-    pass
+# GESTAO_IGNORAR_CONFIG_LOCAL=1 (variavel de ambiente) pula o arquivo: e o que os poucos testes
+# que usam uma COPIA da planilha real como base ligam, pra nao pegarem a de teste por engano.
+if not os.environ.get("GESTAO_IGNORAR_CONFIG_LOCAL"):
+    try:
+        from config_local import *  # noqa: F401,F403 - so sobrescreve o que o arquivo definir
+    except ImportError:
+        pass

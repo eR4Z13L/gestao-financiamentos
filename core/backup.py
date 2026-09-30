@@ -24,10 +24,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import config
 from config import CAMINHO_XLSX
-from core.data_store import ErroArquivoBloqueado, arquivo_esta_bloqueado
+from core import estado_sincronizacao as estado_mod
+from core.data_store import (
+    ABA_CLIENTES,
+    ABA_EQUIPAMENTOS,
+    ABA_PROPOSTAS,
+    ABA_VENDEDORES,
+    ErroArquivoBloqueado,
+    arquivo_esta_bloqueado,
+)
 
 _logger = logging.getLogger(__name__)
+
+_ABAS_SINCRONIZADAS = [ABA_CLIENTES, ABA_EQUIPAMENTOS, ABA_PROPOSTAS, ABA_VENDEDORES]
 
 MAXIMO_BACKUPS_AUTOMATICOS = 7
 
@@ -35,6 +46,8 @@ MOTIVO_AUTOMATICO = "auto"
 MOTIVO_MANUAL = "manual"
 MOTIVO_PRE_RESTAURACAO = "pre-restauracao"
 MOTIVO_PRE_MESCLAGEM = "pre-mesclagem"  # antes de core.propostas.mesclar_bancos reescrever o historico
+MOTIVO_PRE_NUVEM = "pre-nuvem"  # antes de "Baixar da nuvem" trocar os dados locais pelos da nuvem
+MOTIVO_COPIA_DA_NUVEM = "copia-da-nuvem"  # o que a nuvem tinha, guardado antes de o envio sobrescreve-la
 
 _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # só reconhece arquivos que ESTE módulo gerou (motivo + timestamp no formato exato, com um
@@ -45,7 +58,7 @@ _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # .dat (extensao atual do arquivo real) quanto .xlsx (extensao antiga, de backups feitos antes
 # da troca - ver config.py) - assim nenhum backup ja existente some da listagem.
 _PADRAO_NOME = re.compile(
-    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
+    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem|pre-nuvem|copia-da-nuvem)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
 )
 
 
@@ -183,4 +196,11 @@ def restaurar_backup(backup: Path, caminho_xlsx: Path | None = None) -> Path:
             f"Não foi possível restaurar '{caminho_xlsx.name}'. "
             "Verifique se ele não está aberto no Excel e tente novamente."
         ) from exc
+    # o arquivo agora e outro: nada do que ele tem foi confirmado na nuvem. Marca as 4 abas como
+    # pendentes pro app nao tratar isto como "em dia" (e nao baixar por cima sem avisar).
+    if config.SINCRONIZACAO_GOOGLE_ATIVADA:
+        try:
+            estado_mod.marcar_todas_pendentes(_ABAS_SINCRONIZADAS, caminho_xlsx)
+        except Exception:
+            _logger.warning("Nao foi possivel marcar as abas como pendentes depois de restaurar.", exc_info=True)
     return seguranca

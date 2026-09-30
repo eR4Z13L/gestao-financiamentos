@@ -9,6 +9,7 @@
 # eventual arquivo solto direto em data/, fora da pasta de backups).
 data/*.xlsx
 data/*.dat
+data/*.json
 data/backups/
 !data/.gitkeep
 ~$*.xlsx
@@ -26,6 +27,11 @@ credentials/
 config_local.py
 data_teste/
 credentials_teste/
+
+# Documentos de planejamento gerados a partir dos dados reais (numeros de negocio,
+# desempenho por vendedor por nome) - o repositorio e PUBLICO no GitHub, isso nao
+# pode ir junto.
+docs/
 
 # Ambiente virtual Python
 venv/

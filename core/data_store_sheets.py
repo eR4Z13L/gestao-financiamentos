@@ -14,6 +14,7 @@ app.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 
 import gspread
@@ -26,6 +27,8 @@ from core import data_store as bd
 _ESCOPOS_LEITURA = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 _cliente = None
+_planilha_em_cache: tuple | None = None  # (cliente, id da planilha, planilha aberta)
+_planilha_lock = threading.Lock()
 _ultima_leitura: datetime | None = None
 
 
@@ -46,12 +49,26 @@ def _obter_cliente():
     return _cliente
 
 
+def _obter_planilha():
+    """A planilha aberta, reaproveitada: abrir de novo custa uma leitura na API (cota de 60 por minuto)."""
+    global _planilha_em_cache
+    cliente = _obter_cliente()
+    chave = config.GOOGLE_SHEETS_ID
+    with _planilha_lock:
+        if _planilha_em_cache and _planilha_em_cache[0] is cliente and _planilha_em_cache[1] == chave:
+            return _planilha_em_cache[2]
+        planilha = cliente.open_by_key(chave)
+        _planilha_em_cache = (cliente, chave, planilha)
+        return planilha
+
+
 def _ler_aba_bruta(nome_aba: str) -> pd.DataFrame:
     global _ultima_leitura
-    cliente = _obter_cliente()
-    planilha = cliente.open_by_key(config.GOOGLE_SHEETS_ID)
-    aba = planilha.worksheet(nome_aba)
-    valores = aba.get_all_values()
+    aba = _obter_planilha().worksheet(nome_aba)
+    # sem formatacao: o valor exatamente como foi gravado (texto continua texto, numero continua
+    # numero). O texto "formatado" segue a configuracao regional da planilha (virgula decimal,
+    # separador de milhar) e nao da pra ler de volta como numero.
+    valores = aba.get_all_values(value_render_option="UNFORMATTED_VALUE")
     _ultima_leitura = datetime.now()
     if len(valores) <= 1:
         return pd.DataFrame()
@@ -59,8 +76,28 @@ def _ler_aba_bruta(nome_aba: str) -> pd.DataFrame:
     return pd.DataFrame(linhas, columns=cabecalho)
 
 
+def _texto_da_celula(valor) -> str:
+    if valor is None:
+        return ""
+    if isinstance(valor, float):
+        if valor != valor:  # NaN
+            return ""
+        # um numero inteiro que veio como float (85999998888.0) e o mesmo numero, sem o ".0"
+        return str(int(valor)) if valor.is_integer() else str(valor)
+    return str(valor).strip()
+
+
 def _texto(serie: pd.Series) -> pd.Series:
-    return serie.fillna("").astype(str).str.strip()
+    return serie.map(_texto_da_celula)
+
+
+def _para_data(serie: pd.Series) -> pd.Series:
+    """dd/mm/aaaa em texto (como o app envia) OU numero serial de data (planilha enviada por uma
+    versao antiga do app, quando o Sheets convertia o texto em data de verdade)."""
+    numeros = pd.to_numeric(serie, errors="coerce")
+    em_texto = pd.to_datetime(serie.where(numeros.isna()), format="%d/%m/%Y", errors="coerce")
+    seriais = pd.to_datetime(numeros, unit="D", origin="1899-12-30", errors="coerce")
+    return em_texto.fillna(seriais)
 
 
 def _com_colunas_esperadas(df: pd.DataFrame, colunas: list[str]) -> pd.DataFrame:
@@ -79,7 +116,7 @@ def ler_clientes() -> pd.DataFrame:
     df = _com_colunas_esperadas(df, bd.CLIENTES_COLUNAS)
     for col in bd.CLIENTES_COLUNAS:
         if col in ("DATA CADASTRO", "NASCIMENTO"):
-            df[col] = pd.to_datetime(df[col], format="%d/%m/%Y", errors="coerce")
+            df[col] = _para_data(df[col])
         else:
             df[col] = _texto(df[col])
     return df
@@ -120,7 +157,7 @@ def ler_propostas() -> pd.DataFrame:
     colunas_numericas = {"VALOR (R$)", "MESES"}
     for col in bd.PROPOSTAS_COLUNAS:
         if col == "DATA":
-            df[col] = pd.to_datetime(df[col], format="%d/%m/%Y", errors="coerce")
+            df[col] = _para_data(df[col])
         elif col in colunas_numericas:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         else:

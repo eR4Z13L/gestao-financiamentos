@@ -12,7 +12,9 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_sincronizacao_estado.py
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -25,6 +27,7 @@ import pandas as pd
 import config
 
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import estado_sincronizacao as estado_mod
 from core import sheets_sync
 from core.sheets_sync import EstadoSincronizacao
 from fixture_ficticia import ColetorDeLog  # o coletor de log compartilhado dos testes
@@ -51,6 +54,10 @@ class _Ambiente:
         self.log = ColetorDeLog()
 
     def __enter__(self):
+        # o estado em disco (abas pendentes) vai pra uma pasta temporaria - nunca pra data/
+        self._pasta = Path(tempfile.mkdtemp(prefix="_smoke_sync_estado_"))
+        self._caminho_original = estado_mod.CAMINHO_XLSX
+        estado_mod.CAMINHO_XLSX = self._pasta / "controle.xlsx"
         registrador = logging.getLogger(sheets_sync.__name__)
         registrador.addHandler(self.log)
         self._propagava = registrador.propagate
@@ -75,6 +82,8 @@ class _Ambiente:
         registrador = logging.getLogger(sheets_sync.__name__)
         registrador.removeHandler(self.log)
         registrador.propagate = self._propagava
+        estado_mod.CAMINHO_XLSX = self._caminho_original
+        shutil.rmtree(self._pasta, ignore_errors=True)
 
 
 def testar_desativada() -> None:

@@ -26,6 +26,11 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
+import os
+
+# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
+# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
+os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
 from config import CAMINHO_XLSX
 
 import config

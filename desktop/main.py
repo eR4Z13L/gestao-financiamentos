@@ -75,6 +75,7 @@ class ControladorDaJanela:
         self.janela = janela
         janela.sair_solicitado.connect(self.trocar_de_usuario)
         janela.show()
+        janela.iniciar_sincronizacao_da_nuvem()  # so o ADMIN, e so com a sincronizacao ligada
         return True
 
     def trocar_de_usuario(self) -> None:

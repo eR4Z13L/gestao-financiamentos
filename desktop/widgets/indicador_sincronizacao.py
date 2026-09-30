@@ -1,8 +1,9 @@
 """Indicador de sincronizacao, no rodape da barra lateral: uma bolinha colorida + uma frase curta
 ("Sincronizado há 2 min"). Clicar mostra o detalhe (a hora e, se falhou, o erro).
 
-  ADMIN     - verde: sincronizado; ambar: sincronizando; vermelho: falhou; cinza: desativada ou
-              nenhuma sincronizacao ainda. Vem de core.sheets_sync.estado_atual(), so memoria.
+  ADMIN     - verde: sincronizado; ambar: sincronizando ou aviso (outro computador ativo / nuvem mais
+              nova); vermelho: falhou ou conflito com a nuvem; cinza: desativada ou nenhuma
+              sincronizacao ainda. Vem de core.sheets_sync.estado_atual(), so memoria.
   VENDEDOR  - so le do Google Sheets, nunca escreve: mostra "Dados de HH:MM" (a ultima leitura,
               core.data_store_sheets.ultima_leitura()).
 
@@ -52,6 +53,24 @@ def descrever_sincronizacao(estado: sheets_sync.EstadoSincronizacao, agora: date
             f"Sincronizando…{quantidade}",
             f"{estado.em_andamento} envio(s) para o Google Sheets em andamento.",
         )
+    if nivel == sheets_sync.NIVEL_CONFLITO:
+        if estado.conflito == sheets_sync.TIPO_SEM_CONTROLE:
+            return DescricaoDoIndicador(
+                nivel,
+                "Nuvem sem controle — clique",
+                "A planilha na nuvem ainda não tem controle de versão, então nada está sendo enviado. "
+                "Os dados continuam salvos neste computador. Clique para enviar os dados deste computador "
+                "e ligar o controle (faça isso no computador que tem os dados mais recentes).",
+            )
+        return DescricaoDoIndicador(
+            nivel,
+            "Conflito com a nuvem — clique",
+            "Outro computador atualizou a nuvem depois da última vez que este atualizou, então o envio foi "
+            "recusado para não apagar o trabalho dele. Os dados continuam salvos neste computador. "
+            "Clique para escolher: baixar da nuvem ou manter o que está aqui.",
+        )
+    if nivel == sheets_sync.NIVEL_ATENCAO:
+        return DescricaoDoIndicador(nivel, estado.aviso, estado.aviso_detalhe)
     if nivel == sheets_sync.NIVEL_FALHOU:
         return DescricaoDoIndicador(
             nivel,
@@ -110,8 +129,10 @@ class IndicadorSincronizacao(BotaoLateral):
             return QColor(self._paleta["sucesso"])
         if nivel == sheets_sync.NIVEL_SINCRONIZANDO:
             return QColor(CORES_STATUS.get(settings_mod.obter_tema(), CORES_STATUS[TEMA_ESCURO])["em_analise"]["faixa"])
-        if nivel == sheets_sync.NIVEL_FALHOU:
+        if nivel in (sheets_sync.NIVEL_FALHOU, sheets_sync.NIVEL_CONFLITO):
             return QColor(self._paleta["erro"])
+        if nivel == sheets_sync.NIVEL_ATENCAO:  # pede um olhar, mas nao e erro: o mesmo ambar do "sincronizando"
+            return QColor(CORES_STATUS.get(settings_mod.obter_tema(), CORES_STATUS[TEMA_ESCURO])["em_analise"]["faixa"])
         cor = QColor(self._paleta["texto_secundario"])  # desativada / aguardando: neutra, sem alarme
         cor.setAlpha(170)
         return cor

@@ -21,6 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+import os
+
+# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
+# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
+os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
 from config import CAMINHO_XLSX
 
 import config

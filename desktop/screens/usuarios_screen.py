@@ -22,6 +22,7 @@ import pandas as pd
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -56,6 +57,8 @@ _ROTULO_POR_MOTIVO = {
     backup_mod.MOTIVO_MANUAL: "Manual",
     backup_mod.MOTIVO_PRE_RESTAURACAO: "Pré-restauração",
     backup_mod.MOTIVO_PRE_MESCLAGEM: "Pré-mesclagem",
+    backup_mod.MOTIVO_PRE_NUVEM: "Antes de baixar da nuvem",
+    backup_mod.MOTIVO_COPIA_DA_NUVEM: "Cópia da nuvem (antes de sobrescrever)",
 }
 
 
@@ -282,6 +285,9 @@ class UsuariosScreen(QWidget):
         botao_sincronizar = QPushButton("Sincronizar agora")
         botao_sincronizar.setProperty("role", "botao_primario")
         botao_sincronizar.clicked.connect(self._sincronizar_agora)
+        botao_baixar = QPushButton("Baixar da nuvem")
+        botao_baixar.clicked.connect(self._baixar_da_nuvem_pelo_botao)
+        cabecalho.addWidget(botao_baixar)
         cabecalho.addWidget(botao_sincronizar)
         layout_cartao.addLayout(cabecalho)
 
@@ -290,7 +296,10 @@ class UsuariosScreen(QWidget):
             "internet, por exemplo), o aplicativo tenta de novo sozinho em instantes. "
             "\"Sincronizar agora\" força uma tentativa imediata das 4 abas (clientes, "
             "equipamentos, propostas e vendedores), mesmo sem nada ter mudado - útil depois "
-            "de Restaurar um backup, que só mexe no arquivo local."
+            "de Restaurar um backup, que só mexe no arquivo local. "
+            "\"Baixar da nuvem\" faz o contrário: troca os dados DESTE computador pelos da nuvem (útil ao "
+            "voltar para um computador depois de trabalhar em outro) - um backup do arquivo atual é "
+            "feito antes, e alterações daqui que ainda não foram enviadas são substituídas."
         )
         explicacao.setProperty("role", "secundario")
         explicacao.setWordWrap(True)
@@ -317,6 +326,91 @@ class UsuariosScreen(QWidget):
             "As 4 abas (clientes, equipamentos, propostas e vendedores) foram enviadas para "
             "sincronizar. Acompanhe o indicador na barra lateral.",
         )
+
+    def _baixar_da_nuvem_pelo_botao(self) -> None:
+        if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
+            QMessageBox.information(
+                self,
+                "Sincronização desativada",
+                "A sincronização com o Google Sheets está desativada neste aplicativo.",
+            )
+            return
+        resposta = QMessageBox.question(
+            self,
+            "Baixar da nuvem",
+            "Trocar os dados DESTE computador pelos que estão na nuvem?\n\n"
+            "Um backup do arquivo atual é feito antes (aparece em Backups). Alterações feitas aqui que "
+            "ainda não foram enviadas para a nuvem serão substituídas.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta == QMessageBox.StandardButton.Yes:
+            self.executar_download_da_nuvem()
+
+    def executar_download_da_nuvem(self) -> bool:
+        """Baixa da nuvem SEM perguntar (quem chama ja perguntou) e mostra o resultado. True se deu certo."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            resultado = sincronizacao_mod.baixar_da_nuvem()
+        except bd.ErroArquivoBloqueado as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return False
+        except sincronizacao_mod.ErroNuvem as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Não foi possível baixar da nuvem", str(exc))
+            return False
+        except Exception as exc:  # nunca falhar em silencio
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(
+                self,
+                "Erro ao baixar da nuvem",
+                f"{type(exc).__name__}: {exc}\n\nNada foi alterado neste computador. Tente de novo em instantes.",
+            )
+            return False
+        QApplication.restoreOverrideCursor()
+        self.recarregar_apos_mudar_os_dados()
+        linhas = resultado.linhas
+        QMessageBox.information(
+            self,
+            "Dados baixados",
+            f"Os dados deste computador agora são os da nuvem: {linhas.get(bd.ABA_CLIENTES, 0)} cliente(s), "
+            f"{linhas.get(bd.ABA_PROPOSTAS, 0)} proposta(s), {linhas.get(bd.ABA_EQUIPAMENTOS, 0)} equipamento(s) e "
+            f"{linhas.get(bd.ABA_VENDEDORES, 0)} vendedor(es).\n\nO arquivo de antes foi guardado em:\n{resultado.backup}",
+        )
+        return True
+
+    def executar_envio_substituindo_a_nuvem(self, *, copia_obrigatoria: bool) -> bool:
+        """Manda os dados DESTE computador por cima da nuvem (quem chama ja perguntou). True se disparou."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            copia = sincronizacao_mod.enviar_para_a_nuvem_substituindo(copia_obrigatoria=copia_obrigatoria)
+        except sincronizacao_mod.ErroNuvem as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Não foi possível enviar para a nuvem", str(exc))
+            return False
+        except Exception as exc:  # nunca falhar em silencio
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Erro ao enviar para a nuvem", f"{type(exc).__name__}: {exc}")
+            return False
+        QApplication.restoreOverrideCursor()
+        self._carregar_backups()
+        onde = f"\n\nO que a nuvem tinha antes foi guardado em:\n{copia}" if copia is not None else ""
+        QMessageBox.information(
+            self,
+            "Envio iniciado",
+            "Os dados deste computador estão sendo enviados para a nuvem (as 4 abas). Acompanhe o indicador "
+            f"na barra lateral.{onde}",
+        )
+        return True
+
+    def recarregar_apos_mudar_os_dados(self) -> None:
+        """Depois de trocar os dados por fora das telas (baixar da nuvem, restaurar): relê as listas daqui
+        e avisa as outras telas."""
+        self._carregar_backups()
+        self._carregar_vendedores()
+        self._carregar_bancos()
+        self.dados_atualizados.emit()
 
     def _construir_secao_backup(self) -> QWidget:
         cartao = QFrame()

@@ -104,6 +104,34 @@ installer/  # receita do instalador (Inno Setup) - ver "Gerar o instalador" abai
    - Crie uma planilha no Google Sheets e compartilhe com o e-mail da conta de serviço (campo `client_email` do JSON) como **Editor**
    - Anote o ID da planilha (o trecho da URL entre `/d/` e `/edit`) em `GOOGLE_SHEETS_ID`, no `config.py`
 
+   **Usando o app em dois computadores (revezando).** Cada computador tem o próprio arquivo de
+   dados, e cada gravação envia a aba inteira para o Google Sheets - então, sem cuidado, quem
+   salvou por último apagaria o que o outro lançou. Por isso a nuvem tem uma aba `META` com um
+   **número de versão**, e cada computador guarda (em `data/estado_sincronizacao.json`) a versão
+   que conhece e quais abas ainda não foram enviadas:
+   - **Trava de versão:** antes de enviar, o app confere se a nuvem está na versão que ele
+     conhece. Se outro computador gravou no meio, o envio é **recusado** (nada é sobrescrito), o
+     indicador da barra lateral fica vermelho ("Conflito com a nuvem - clique") e as
+     alterações continuam salvas aqui, marcadas como pendentes.
+   - **Ao abrir o app** (como Administrador) ele compara este computador com a nuvem: se a nuvem
+     tem dados mais novos, oferece **baixar**; se os dois lados mudaram, pergunta qual vence
+     (baixar da nuvem ou manter o que está aqui); se há alterações que ficaram sem enviar (por
+     exemplo, sem internet), reenvia sozinho. Sem internet, o app abre normalmente.
+   - **Baixar da nuvem** (também em Administração > Sincronização e backup) troca os dados
+     deste computador pelos da nuvem, tudo ou nada, com backup do arquivo de antes
+     ("Antes de baixar da nuvem"). "Manter o meu" guarda antes uma cópia do que a nuvem tinha
+     ("Cópia da nuvem"). Esses backups nunca são apagados sozinhos.
+   - **Aviso de outro computador ativo:** com o app aberto, cada computador dá um sinal na nuvem
+     a cada minuto. Ao abrir, se outro computador deu sinal nos últimos 5 minutos, o app avisa
+     (é só um aviso: o sinal expira sozinho se o outro fechou ou travou). A trava de versão é a
+     proteção de verdade, mesmo que você escolha continuar.
+   - **Primeira vez:** uma planilha na nuvem que ainda não tem a aba `META` recebe os dados do
+     computador em que você aceitar "Enviar os dados deste computador" - faça isso no computador
+     com os dados mais recentes. Até lá nada é enviado (as alterações ficam salvas aqui).
+   - O Google limita a 60 leituras por minuto para a conta de serviço (dividido entre os
+     computadores); o uso normal fica bem abaixo disso, e um envio que esbarrar no limite
+     é repetido sozinho.
+
 5. Rode o app:
    ```bash
    venv\Scripts\python.exe -m desktop.main
@@ -142,6 +170,8 @@ venv\Scripts\python.exe scripts\smoke_test_cards_melhorias.py
 venv\Scripts\python.exe scripts\smoke_test_filtros_propostas.py
 venv\Scripts\python.exe scripts\smoke_test_barra_lateral_regras.py
 venv\Scripts\python.exe scripts\smoke_test_sincronizacao_estado.py
+venv\Scripts\python.exe scripts\smoke_test_sincronizacao_versao.py
+venv\Scripts\python.exe scripts\smoke_test_sincronizacao_janela.py
 venv\Scripts\python.exe scripts\smoke_test_barra_lateral.py
 venv\Scripts\python.exe scripts\smoke_test_dashboard_core.py
 venv\Scripts\python.exe scripts\smoke_test_dashboard_screen.py

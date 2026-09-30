@@ -14,6 +14,7 @@ papel de quem entrou (o VENDEDOR nao tem Administracao).
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from functools import partial
 
@@ -37,7 +38,9 @@ from core import data_store_sheets as leitura_sheets
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
+from core import sincronizacao as sincronizacao_mod
 from desktop import settings as settings_mod
+from desktop.dialogs import escolha_dialog
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.screens.propostas_screen import PropostasScreen
@@ -66,6 +69,7 @@ _MARGEM_LATERAL_RECOLHIDA = 12  # (59 uteis - 34 do avatar) / 2: a barra tem 1 p
 _TAMANHO_INICIAL = (1200, 800)
 _INTERVALO_DO_INDICADOR_MS = 2000  # relê so a memoria (nunca a rede): barato
 _INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS = 60_000  # rede de verdade: nao martelar a API a cada 2s
+_INTERVALO_DO_SINAL_MS = 60_000  # "este computador esta com o app aberto" (aviso pra outro PC): 1 escrita por minuto
 
 
 class MainWindow(QMainWindow):
@@ -119,6 +123,13 @@ class MainWindow(QMainWindow):
         self._temporizador_da_fila = QTimer(self)
         self._temporizador_da_fila.timeout.connect(sheets_sync.reenviar_pendentes)
         self._temporizador_da_fila.start(_INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS)
+
+        # sinal de vida pro aviso "outro computador ativo": so liga depois da checagem inicial da nuvem
+        # (iniciar_sincronizacao_da_nuvem) - senao o proprio sinal apareceria como "outro computador"
+        self._temporizador_do_sinal = QTimer(self)
+        self._temporizador_do_sinal.timeout.connect(sheets_sync.enviar_sinal_em_background)
+        self._situacao_ao_abrir: sincronizacao_mod.SituacaoAoAbrir | None = None  # a thread deixa aqui, a tela trata
+        self._tratando_situacao = False
 
         # abre na ultima tela usada (se ela existe pra este usuario); escolher() ja atualiza o selo
         # e o indicador, como qualquer troca de tela
@@ -376,6 +387,7 @@ class MainWindow(QMainWindow):
     # -- sincronizacao ---------------------------------------------------------------------
 
     def _atualizar_indicador_de_sincronizacao(self) -> None:
+        self._tratar_situacao_pendente()
         agora = datetime.now()
         if sessao_mod.eh_vendedor():
             descricao = descrever_leitura(leitura_sheets.ultima_leitura(), agora)
@@ -389,10 +401,143 @@ class MainWindow(QMainWindow):
         descricao = self._indicador_sincronizacao.descricao()
         if sessao_mod.eh_vendedor():
             QMessageBox.information(self, "Dados do Google Sheets", descricao.detalhe)
+        elif descricao.nivel == sheets_sync.NIVEL_CONFLITO:
+            self._resolver_conflito_de_sincronizacao()
         elif descricao.nivel == sheets_sync.NIVEL_FALHOU:
             QMessageBox.warning(self, "Falha na sincronização", descricao.detalhe)
         else:
             QMessageBox.information(self, "Sincronização com o Google Sheets", descricao.detalhe)
+
+    # -- nuvem: dois computadores -------------------------------------------------------------
+
+    def iniciar_sincronizacao_da_nuvem(self) -> None:
+        """Ao abrir como ADMIN: compara este computador com a nuvem (numa thread: e rede) e, quando a
+        resposta chega, o temporizador do indicador - na thread da tela - trata a situacao."""
+        if sessao_mod.eh_vendedor() or not config.SINCRONIZACAO_GOOGLE_ATIVADA:
+            return
+
+        def _tarefa() -> None:
+            try:
+                situacao = sincronizacao_mod.verificar_ao_abrir()
+            except Exception as exc:  # nunca falhar em silencio (e nunca impedir o app de abrir)
+                _logger.warning("Falha ao consultar a nuvem ao abrir.", exc_info=True)
+                situacao = sincronizacao_mod.SituacaoAoAbrir(sincronizacao_mod.SITUACAO_SEM_REDE, detalhe=str(exc)[:300])
+            self._situacao_ao_abrir = situacao
+
+        threading.Thread(target=_tarefa, daemon=True, name="verificar-nuvem").start()
+
+    def _tratar_situacao_pendente(self) -> None:
+        situacao = self._situacao_ao_abrir
+        if situacao is None or self._tratando_situacao:
+            return
+        self._situacao_ao_abrir = None
+        self._tratando_situacao = True  # a caixa de dialogo roda um laco proprio: os temporizadores continuam disparando
+        try:
+            continuar = self._tratar_situacao_ao_abrir(situacao)
+        finally:
+            self._tratando_situacao = False
+        if continuar:
+            self._iniciar_sinal_de_atividade()
+
+    def _quando_e_quem(self, meta: sheets_sync.MetaNuvem) -> str:
+        quem = meta.ultimo_escritor or "outro computador"
+        if meta.ultima_gravacao is None:
+            return quem
+        return f"{quem}, em {meta.ultima_gravacao.astimezone().strftime('%d/%m às %H:%M')}"
+
+    def _tratar_situacao_ao_abrir(self, situacao: sincronizacao_mod.SituacaoAoAbrir) -> bool:
+        """Mostra o que a situacao pede. Devolve False se a pessoa escolheu fechar o aplicativo."""
+        S = sincronizacao_mod
+        if situacao.outro_computador:
+            hora = situacao.outro_desde.strftime("%H:%M") if situacao.outro_desde else "?"
+            escolha = escolha_dialog.escolher(
+                self,
+                "Outro computador ativo",
+                f"O computador {situacao.outro_computador} está com o aplicativo aberto como Administrador "
+                f"(último sinal às {hora}).\n\nGravar nos dois ao mesmo tempo pode gerar conflito. Se ele já foi "
+                "fechado, ou se você só trocou de computador, pode continuar.",
+                ["Fechar o aplicativo", "Continuar mesmo assim"],
+                aviso=True,
+                padrao=1,
+            )
+            if escolha == 0:
+                self.close()
+                return False
+        if situacao.tipo == S.SITUACAO_LOCAL_PENDENTE:
+            S.enviar_pendentes_do_estado()  # sobreviveu a fechar o app: reenvia sem incomodar
+        elif situacao.tipo in (S.SITUACAO_SEM_CONTROLE, S.SITUACAO_NUVEM_MAIS_NOVA, S.SITUACAO_CONFLITO):
+            self._perguntar_sobre_a_nuvem(situacao.tipo, situacao.meta)
+        return True
+
+    def _perguntar_sobre_a_nuvem(self, tipo: str, meta: sheets_sync.MetaNuvem) -> None:
+        S = sincronizacao_mod
+        if not hasattr(self, "_tela_administracao"):
+            return
+        administracao = self._tela_administracao
+        if tipo == S.SITUACAO_SEM_CONTROLE:
+            escolha = escolha_dialog.escolher(
+                self,
+                "Ligar o controle de versão na nuvem",
+                "A planilha na nuvem ainda não tem controle de versão, e por isso nada está sendo enviado para ela.\n\n"
+                "Enviar agora os dados DESTE computador e ligar o controle? Faça isso no computador que tem os "
+                "dados mais recentes. O que a nuvem tem hoje é guardado antes em Backups.",
+                ["Enviar os dados deste computador", "Agora não"],
+            )
+            if escolha == 0:
+                administracao.executar_envio_substituindo_a_nuvem(copia_obrigatoria=False)
+            else:
+                sheets_sync.sinalizar_conflito(meta)
+        elif tipo == S.SITUACAO_NUVEM_MAIS_NOVA:
+            escolha = escolha_dialog.escolher(
+                self,
+                "Dados mais novos na nuvem",
+                f"A nuvem tem dados mais novos, enviados por {self._quando_e_quem(meta)}.\n\n"
+                "Baixar agora para trabalhar com eles? Um backup do arquivo deste computador é feito antes.",
+                ["Baixar da nuvem", "Agora não"],
+            )
+            if escolha == 0:
+                administracao.executar_download_da_nuvem()
+        elif tipo == S.SITUACAO_CONFLITO:
+            escolha = escolha_dialog.escolher(
+                self,
+                "Conflito com a nuvem",
+                f"Este computador tem alterações que ainda não foram enviadas E a nuvem foi atualizada por "
+                f"{self._quando_e_quem(meta)}.\n\nNenhum dos dois lados será apagado sem cópia. Escolha:\n"
+                "• Baixar da nuvem: fica com os dados dela; o que só existe aqui é substituído (o arquivo de "
+                "antes é guardado em Backups).\n"
+                "• Manter o meu: envia o que está aqui e sobrescreve a nuvem (a cópia dela é guardada em Backups).",
+                ["Baixar da nuvem", "Manter o meu e sobrescrever a nuvem", "Decidir depois"],
+                aviso=True,
+                padrao=2,
+            )
+            if escolha == 0:
+                administracao.executar_download_da_nuvem()
+            elif escolha == 1:
+                administracao.executar_envio_substituindo_a_nuvem(copia_obrigatoria=True)
+            else:
+                sheets_sync.sinalizar_conflito(meta)
+
+    def _resolver_conflito_de_sincronizacao(self) -> None:
+        """O clique no indicador quando ele mostra o conflito: a mesma decisao do aviso de abertura."""
+        conflito = sheets_sync.conflito_atual()
+        if conflito is None:
+            return
+        tipo = (
+            sincronizacao_mod.SITUACAO_SEM_CONTROLE
+            if conflito.tipo == sheets_sync.TIPO_SEM_CONTROLE
+            else sincronizacao_mod.SITUACAO_CONFLITO
+        )
+        self._perguntar_sobre_a_nuvem(tipo, conflito.meta)
+
+    def _iniciar_sinal_de_atividade(self) -> None:
+        if sessao_mod.eh_vendedor() or not config.SINCRONIZACAO_GOOGLE_ATIVADA:
+            return
+        sheets_sync.enviar_sinal_em_background()
+        self._temporizador_do_sinal.start(_INTERVALO_DO_SINAL_MS)
+
+    def _parar_sinal_de_atividade(self) -> None:
+        self._temporizador_do_sinal.stop()
+        sheets_sync.limpar_sinal_ao_sair()
 
     # -- sair --------------------------------------------------------------------------------
 
@@ -409,9 +554,11 @@ class MainWindow(QMainWindow):
         """Chamado por quem abriu a janela ao encerrar a sessao: guarda o estado da janela e
         para o temporizador (ela ainda existe, escondida, enquanto o login aparece)."""
         self._temporizador_do_indicador.stop()
+        self._parar_sinal_de_atividade()
         self._salvar_estado_da_janela()
 
     def closeEvent(self, evento) -> None:
+        self._parar_sinal_de_atividade()
         self._salvar_estado_da_janela()
         super().closeEvent(evento)
 

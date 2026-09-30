@@ -590,3 +590,39 @@ def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     # nao formulas) - e o formato que a leitura remota (Fase 2) espera, sem
     # precisar reimplementar as formulas do Excel do outro lado.
     sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, ler_propostas(caminho_xlsx))
+
+
+def _registros_para_gravar(df: pd.DataFrame) -> list[dict]:
+    """Registros prontos pra gravar: celula ausente (NaN, NaT, "") vira None; o resto passa como esta."""
+
+    def limpo(valor):
+        return None if valor is pd.NaT else _limpar_valor(valor)
+
+    return [{coluna: limpo(valor) for coluna, valor in registro.items()} for registro in df.to_dict("records")]
+
+
+def escrever_tudo(
+    caminho_xlsx: Path,
+    clientes: pd.DataFrame,
+    equipamentos: pd.DataFrame,
+    vendedores: pd.DataFrame,
+    propostas: pd.DataFrame,
+) -> None:
+    """Regrava as 4 abas numa UNICA gravacao atomica (ou grava as 4, ou nenhuma) e NAO dispara
+    sincronizacao: e o que "baixar da nuvem" usa - mandar de volta o que acabou de vir de la seria
+    um vai-e-vem inutil. `propostas` pode vir com as colunas calculadas (VENDEDOR/CLIENTE/TEMPO):
+    so as editaveis sao gravadas, as formulas voltam sozinhas."""
+    with _carregar_planilha(caminho_xlsx) as wb:
+        _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
+        _garantir_aba_vendedores(wb)
+        _escrever_linhas_simples(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, _registros_para_gravar(clientes))
+        _escrever_linhas_simples(
+            wb[ABA_EQUIPAMENTOS], ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS, _registros_para_gravar(equipamentos)
+        )
+        _escrever_linhas_simples(
+            wb[ABA_VENDEDORES], ABA_VENDEDORES, VENDEDORES_COLUNAS, _registros_para_gravar(vendedores)
+        )
+        _escrever_linhas_propostas(
+            wb[ABA_PROPOSTAS], _registros_para_gravar(propostas[PROPOSTAS_COLUNAS_EDITAVEIS])
+        )
+        _salvar_planilha(wb, caminho_xlsx)
