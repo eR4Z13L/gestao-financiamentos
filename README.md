@@ -278,21 +278,20 @@ abrisse. Instalando na pasta do usuário, ninguém precisa disso.
 dentro do próprio `.exe` de instalação - de propósito, pra essas duas coisas
 sensíveis nunca ficarem fixas num arquivo que pode ser copiado ou enviado por
 engano. Em vez disso, o assistente **pergunta** (uma tela, logo depois de
-escolher a pasta de instalação) por três arquivos, cada um no seu campo com o
-próprio "Procurar..." - dá pra juntar os três numa pasta qualquer e escolher
+escolher a pasta de instalação) por dois arquivos, cada um no seu campo com o
+próprio "Procurar..." - dá pra juntar os dois numa pasta qualquer e escolher
 um por um; todos são opcionais, e cada um é conferido pelo conteúdo (para não
 trocar um pelo outro):
 
 - a planilha (`.dat` ou `.xlsx`) - vai pra `data/`, já com o nome
   `controle_financiamentos.dat`;
-- a senha do Administrador (`admin_senha.json`) - vai pra `credentials/`;
 - a chave do Google (`service_account_admin.json`) - vai pra `credentials/`.
 
 O cliente OAuth do login Google (`credentials/oauth_cliente_google.json`, deste
 PC) vai embutido no instalador: ele só identifica o app, não dá acesso a nada
 sozinho. Campo em branco não é problema: sem planilha, o app oferece baixar da nuvem ou
-começar com uma vazia na primeira abertura; sem senha, entra com Google e cria o PIN;
-sem a chave, funciona só neste computador. O
+começar com uma vazia na primeira abertura; a entrada é sempre pela conta Google + PIN;
+sem a chave, a sincronização usa a conta Google conectada. O
 `installer/LEIA-ME-primeira-instalacao.txt` (aberto automaticamente no fim)
 explica o que ainda falta copiar à mão.
 

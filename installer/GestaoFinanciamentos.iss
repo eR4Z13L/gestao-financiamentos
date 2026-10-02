@@ -9,7 +9,7 @@
 ; O QUE ELE NAO FAZ (de proposito): nao embute a planilha real nem as credenciais
 ; do Google DENTRO do .exe do instalador (isso ficaria fixo pra sempre num arquivo
 ; que pode ser copiado/enviado por engano). Em vez disso, o assistente PERGUNTA
-; (uma tela com tres campos opcionais, um por arquivo: planilha, admin_senha.json e
+; (uma tela com dois campos opcionais, um por arquivo: planilha e
 ; service_account_admin.json) se a pessoa ja tem esses arquivos - cada um escolhido
 ; separadamente, de qualquer pasta - e o instalador copia cada um pro lugar certo
 ; ([Code] abaixo). Campo em branco = arquivo fica faltando, e o
@@ -77,26 +77,22 @@ Filename: "{win}\notepad.exe"; Parameters: """{app}\LEIA-ME-primeira-instalacao.
 [Code]
 const
   CAMPO_PLANILHA = 0;
-  CAMPO_SENHA = 1;
-  CAMPO_CHAVE = 2;
+  CAMPO_CHAVE = 1;
 
 var
   PaginaArquivos: TInputFileWizardPage;
 
 procedure InitializeWizard;
 begin
-  // uma tela, um campo (com o proprio botao "Procurar...") por arquivo: da pra juntar os tres
+  // uma tela, um campo (com o proprio botao "Procurar...") por arquivo: da pra juntar os dois
   // numa pasta qualquer (pendrive, Downloads) e escolher um por um, sem depender de estrutura de pasta
   PaginaArquivos := CreateInputFilePage(wpSelectDir,
     'Arquivos de uma instalação anterior (opcionais)',
     'Selecione cada arquivo que você já tem. O instalador copia cada um para o lugar certo.',
-    'Deixe em branco o que você não tiver. Sem a planilha, o programa começa vazio; sem a senha, '
-    + 'ele pede para criar uma senha nova de Administrador ao abrir; sem a chave do Google, '
-    + 'funciona só neste computador, sem sincronizar com a nuvem.');
+    'Deixe em branco o que você não tiver. Sem a planilha, o programa oferece baixar da nuvem ao abrir; '
+    + 'sem a chave do Google, a sincronização usa a conta Google com que você entrar no programa.');
   PaginaArquivos.Add('Planilha de dados (controle_financiamentos.dat ou .xlsx):',
     'Planilha (*.dat, *.xlsx)|*.dat;*.xlsx|Todos os arquivos (*.*)|*.*', '');
-  PaginaArquivos.Add('Senha do Administrador (admin_senha.json):',
-    'Senha do Administrador (admin_senha.json)|admin_senha*.json|Arquivos JSON (*.json)|*.json|Todos os arquivos (*.*)|*.*', '');
   PaginaArquivos.Add('Chave do Google Sheets (service_account_admin.json):',
     'Chave do Google (*.json)|*.json|Todos os arquivos (*.*)|*.*', '');
 end;
@@ -125,11 +121,6 @@ begin
       // .dat e .xlsx sao um .zip por dentro: sempre comecam com "PK"
       if Copy(Conteudo, 1, 2) <> 'PK' then
         Motivo := 'não parece ser a planilha do programa (.dat ou .xlsx)'
-      else
-        Result := True;
-    CAMPO_SENHA:
-      if Pos('senha_hash', Conteudo) = 0 then
-        Motivo := 'não parece ser o arquivo de senha do Administrador (admin_senha.json)'
       else
         Result := True;
     CAMPO_CHAVE:
@@ -175,6 +166,5 @@ begin
   if CurStep <> ssPostInstall then
     exit;
   CopiarSeEscolhido(CAMPO_PLANILHA, '{app}\data\controle_financiamentos.dat', 'a planilha');
-  CopiarSeEscolhido(CAMPO_SENHA, '{app}\credentials\admin_senha.json', 'a senha do Administrador');
   CopiarSeEscolhido(CAMPO_CHAVE, '{app}\credentials\service_account_admin.json', 'a chave do Google');
 end;

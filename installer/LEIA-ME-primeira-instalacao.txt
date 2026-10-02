@@ -1,24 +1,26 @@
 Gestão de Financiamentos - depois de instalar
 ==============================================
 
-Durante a instalação, o assistente pediu, um por um, três arquivos de uma
-instalação anterior ou backup: a planilha ("controle_financiamentos.dat"),
-a senha do Administrador ("admin_senha.json") e a chave do Google
-("service_account_admin.json"). O que você escolheu já foi copiado para o
-lugar certo. O que ficou em branco funciona assim:
+Para entrar no programa: na primeira vez em cada computador, clique em
+"Entrar com Google", escolha a sua conta no navegador e autorize. Depois
+crie um PIN de 6 números: nas próximas vezes, neste computador, basta o
+PIN (funciona sem internet). A conta precisa ter acesso de Editor à
+planilha do Google. Esqueceu o PIN? "Esqueci o PIN" e entre com Google de
+novo. Se este computador já tinha a senha do Administrador, ela é pedida
+uma última vez antes disso.
+
+Durante a instalação, o assistente pediu dois arquivos opcionais de uma
+instalação anterior ou backup: a planilha ("controle_financiamentos.dat")
+e a chave do Google ("service_account_admin.json"). O que você escolheu já
+foi copiado para o lugar certo. O que ficou em branco funciona assim:
 
 1. Sem a planilha: na primeira vez que abrir, o programa consulta a nuvem.
    Se ela tiver dados, oferece baixar; senão, oferece começar com uma
    planilha vazia. Se preferir usar o arquivo de outro computador, copie
    "controle_financiamentos.dat" para a pasta "data" daqui antes de abrir.
 
-2. Sem "admin_senha.json": o programa pede para definir uma senha nova do
-   Administrador na primeira vez que abrir.
-
-3. Sem "service_account_admin.json" (a chave do Google): o programa
-   funciona normalmente, mas só neste computador, sem sincronizar com a
-   nuvem. Para ligar a sincronização, copie esse arquivo para a pasta
-   "credentials" daqui e abra o programa de novo.
+2. Sem "service_account_admin.json" (a chave do Google): sem problema. A
+   sincronização com a nuvem usa a conta Google com que você entrou.
 
 A planilha e a chave nunca vêm dentro do próprio instalador, de propósito:
 são os dados de clientes e a chave de acesso à nuvem, sensíveis demais para
