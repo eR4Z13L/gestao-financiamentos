@@ -1,4 +1,4 @@
-"""Testa a tela Administração/Usuários (troca de senha do admin, cadastro de vendedor,
+"""Testa a tela Administração/Usuários (troca do PIN de entrada, cadastro de vendedor,
 status/carteira, redefinir senha, renomear, transferir carteira, desativar/reativar) sem
 abrir uma janela de verdade e sem mexer em nada real - tudo em cópias/arquivos temporários.
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -22,7 +23,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
-from core import auth
+from core import acesso, auth, conta_google
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
@@ -65,44 +66,47 @@ def main() -> None:
     clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = tmp_xlsx
     caminho_original_admin = auth.CAMINHO_CREDENCIAIS_ADMIN
     auth.CAMINHO_CREDENCIAIS_ADMIN = tmp_admin_senha
+    pasta_acesso = Path(tempfile.mkdtemp(prefix="_smoke_usuarios_acesso_"))
+    originais_acesso = (config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_PIN_ACESSO)
+    config.CAMINHO_CONTA_GOOGLE = pasta_acesso / "conta_google.dat"
+    config.CAMINHO_PIN_ACESSO = pasta_acesso / "acesso_pin.dat"
 
     try:
-        linha("1) Trocar a própria senha (Administrador): mínimo 8, indicador de força")
-        auth.definir_senha_admin("SenhaAntiga1")
+        linha("1) Meu PIN: sem PIN explica; com PIN troca (só com o atual certo e 6 números)")
         tela = UsuariosScreen()
-        assert not tela._cabecalho_senha.isChecked() and tela._corpo_senha.isHidden(), "recolhida por padrão"
+        assert not tela._cabecalho_pin.isChecked() and tela._corpo_pin.isHidden(), "recolhido por padrão"
+        assert tela._campos_pin.isHidden() and not tela._sem_pin.isHidden(), "sem PIN: só a explicação"
 
-        tela._senha_nova.setText("curta1")
-        assert "Força: fraca" in tela._forca_senha.text()
-        tela._senha_atual.setText("SenhaAntiga1")
-        tela._senha_nova_confirmar.setText("curta1")
-        tela._trocar_minha_senha()
-        assert auth.verificar_senha_admin("SenhaAntiga1"), "menos de 8 caracteres não pode trocar"
-        assert "8 caracteres" in mensagens[-1]
-        print("OK: senha nova com menos de 8 caracteres é recusada, com o indicador de força mostrando 'fraca'.")
+        conta_google._gravar_conexao({"refresh_token": "falso"}, "pessoa.teste@gmail.com")
+        acesso.criar_pin("111111")
+        tela._atualizar_meu_pin()
+        assert not tela._campos_pin.isHidden() and tela._sem_pin.isHidden()
+        assert tela._pin_novo.maxLength() == 6
 
-        tela._senha_atual.setText("senha errada")
-        tela._senha_nova.setText("SenhaNova123")
-        tela._senha_nova_confirmar.setText("SenhaNova123")
-        tela._trocar_minha_senha()
-        assert auth.verificar_senha_admin("SenhaAntiga1")
-        assert "incorreta" in mensagens[-1].lower()
-        print("OK: senha atual errada não troca nada.")
+        def trocar(atual, novo, confirmar):
+            tela._pin_atual.setText(atual)
+            tela._pin_novo.setText(novo)
+            tela._pin_novo_confirmar.setText(confirmar)
+            tela._trocar_meu_pin()
 
-        tela._senha_atual.setText("SenhaAntiga1")
-        tela._senha_nova.setText("SenhaNova123")
-        tela._senha_nova_confirmar.setText("outra-coisa-diferente")
-        tela._trocar_minha_senha()
-        assert auth.verificar_senha_admin("SenhaAntiga1")
-        print("OK: confirmação diferente da nova senha não troca nada.")
+        trocar("111111", "22222", "22222")
+        assert "6 números" in mensagens[-1] and acesso.conferir_pin("111111").certo
+        trocar("111111", "222222", "333333")
+        assert "não são iguais" in mensagens[-1] and acesso.conferir_pin("111111").certo
+        trocar("999999", "222222", "222222")
+        assert "incorreto" in mensagens[-1] and acesso.conferir_pin("111111").certo
+        print("OK: PIN curto, confirmação diferente e PIN atual errado não trocam nada.")
 
-        tela._senha_atual.setText("SenhaAntiga1")
-        tela._senha_nova.setText("SenhaNova123")
-        tela._senha_nova_confirmar.setText("SenhaNova123")
-        tela._trocar_minha_senha()
-        assert auth.verificar_senha_admin("SenhaNova123") and not auth.verificar_senha_admin("SenhaAntiga1")
-        assert tela._senha_atual.text() == "" and tela._forca_senha.text() == "", "campos limpos após trocar"
-        print("OK: senha trocada com sucesso (>= 8 caracteres), campos limpos.")
+        trocar("111111", "222222", "222222")
+        assert acesso.conferir_pin("222222").certo and not acesso.conferir_pin("111111").certo
+        assert tela._pin_atual.text() == "" and "alterado" in mensagens[-1]
+        print("OK: PIN trocado, campos limpos.")
+
+        for _ in range(acesso.TENTATIVAS_PERMITIDAS):
+            trocar("000000", "333333", "333333")
+        assert not acesso.pin_configurado() and "apagado" in mensagens[-1]
+        assert tela._campos_pin.isHidden() and not tela._sem_pin.isHidden()
+        print("OK: PIN atual errado vezes demais apaga o PIN, e o cartão volta à explicação.")
 
         assert auth.forca_da_senha("abcdefgh") == "fraca", "so minusculas, sem variedade"
         assert auth.forca_da_senha("Abcdefg1") == "média"
@@ -257,6 +261,8 @@ def main() -> None:
         linha("TUDO OK")
     finally:
         auth.CAMINHO_CREDENCIAIS_ADMIN = caminho_original_admin
+        config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_PIN_ACESSO = originais_acesso
+        shutil.rmtree(pasta_acesso, ignore_errors=True)
         clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_xlsx.unlink(missing_ok=True)
         tmp_admin_senha.unlink(missing_ok=True)

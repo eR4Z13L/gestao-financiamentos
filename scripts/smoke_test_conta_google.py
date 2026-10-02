@@ -8,9 +8,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_conta_google.py
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import json
 import os
 import shutil
 import sys
@@ -26,6 +24,8 @@ import config
 
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False
 from ambiente_de_teste import Ambiente, Mensagens
+from ambiente_de_teste import CredenciaisFalsas as _CredenciaisFalsas
+from ambiente_de_teste import GoogleFalso as _GoogleFalso
 from core import conta_google, protecao_windows, sheets_sync
 from desktop.theme import TEMA_ESCURO
 
@@ -41,58 +41,16 @@ def _hashes() -> dict:
     return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in REAIS if p.exists()}
 
 
-def _id_token(email: str) -> str:
-    carga = base64.urlsafe_b64encode(json.dumps({"email": email}).encode()).decode().rstrip("=")
-    return f"cabecalho.{carga}.assinatura"
-
-
-class _CredenciaisFalsas:
-    def __init__(self, refresh_token="refresh-falso-123", email="pessoa.teste@gmail.com"):
-        self.refresh_token = refresh_token
-        self.id_token = _id_token(email)
-
-    def to_json(self):
-        return json.dumps({"refresh_token": self.refresh_token, "client_id": "cliente-falso.apps.googleusercontent.com",
-                           "client_secret": "segredo-falso", "token_uri": "https://oauth2.googleapis.com/token",
-                           "token": "acesso-falso"})
-
-
-class _GoogleFalso:
-    """Substitui InstalledAppFlow: `resposta` e o que o "navegador" devolve (credenciais ou uma excecao)."""
-
-    def __init__(self):
-        self.resposta = _CredenciaisFalsas()
-        self.chamadas = []
-        from google_auth_oauthlib import flow
-
-        self._flow = flow
-        self._original = flow.InstalledAppFlow.from_client_secrets_file
-
-    def __enter__(self):
-        falso = self
-
-        class _Fluxo:
-            def run_local_server(self, **kw):
-                falso.chamadas.append(kw)
-                if isinstance(falso.resposta, BaseException):
-                    raise falso.resposta
-                return falso.resposta
-
-        self._flow.InstalledAppFlow.from_client_secrets_file = classmethod(lambda cls, caminho, scopes: _Fluxo())
-        return self
-
-    def __exit__(self, *_):
-        self._flow.InstalledAppFlow.from_client_secrets_file = self._original
-
-
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     pasta = Path(tempfile.mkdtemp(prefix="_smoke_conta_google_"))
     reais_antes = _hashes()
-    originais = (config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_CLIENTE_OAUTH_GOOGLE, config.CAMINHO_CREDENCIAIS_GOOGLE)
+    originais = (config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_CLIENTE_OAUTH_GOOGLE, config.CAMINHO_CREDENCIAIS_GOOGLE,
+                 config.CAMINHO_PIN_ACESSO)
     config.CAMINHO_CONTA_GOOGLE = pasta / "conta_google.dat"
     config.CAMINHO_CLIENTE_OAUTH_GOOGLE = pasta / "oauth_cliente_google.json"
     config.CAMINHO_CREDENCIAIS_GOOGLE = pasta / "service_account_admin.json"
+    config.CAMINHO_PIN_ACESSO = pasta / "acesso_pin.dat"  # desconectar tambem apaga o PIN
     import requests
 
     post_original = requests.post
@@ -229,7 +187,8 @@ def main() -> None:
         linha("TUDO OK")
     finally:
         requests.post = post_original
-        config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_CLIENTE_OAUTH_GOOGLE, config.CAMINHO_CREDENCIAIS_GOOGLE = originais
+        (config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_CLIENTE_OAUTH_GOOGLE, config.CAMINHO_CREDENCIAIS_GOOGLE,
+         config.CAMINHO_PIN_ACESSO) = originais
         shutil.rmtree(pasta, ignore_errors=True)
         assert _hashes() == reais_antes, "o teste mexeu num arquivo REAL de credentials/"
 

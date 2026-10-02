@@ -39,3 +39,7 @@ CAMINHO_CREDENCIAIS_GOOGLE = _AQUI / "credentials_teste" / "service_account_test
 # Senha do Administrador separada da real, pra nunca compartilhar arquivo com
 # credentials/ de produção.
 CAMINHO_CREDENCIAIS_ADMIN = _AQUI / "credentials_teste" / "admin_senha_teste.json"
+
+# Conta Google conectada e PIN de entrada separados dos reais (cada perfil tem os seus).
+CAMINHO_CONTA_GOOGLE = _AQUI / "credentials_teste" / "conta_google_teste.dat"
+CAMINHO_PIN_ACESSO = _AQUI / "credentials_teste" / "acesso_pin_teste.dat"

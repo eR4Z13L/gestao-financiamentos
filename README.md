@@ -11,11 +11,11 @@ taxas de aprovação e desempenho por vendedor.
 - **Python 3 + [PySide6](https://doc.qt.io/qtforpython-6/)** — interface desktop nativa
 - **[openpyxl](https://openpyxl.readthedocs.io/)** — o banco de dados do ADMIN é um arquivo `.xlsx` de verdade por dentro (4 abas: `CLIENTES`, `EQUIPAMENTOS`, `PROPOSTAS`, `VENDEDORES`), só que salvo com a extensão `.dat` (`data/controle_financiamentos.dat`) de propósito — um clique duplo não abre mais sozinho no Excel; pra conferir manualmente, "Abrir com..." e escolher o Excel continua funcionando normalmente
 - **pandas** — cálculos do dashboard e filtros
-- **[gspread](https://docs.gspread.org/) + google-auth** — sincronização automática (background, best-effort) do `.xlsx` local para uma planilha no Google Sheets, e leitura (só-leitura) de lá quando quem loga é um VENDEDOR
+- **[gspread](https://docs.gspread.org/) + google-auth + google-auth-oauthlib** — login com a conta Google e sincronização automática (background, best-effort) do `.xlsx` local para uma planilha no Google Sheets, e leitura (só-leitura) de lá quando quem loga é um VENDEDOR
 
 ### Login com dois níveis de acesso
 
-- **Administrador**: acesso total, 100% local (não depende de internet). A senha fica só no computador do admin (`credentials/admin_senha.json`, nunca sincroniza).
+- **Administrador**: acesso total. Entra com a **conta Google** (a primeira vez em cada computador, pelo navegador) e cria um **PIN de 6 números** daquele computador; nas próximas vezes, só o PIN, sem internet (`core/acesso.py`). A conta precisa ter acesso de Editor à planilha do Google Sheets — o app confere na hora. "Esqueci o PIN" = entrar com Google de novo; 5 erros seguidos apagam o PIN. A autorização do Google (`credentials/conta_google.dat`) e o PIN (`credentials/acesso_pin.dat`) ficam só naquele computador, criptografados pelo Windows (DPAPI). Quem ainda tinha a senha antiga do Administrador (`credentials/admin_senha.json`) entra com ela uma última vez e cria o PIN, que aposenta a senha.
 - **Vendedor**: só-leitura, vendo somente os próprios clientes/propostas/desempenho. Pode logar de qualquer computador com internet — os dados (e a própria senha, com hash) vêm do Google Sheets, nunca do `.xlsx` local. Por decisão de produto, o vendedor nunca escreve em nada (nem na própria senha); pra trocar, pede pro admin (`core.vendedores.redefinir_senha`).
 - O bloqueio de escrita do VENDEDOR é reforçado na camada de regras de negócio (`core.sessao.exigir_admin()`), não só escondendo botão na tela.
 
@@ -145,8 +145,9 @@ installer/  # receita do instalador (Inno Setup) - ver "Gerar o instalador" abai
    ```
    Ou, no Windows, dê duplo clique em `Abrir Gestao de Financiamentos.bat`.
 
-   Na primeira execução, a tela de login pede pra você definir a senha do
-   Administrador (fica salva em `credentials/admin_senha.json`, local).
+   Na primeira execução, a tela de login pede "Entrar com Google" (precisa de
+   `credentials/oauth_cliente_google.json`, o cliente OAuth "App para
+   computador" do projeto no Google Cloud) e depois um PIN de 6 números.
    Pra cadastrar vendedores com acesso próprio, use o botão "+ Novo Vendedor"
    (cadastro de cliente) ou "+ Novo Vendedor" na ficha — uma senha inicial é
    gerada e mostrada na hora (anote, não dá pra recuperar depois).
@@ -223,13 +224,12 @@ destino). Ele **não** embute nenhum dado: continua lendo/escrevendo
 `.exe` estiver, exatamente como a versão rodando com `python`.
 
 Pra instalar/distribuir em outro PC, copie estas DUAS pastas junto do `.exe`
-(sem elas, o app abre mas pede senha de ADMIN nova, como se fosse a primeira
-vez, e a sincronização com o Google Sheets não funciona):
+(sem elas, o app não tem a planilha nem o login Google):
 
 ```
 GestaoFinanciamentos.exe
 data/                       # a planilha real (controle_financiamentos.dat) + backups/
-credentials/                # admin_senha.json + service_account_admin.json
+credentials/                # oauth_cliente_google.json (+ service_account_admin.json, enquanto existir)
 ```
 
 `credentials/` não é mencionado em nenhum lugar do processo de build (o
@@ -288,8 +288,10 @@ trocar um pelo outro):
 - a senha do Administrador (`admin_senha.json`) - vai pra `credentials/`;
 - a chave do Google (`service_account_admin.json`) - vai pra `credentials/`.
 
-Campo em branco não é problema: sem planilha, o app oferece baixar da nuvem ou
-começar com uma vazia na primeira abertura; sem senha, pede para criar uma;
+O cliente OAuth do login Google (`credentials/oauth_cliente_google.json`, deste
+PC) vai embutido no instalador: ele só identifica o app, não dá acesso a nada
+sozinho. Campo em branco não é problema: sem planilha, o app oferece baixar da nuvem ou
+começar com uma vazia na primeira abertura; sem senha, entra com Google e cria o PIN;
 sem a chave, funciona só neste computador. O
 `installer/LEIA-ME-primeira-instalacao.txt` (aberto automaticamente no fim)
 explica o que ainda falta copiar à mão.

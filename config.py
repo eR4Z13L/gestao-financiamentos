@@ -54,6 +54,8 @@ GOOGLE_SHEETS_ID = "1-Iedzv3gw0QcurzpoFIzri4J68-OGjfsKihcqes0ACc"
 # local, nunca sincroniza pro Google Sheets (ao contrario da senha dos
 # vendedores, que precisa estar la pra logar de outro computador).
 CAMINHO_CREDENCIAIS_ADMIN = DIRETORIO_BASE / "credentials" / "admin_senha.json"
+# PIN de entrada deste computador (core/acesso.py) - substitui a senha acima; criptografado pelo Windows.
+CAMINHO_PIN_ACESSO = DIRETORIO_BASE / "credentials" / "acesso_pin.dat"
 
 # Liga/desliga a sincronizacao - usado pelos smoke tests pra nunca mandar
 # dado de teste pra planilha real na nuvem (veja scripts/smoke_test_*.py).

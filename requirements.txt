@@ -3,6 +3,7 @@ pandas
 openpyxl
 gspread
 google-auth
+google-auth-oauthlib
 
 # so pra gerar o .exe (nao e dependencia do app em si)
 pyinstaller

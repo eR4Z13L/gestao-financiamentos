@@ -12,6 +12,8 @@ cliente dele derrubando o teste se for tentado. Nada aqui toca em dado real.
 
 from __future__ import annotations
 
+import base64
+import json
 import tempfile
 from pathlib import Path
 
@@ -161,3 +163,49 @@ class Ambiente:
             janela.show()
             QApplication.processEvents()
         return janela
+
+
+# -- login Google falso ------------------------------------------------------------------------------
+
+def _id_token(email: str) -> str:
+    carga = base64.urlsafe_b64encode(json.dumps({"email": email}).encode()).decode().rstrip("=")
+    return f"cabecalho.{carga}.assinatura"
+
+
+class CredenciaisFalsas:
+    def __init__(self, refresh_token="refresh-falso-123", email="pessoa.teste@gmail.com"):
+        self.refresh_token = refresh_token
+        self.id_token = _id_token(email)
+
+    def to_json(self):
+        return json.dumps({"refresh_token": self.refresh_token, "client_id": "cliente-falso.apps.googleusercontent.com",
+                           "client_secret": "segredo-falso", "token_uri": "https://oauth2.googleapis.com/token",
+                           "token": "acesso-falso"})
+
+
+class GoogleFalso:
+    """Substitui InstalledAppFlow (o login Google de verdade abre o navegador; nenhum byte sai da maquina): `resposta` e o que o "navegador" devolve (credenciais ou uma excecao)."""
+
+    def __init__(self):
+        self.resposta = CredenciaisFalsas()
+        self.chamadas = []
+        from google_auth_oauthlib import flow
+
+        self._flow = flow
+        self._original = flow.InstalledAppFlow.from_client_secrets_file
+
+    def __enter__(self):
+        falso = self
+
+        class _Fluxo:
+            def run_local_server(self, **kw):
+                falso.chamadas.append(kw)
+                if isinstance(falso.resposta, BaseException):
+                    raise falso.resposta
+                return falso.resposta
+
+        self._flow.InstalledAppFlow.from_client_secrets_file = classmethod(lambda cls, caminho, scopes: _Fluxo())
+        return self
+
+    def __exit__(self, *_):
+        self._flow.InstalledAppFlow.from_client_secrets_file = self._original

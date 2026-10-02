@@ -53,6 +53,10 @@ Name: "desktopicon"; Description: "Criar um atalho na Área de Trabalho"; GroupD
 [Files]
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LEIA-ME-primeira-instalacao.txt"; DestDir: "{app}"; Flags: ignoreversion
+; O cliente OAuth ("App para computador") vai junto: ele so identifica o APP para o "Entrar com Google" (o
+; Google trata esse tipo como publico) e nao da acesso a nada sozinho - quem da e a conta de cada pessoa.
+; Vem de credentials\ deste PC (fora do git); sem ele, o login Google mostra erro explicando.
+Source: "..\credentials\oauth_cliente_google.json"; DestDir: "{app}\credentials"; Flags: ignoreversion
 
 ; pastas vazias, prontas pra receber a planilha real e as credenciais (copiadas a
 ; mao depois - ver LEIA-ME-primeira-instalacao.txt). Nunca apagadas no desinstalar

@@ -1,6 +1,6 @@
 """Tela Administração (antes "Usuários") - só o ADMIN acessa (nem aparece no menu lateral
 pra um VENDEDOR - ver desktop/main_window.py). Duas abas:
-1. "Usuários": trocar a própria senha do Administrador (recolhido por padrão - usado
+1. "Usuários": trocar o PIN de entrada deste computador (recolhido por padrão - usado
    raramente, não precisa competir por espaço com a lista de vendedores) e gerir
    vendedores - cadastrar, ver status/carteira/senha, redefinir senha, renomear,
    transferir carteira e desativar/reativar (o vendedor nunca troca a própria senha nem
@@ -40,23 +40,22 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from core import auth
+from core import acesso
 from core import backup as backup_mod
 from core import conta_google
 from core import data_store as bd
-from core import data_store_sheets as leitura_sheets
 from core import propostas as propostas_mod
-from core import sheets_sync
 from core import sincronizacao as sincronizacao_mod
 from core import vendedores as vendedores_mod
 from desktop import settings as settings_mod
+from desktop.entrar_com_google import conectar_e_conferir, esquecer_conexoes
 from desktop.espera import rodar_esperando
 from desktop.table_model import PandasTableModel
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
+from desktop.widgets.campo_de_pin import campo_de_pin
 from desktop.widgets.shadow import aplicar_sombra_suave
 
-_PAPEL_POR_FORCA = {"fraca": "aviso", "média": "secundario", "forte": "positivo"}
 _ROTULO_POR_MOTIVO = {
     backup_mod.MOTIVO_AUTOMATICO: "Automático",
     backup_mod.MOTIVO_MANUAL: "Manual",
@@ -145,13 +144,13 @@ class UsuariosScreen(QWidget):
         layout = QVBoxLayout(aba)
         layout.setContentsMargins(0, 16, 0, 0)
         layout.setSpacing(16)
-        layout.addWidget(self._construir_secao_minha_senha())
+        layout.addWidget(self._construir_secao_meu_pin())
         layout.addWidget(self._construir_secao_vendedores(), stretch=1)
         return aba
 
-    # -- minha senha (admin), recolhida por padrão -----------------------------
+    # -- meu PIN (entrada neste computador), recolhido por padrão ---------------
 
-    def _construir_secao_minha_senha(self) -> QWidget:
+    def _construir_secao_meu_pin(self) -> QWidget:
         cartao = QFrame()
         cartao.setProperty("role", "card")
         aplicar_sombra_suave(cartao, settings_mod.obter_tema())
@@ -159,86 +158,89 @@ class UsuariosScreen(QWidget):
         layout_cartao.setContentsMargins(16, 16, 16, 16)
         layout_cartao.setSpacing(12)
 
-        self._cabecalho_senha = CabecalhoRetratil(
-            "Minha senha (Administrador)",
-            dica_expandir="Mostrar os campos para trocar a senha",
+        self._cabecalho_pin = CabecalhoRetratil(
+            "Meu PIN (este computador)",
+            dica_expandir="Mostrar os campos para trocar o PIN",
             dica_recolher="Recolher",
             papel_do_titulo="subtitulo",
         )
-        self._cabecalho_senha.toggled.connect(self._ao_alternar_minha_senha)
-        layout_cartao.addWidget(self._cabecalho_senha)
+        self._cabecalho_pin.toggled.connect(self._ao_alternar_meu_pin)
+        layout_cartao.addWidget(self._cabecalho_pin)
 
-        self._corpo_senha = QWidget()
-        self._corpo_senha.setProperty("role", "transparente")
-        self._corpo_senha.setVisible(False)
-        corpo = QVBoxLayout(self._corpo_senha)
+        self._corpo_pin = QWidget()
+        self._corpo_pin.setProperty("role", "transparente")
+        self._corpo_pin.setVisible(False)
+        corpo = QVBoxLayout(self._corpo_pin)
         corpo.setContentsMargins(0, 0, 0, 0)
         corpo.setSpacing(12)
 
+        self._sem_pin = QLabel(
+            "Este computador ainda não tem PIN. Na próxima entrada, o aplicativo pede para entrar com "
+            "Google e criar um."
+        )
+        self._sem_pin.setWordWrap(True)
+        self._sem_pin.setProperty("role", "secundario")
+        corpo.addWidget(self._sem_pin)
+
+        self._campos_pin = QWidget()
+        self._campos_pin.setProperty("role", "transparente")
+        campos = QVBoxLayout(self._campos_pin)
+        campos.setContentsMargins(0, 0, 0, 0)
+        campos.setSpacing(12)
         form = QFormLayout()
-        self._senha_atual = QLineEdit()
-        self._senha_atual.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Senha atual", self._senha_atual)
-        self._senha_nova = QLineEdit()
-        self._senha_nova.setEchoMode(QLineEdit.EchoMode.Password)
-        self._senha_nova.textChanged.connect(self._atualizar_forca_da_senha)
-        form.addRow("Nova senha", self._senha_nova)
-        self._forca_senha = QLabel("")
-        self._forca_senha.setProperty("role", "secundario")
-        form.addRow("", self._forca_senha)
-        self._senha_nova_confirmar = QLineEdit()
-        self._senha_nova_confirmar.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Confirmar nova senha", self._senha_nova_confirmar)
-        corpo.addLayout(form)
-
-        botao_trocar = QPushButton("Trocar senha")
+        self._pin_atual = campo_de_pin()
+        form.addRow("PIN atual", self._pin_atual)
+        self._pin_novo = campo_de_pin()
+        form.addRow("Novo PIN", self._pin_novo)
+        self._pin_novo_confirmar = campo_de_pin()
+        form.addRow("Confirmar novo PIN", self._pin_novo_confirmar)
+        campos.addLayout(form)
+        botao_trocar = QPushButton("Trocar PIN")
         botao_trocar.setProperty("role", "botao_primario")
-        botao_trocar.clicked.connect(self._trocar_minha_senha)
-        corpo.addWidget(botao_trocar)
+        botao_trocar.clicked.connect(self._trocar_meu_pin)
+        campos.addWidget(botao_trocar)
+        corpo.addWidget(self._campos_pin)
 
-        layout_cartao.addWidget(self._corpo_senha)
+        layout_cartao.addWidget(self._corpo_pin)
+        self._atualizar_meu_pin()
         return cartao
 
-    def _ao_alternar_minha_senha(self, expandido: bool) -> None:
-        self._corpo_senha.setVisible(expandido)
+    def _ao_alternar_meu_pin(self, expandido: bool) -> None:
+        self._corpo_pin.setVisible(expandido)
 
-    def _atualizar_forca_da_senha(self, texto: str) -> None:
-        if not texto:
-            self._forca_senha.setText("")
+    def _atualizar_meu_pin(self) -> None:
+        tem_pin = acesso.pin_configurado()
+        self._campos_pin.setVisible(tem_pin)
+        self._sem_pin.setVisible(not tem_pin)
+
+    def _trocar_meu_pin(self) -> None:
+        atual = self._pin_atual.text()
+        novo = self._pin_novo.text()
+        if novo != self._pin_novo_confirmar.text():
+            QMessageBox.warning(self, "PINs diferentes", "Os dois PINs novos digitados não são iguais.")
             return
-        forca = auth.forca_da_senha(texto)
-        self._forca_senha.setProperty("role", _PAPEL_POR_FORCA[forca])
-        self._forca_senha.setText(f"Força: {forca} (mínimo {auth.SENHA_MINIMA} caracteres)")
-        self._forca_senha.style().unpolish(self._forca_senha)
-        self._forca_senha.style().polish(self._forca_senha)
-
-    def _trocar_minha_senha(self) -> None:
-        atual = self._senha_atual.text()
-        nova = self._senha_nova.text()
-        confirmar = self._senha_nova_confirmar.text()
-
-        if len(nova) < auth.SENHA_MINIMA:
-            QMessageBox.warning(self, "Senha muito curta", f"Use pelo menos {auth.SENHA_MINIMA} caracteres.")
-            return
-        if nova != confirmar:
-            QMessageBox.warning(self, "Senhas diferentes", "As duas senhas novas digitadas não são iguais.")
-            return
-
         try:
-            trocou = auth.alterar_senha_admin(atual, nova)
+            trocou = acesso.trocar_pin(atual, novo)
+        except acesso.ErroPin as exc:
+            QMessageBox.warning(self, "PIN inválido", str(exc))
+            return
         except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao trocar senha", str(exc))
+            QMessageBox.critical(self, "Erro inesperado ao trocar o PIN", f"{type(exc).__name__}: {exc}")
             return
-
         if not trocou:
-            QMessageBox.warning(self, "Não foi possível trocar", "Senha atual incorreta.")
+            self._atualizar_meu_pin()  # errar demais apaga o PIN
+            if acesso.pin_configurado():
+                QMessageBox.warning(self, "Não foi possível trocar", "PIN atual incorreto.")
+            else:
+                QMessageBox.warning(
+                    self, "PIN apagado",
+                    "PIN atual errado vezes demais: o PIN deste computador foi apagado. Na próxima entrada, "
+                    "entre com Google e crie outro.",
+                )
             return
-
-        self._senha_atual.clear()
-        self._senha_nova.clear()
-        self._senha_nova_confirmar.clear()
-        self._forca_senha.setText("")
-        QMessageBox.information(self, "Senha alterada", "Sua senha de Administrador foi alterada.")
+        for campo in (self._pin_atual, self._pin_novo, self._pin_novo_confirmar):
+            campo.clear()
+        QMessageBox.information(self, "PIN alterado", "O PIN de entrada deste computador foi alterado.")
 
     # -- vendedores -------------------------------------------------------------
 
@@ -380,61 +382,37 @@ class UsuariosScreen(QWidget):
         else:
             self._conectar_conta_google()
 
-    def _esquecer_conexoes(self) -> None:
-        sheets_sync.esquecer_conexao()
-        leitura_sheets.esquecer_conexao()
-
     def _conectar_conta_google(self) -> None:
-        try:
-            conta = rodar_esperando(
-                self, "Entre na sua conta Google no navegador que abriu e autorize o aplicativo…",
-                conta_google.conectar, limite_s=None,
-            )
-        except conta_google.ErroContaGoogle as exc:
-            QMessageBox.warning(self, "Não foi possível conectar", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro ao conectar com o Google", f"{type(exc).__name__}: {exc}")
-            return
-        self._esquecer_conexoes()
-        # confere na hora se essa conta abre a planilha: senao a sincronizacao pararia sem ninguem saber
-        try:
-            rodar_esperando(self, "Conferindo o acesso à planilha…", sheets_sync.ler_meta_da_nuvem, limite_s=60)
-        except Exception as exc:
-            conta_google.desconectar()
-            self._esquecer_conexoes()
-            self._atualizar_conta_google()
-            QMessageBox.warning(
-                self,
-                "Conta sem acesso à planilha",
-                f"A conta {conta.email} entrou, mas não conseguiu abrir a planilha da nuvem ({type(exc).__name__}: {exc}).\n\n"
-                "Peça para quem é dono da planilha compartilhá-la com essa conta como Editor e conecte de novo. "
-                "Enquanto isso, nada mudou: a sincronização continua como antes.",
-            )
-            return
+        conta = conectar_e_conferir(self)
         self._atualizar_conta_google()
-        QMessageBox.information(
-            self, "Conta Google conectada",
-            f"Conectado como {conta.email}. A partir de agora, a sincronização com a nuvem usa esta conta.",
-        )
+        self._atualizar_meu_pin()
+        if conta is not None:
+            QMessageBox.information(
+                self, "Conta Google conectada",
+                f"Conectado como {conta.email}. A partir de agora, a sincronização com a nuvem usa esta conta.",
+            )
 
     def _desconectar_conta_google(self) -> None:
         resposta = QMessageBox.question(
             self,
             "Desconectar a conta Google",
-            "Apagar a autorização da conta Google guardada neste computador? A sincronização volta a usar a "
-            "chave do Google instalada aqui (se houver); sem ela, este computador para de sincronizar até conectar de novo.",
+            "Apagar a autorização da conta Google guardada neste computador? O PIN de entrada deste computador "
+            "também é apagado: na próxima vez, o aplicativo pede para entrar com Google e criar outro.\n\n"
+            "A sincronização volta a usar a chave do Google instalada aqui (se houver); sem ela, este computador "
+            "para de sincronizar até conectar de novo.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if resposta != QMessageBox.StandardButton.Yes:
             return
         try:
+            acesso.esquecer_pin()
             rodar_esperando(self, "Desconectando…", conta_google.desconectar, limite_s=20)
         except Exception as exc:  # nunca falhar em silencio
             QMessageBox.critical(self, "Erro ao desconectar", f"{type(exc).__name__}: {exc}")
-        self._esquecer_conexoes()
+        esquecer_conexoes()
         self._atualizar_conta_google()
+        self._atualizar_meu_pin()
 
     def _sincronizar_agora(self) -> None:
         if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
