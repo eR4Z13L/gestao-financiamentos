@@ -1,16 +1,12 @@
 """Tela Administração (antes "Usuários") - só o ADMIN acessa (nem aparece no menu lateral
-pra um VENDEDOR - ver desktop/main_window.py). Três abas:
-1. "Usuários": trocar o PIN de entrada deste computador (recolhido por padrão - usado
-   raramente, não precisa competir por espaço com a lista de vendedores) e gerir
-   vendedores - cadastrar, ver status/carteira/senha, redefinir senha, renomear,
-   transferir carteira e desativar/reativar (o vendedor nunca troca a própria senha nem
-   se autoadministra, só o ADMIN pode - ver core/vendedores.py).
-2. "Sincronização e backup": "Sincronizar agora" (reenvia as 4 abas pro Google Sheets na
+pra um VENDEDOR - ver desktop/main_window.py). Duas abas:
+1. "Meu acesso": trocar o PIN de entrada deste computador (recolhido por padrão - usado raramente).
+   Vendedores e Bancos ficam na tela Cadastros (desktop/screens/cadastros_screen.py).
+2. "Sincronização e backup": "Sincronizar agora" (reenvia as abas pro Google Sheets na
    hora - core/sincronizacao.py; cada escrita já sincroniza sozinha, e uma falha entra
    numa fila que tenta de novo sozinha - core/sheets_sync.reenviar_pendentes), backup
    automático (1x/dia, ao abrir o app - core/backup.py e desktop/main.py), manual
    ("Fazer backup agora") e "Restaurar".
-3. "Cadastros": o cadastro de Bancos (desktop/widgets/cadastro_bancos.py, regras em core/bancos.py).
 """
 
 from __future__ import annotations
@@ -23,7 +19,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -39,14 +34,12 @@ from core import backup as backup_mod
 from core import conta_google
 from core import data_store as bd
 from core import sincronizacao as sincronizacao_mod
-from core import vendedores as vendedores_mod
 from desktop import settings as settings_mod
 from desktop.entrar_com_google import conectar_e_conferir, esquecer_conexoes
 from desktop.espera import rodar_esperando
 from desktop.table_model import PandasTableModel
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
-from desktop.widgets.cadastro_bancos import CadastroBancos
 from desktop.widgets.campo_de_pin import campo_de_pin
 from desktop.widgets.shadow import aplicar_sombra_suave
 
@@ -105,12 +98,10 @@ class UsuariosScreen(QWidget):
         layout.addWidget(titulo)
 
         abas = QTabWidget()
-        abas.addTab(self._construir_aba_usuarios(), "Usuários")
+        abas.addTab(self._construir_aba_meu_acesso(), "Meu acesso")
         abas.addTab(self._construir_aba_backup(), "Sincronização e backup")
-        abas.addTab(self._construir_aba_cadastros(), "Cadastros")
         layout.addWidget(abas, stretch=1)
 
-        self._carregar_vendedores()
         self._carregar_backups()
 
     def showEvent(self, evento) -> None:
@@ -119,27 +110,23 @@ class UsuariosScreen(QWidget):
         # e um backup manual pode ter sido feito na sessao anterior. Sempre reler ao
         # reaparecer, do mesmo jeito que Propostas rele os vendedores (mostrar_screen).
         self._carregar_backups()
-        if self._vigia.mudou_desde_a_leitura():  # ex.: baixou da nuvem ou restaurou um backup
-            self._carregar_vendedores()
-            self._cadastro_bancos.recarregar()
 
     def recarregar_se_mudou(self) -> None:
-        """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele as listas
-        (vendedores, bancos e backups; os campos digitados ficam como estao)."""
+        """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele a lista de backups
+        (os campos digitados ficam como estao)."""
         if self._vigia.mudou_desde_a_leitura():
-            self._carregar_vendedores()
-            self._cadastro_bancos.recarregar()
+            self._vigia.registrar_leitura()
             self._carregar_backups()
 
-    # -- aba "Usuários" ----------------------------------------------------------------
+    # -- aba "Meu acesso" ---------------------------------------------------------------
 
-    def _construir_aba_usuarios(self) -> QWidget:
+    def _construir_aba_meu_acesso(self) -> QWidget:
         aba = QWidget()
         layout = QVBoxLayout(aba)
         layout.setContentsMargins(0, 16, 0, 0)
         layout.setSpacing(16)
         layout.addWidget(self._construir_secao_meu_pin())
-        layout.addWidget(self._construir_secao_vendedores(), stretch=1)
+        layout.addStretch()
         return aba
 
     # -- meu PIN (entrada neste computador), recolhido por padrão ---------------
@@ -236,51 +223,6 @@ class UsuariosScreen(QWidget):
             campo.clear()
         QMessageBox.information(self, "PIN alterado", "O PIN de entrada deste computador foi alterado.")
 
-    # -- vendedores -------------------------------------------------------------
-
-    def _construir_secao_vendedores(self) -> QWidget:
-        cartao = QFrame()
-        cartao.setProperty("role", "card")
-        aplicar_sombra_suave(cartao, settings_mod.obter_tema())
-        layout_cartao = QVBoxLayout(cartao)
-        layout_cartao.setContentsMargins(16, 16, 16, 16)
-        layout_cartao.setSpacing(12)
-
-        cabecalho = QHBoxLayout()
-        subtitulo = QLabel("Vendedores")
-        subtitulo.setProperty("role", "subtitulo")
-        cabecalho.addWidget(subtitulo)
-        cabecalho.addStretch()
-        botao_novo = QPushButton("+ Novo Vendedor")
-        botao_novo.setProperty("role", "botao_primario")
-        botao_novo.clicked.connect(self._cadastrar_vendedor)
-        cabecalho.addWidget(botao_novo)
-        layout_cartao.addLayout(cabecalho)
-
-        self._modelo_vendedores = PandasTableModel()
-        self._tabela_vendedores = QTableView()
-        self._tabela_vendedores.setModel(self._modelo_vendedores)
-        self._tabela_vendedores.setAlternatingRowColors(True)
-        self._tabela_vendedores.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._tabela_vendedores.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._tabela_vendedores.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._tabela_vendedores.horizontalHeader().setStretchLastSection(True)
-        self._tabela_vendedores.verticalHeader().setVisible(False)
-        layout_cartao.addWidget(self._tabela_vendedores, stretch=1)
-
-        linha_botoes = QHBoxLayout()
-        self._botao_redefinir = self._botao_de_linha("Redefinir Senha", self._redefinir_senha_selecionado)
-        self._botao_renomear = self._botao_de_linha("Renomear", self._renomear_selecionado)
-        self._botao_transferir = self._botao_de_linha("Transferir Carteira", self._transferir_carteira_selecionado)
-        self._botao_desativar = self._botao_de_linha("Desativar", self._alternar_ativo_selecionado)
-        for botao in (self._botao_redefinir, self._botao_renomear, self._botao_transferir, self._botao_desativar):
-            linha_botoes.addWidget(botao)
-        layout_cartao.addLayout(linha_botoes)
-
-        self._tabela_vendedores.selectionModel().selectionChanged.connect(self._atualizar_botoes_de_vendedor)
-
-        return cartao
-
     @staticmethod
     def _botao_de_linha(texto: str, ao_clicar) -> QPushButton:
         botao = QPushButton(texto)
@@ -296,19 +238,6 @@ class UsuariosScreen(QWidget):
         layout.setSpacing(16)
         layout.addWidget(self._construir_secao_sincronizacao())
         layout.addWidget(self._construir_secao_backup(), stretch=1)
-        return aba
-
-    # -- aba "Cadastros" -----------------------------------------------------------------
-
-    def _construir_aba_cadastros(self) -> QWidget:
-        aba = QWidget()
-        layout = QVBoxLayout(aba)
-        layout.setContentsMargins(0, 16, 0, 0)
-        layout.setSpacing(16)
-        self._cadastro_bancos = CadastroBancos()
-        # banco novo/renomeado: o formulario de proposta e os filtros das outras telas precisam reler
-        self._cadastro_bancos.alterado.connect(self.dados_atualizados.emit)
-        layout.addWidget(self._cadastro_bancos, stretch=1)
         return aba
 
     def _construir_secao_sincronizacao(self) -> QWidget:
@@ -346,8 +275,8 @@ class UsuariosScreen(QWidget):
         explicacao = QLabel(
             "Cada alteração já é enviada automaticamente. Se uma sincronização falhar (sem "
             "internet, por exemplo), o aplicativo tenta de novo sozinho em instantes. "
-            "\"Sincronizar agora\" força uma tentativa imediata das 4 abas (clientes, "
-            "equipamentos, propostas e vendedores), mesmo sem nada ter mudado - útil depois "
+            "\"Sincronizar agora\" força uma tentativa imediata de todas as abas (clientes, "
+            "equipamentos, propostas, vendedores e bancos), mesmo sem nada ter mudado - útil depois "
             "de Restaurar um backup, que só mexe no arquivo local. "
             "\"Baixar da nuvem\" faz o contrário: troca os dados DESTE computador pelos da nuvem (útil ao "
             "voltar para um computador depois de trabalhar em outro) - um backup do arquivo atual é "
@@ -436,7 +365,7 @@ class UsuariosScreen(QWidget):
         QMessageBox.information(
             self,
             "Sincronização iniciada",
-            "As 4 abas (clientes, equipamentos, propostas e vendedores) foram enviadas para "
+            "Todas as abas (clientes, equipamentos, propostas, vendedores e bancos) foram enviadas para "
             "sincronizar. Acompanhe o indicador na barra lateral.",
         )
 
@@ -515,8 +444,6 @@ class UsuariosScreen(QWidget):
         """Depois de trocar os dados por fora das telas (baixar da nuvem, restaurar): relê as listas daqui
         e avisa as outras telas."""
         self._carregar_backups()
-        self._carregar_vendedores()
-        self._cadastro_bancos.recarregar()
         self.dados_atualizados.emit()
 
     def _construir_secao_backup(self) -> QWidget:
@@ -576,7 +503,7 @@ class UsuariosScreen(QWidget):
             QMessageBox.critical(self, "Erro ao carregar backups", str(exc))
             return
 
-        # mesmo padrao do cache de _carregar_vendedores: a tabela exibida so tem colunas
+        # a tabela exibida so tem colunas
         # formatadas pra leitura, o objeto Backup de verdade fica aqui, por caminho
         self._backups_por_caminho = {str(b.caminho): b for b in backups}
 
@@ -640,229 +567,9 @@ class UsuariosScreen(QWidget):
             return
 
         self._carregar_backups()
-        self._carregar_vendedores()
-        self._cadastro_bancos.recarregar()
         self.dados_atualizados.emit()
         QMessageBox.information(
             self,
             "Backup restaurado",
             f"Dados restaurados com sucesso.\n\nO estado anterior foi salvo em:\n{seguranca}",
         )
-
-    def _carregar_vendedores(self) -> None:
-        self._vigia.registrar_leitura()
-        try:
-            df = vendedores_mod.listar_vendedores_detalhado()
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro ao carregar vendedores", str(exc))
-            return
-
-        # o NOME vira o indice da tabela exibida - permite recuperar qual vendedor foi
-        # selecionado direto por indice_real(), sem precisar de uma coluna "escondida"
-        # separada (mesmo padrao usado nas outras telas). O PandasTableModel so olha
-        # pra .columns, nunca pro indice - por isso "Nome" tambem precisa existir como
-        # coluna normal, pra aparecer.
-        # cache separado (nome -> ativo?): a tabela so guarda o TEXTO formatado
-        # ("Ativo"/"Inativo"), e o botao Desativar/Reativar precisa do booleano
-        self._ativo_por_nome = {n: vendedores_mod.esta_ativo(a) for n, a in zip(df["NOME"], df["ATIVO"])}
-
-        exibicao = pd.DataFrame({
-            "Status": [("Ativo" if self._ativo_por_nome[n] else "Inativo") for n in df["NOME"]],
-            "Carteira": [vendedores_mod.contar_carteira(n) for n in df["NOME"]],
-            "Senha": df["SENHA_HASH"].map(lambda h: "Definida" if h else "Pendente"),
-        })
-        exibicao.index = df["NOME"]
-        exibicao = exibicao.sort_index(key=lambda s: s.str.upper())
-        exibicao.insert(0, "Nome", exibicao.index)
-
-        self._modelo_vendedores.definir_dataframe(exibicao)
-        self._tabela_vendedores.resizeColumnsToContents()
-        self._atualizar_botoes_de_vendedor()
-
-    def _nome_selecionado(self) -> str | None:
-        selecionadas = self._tabela_vendedores.selectionModel().selectedRows()
-        if not selecionadas:
-            return None
-        return self._modelo_vendedores.indice_real(selecionadas[0].row())
-
-    def _vendedor_selecionado_esta_ativo(self) -> bool | None:
-        """None se nao ha selecao; senao, o status ATUAL (do cache montado em
-        _carregar_vendedores - evita reler o arquivo so pra saber o rotulo do botao
-        Desativar/Reativar)."""
-        nome = self._nome_selecionado()
-        if nome is None:
-            return None
-        return self._ativo_por_nome.get(nome, True)
-
-    def _atualizar_botoes_de_vendedor(self, *_args) -> None:
-        ativo = self._vendedor_selecionado_esta_ativo()
-        algum_selecionado = ativo is not None
-        self._botao_redefinir.setEnabled(algum_selecionado)
-        self._botao_renomear.setEnabled(algum_selecionado)
-        self._botao_transferir.setEnabled(algum_selecionado)
-        self._botao_desativar.setEnabled(algum_selecionado)
-        self._botao_desativar.setText("Desativar" if ativo or ativo is None else "Reativar")
-
-    def _cadastrar_vendedor(self) -> None:
-        nome, ok = QInputDialog.getText(self, "Novo vendedor", "Nome do vendedor:")
-        if not ok:
-            return
-        try:
-            nome_salvo = vendedores_mod.adicionar_vendedor(nome)
-            senhas_geradas = vendedores_mod.gerar_senhas_iniciais_pendentes()
-        except vendedores_mod.ErroVendedor as exc:
-            QMessageBox.warning(self, "Não foi possível cadastrar", str(exc))
-            return
-        except bd.ErroArquivoBloqueado as exc:
-            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao cadastrar vendedor", str(exc))
-            return
-
-        self._carregar_vendedores()
-        senha_do_novo = senhas_geradas.get(nome_salvo)
-        if senha_do_novo:
-            QMessageBox.information(
-                self,
-                "Senha inicial gerada",
-                f"Senha inicial de acesso para '{nome_salvo}': {senha_do_novo}\n\n"
-                "Anote/avise agora - essa senha não pode ser recuperada depois (só redefinida).",
-            )
-
-    def _redefinir_senha_selecionado(self) -> None:
-        nome = self._nome_selecionado()
-        if nome is None:
-            QMessageBox.information(self, "Nenhum vendedor selecionado", "Selecione um vendedor na tabela.")
-            return
-
-        resposta = QMessageBox.question(
-            self,
-            "Redefinir senha",
-            f"Gerar uma nova senha para '{nome}'? A senha atual dele(a) deixa de funcionar.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if resposta != QMessageBox.StandardButton.Yes:
-            return
-
-        try:
-            nova_senha = vendedores_mod.redefinir_senha(nome)
-        except vendedores_mod.ErroVendedor as exc:
-            QMessageBox.warning(self, "Não foi possível redefinir", str(exc))
-            return
-        except bd.ErroArquivoBloqueado as exc:
-            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao redefinir senha", str(exc))
-            return
-
-        self._carregar_vendedores()
-        QMessageBox.information(
-            self,
-            "Senha redefinida",
-            f"Nova senha para '{nome}': {nova_senha}\n\n"
-            "Anote/avise agora - essa senha não pode ser recuperada depois (só redefinida de novo).",
-        )
-
-    def _renomear_selecionado(self) -> None:
-        nome = self._nome_selecionado()
-        if nome is None:
-            QMessageBox.information(self, "Nenhum vendedor selecionado", "Selecione um vendedor na tabela.")
-            return
-        novo_nome, ok = QInputDialog.getText(self, "Renomear vendedor", "Novo nome:", text=nome)
-        if not ok:
-            return
-        try:
-            vendedores_mod.renomear_vendedor(nome, novo_nome)
-        except vendedores_mod.ErroVendedor as exc:
-            QMessageBox.warning(self, "Não foi possível renomear", str(exc))
-            return
-        except bd.ErroArquivoBloqueado as exc:
-            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao renomear", str(exc))
-            return
-        self._carregar_vendedores()
-        QMessageBox.information(
-            self, "Vendedor renomeado",
-            f"'{nome}' agora é '{novo_nome}' (os clientes dele já estão com o nome novo).",
-        )
-
-    def _transferir_carteira_selecionado(self) -> None:
-        nome = self._nome_selecionado()
-        if nome is None:
-            QMessageBox.information(self, "Nenhum vendedor selecionado", "Selecione um vendedor na tabela.")
-            return
-        candidatos = [n for n in vendedores_mod.listar_vendedores_ativos() if n.upper() != nome.upper()]
-        if not candidatos:
-            QMessageBox.information(
-                self, "Sem destino disponível", "Não há outro vendedor ativo para receber a carteira."
-            )
-            return
-        destino, ok = QInputDialog.getItem(
-            self, "Transferir carteira", f"Passar os clientes de '{nome}' para:", candidatos, 0, False
-        )
-        if not ok:
-            return
-        try:
-            quantidade = vendedores_mod.transferir_carteira(nome, destino)
-        except vendedores_mod.ErroVendedor as exc:
-            QMessageBox.warning(self, "Não foi possível transferir", str(exc))
-            return
-        except bd.ErroArquivoBloqueado as exc:
-            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao transferir carteira", str(exc))
-            return
-        self._carregar_vendedores()
-        QMessageBox.information(
-            self, "Carteira transferida",
-            f"{quantidade} cliente(s) de '{nome}' agora estão com '{destino}'." if quantidade
-            else f"'{nome}' já não tinha nenhum cliente - nada para transferir.",
-        )
-
-    def _alternar_ativo_selecionado(self) -> None:
-        nome = self._nome_selecionado()
-        if nome is None:
-            QMessageBox.information(self, "Nenhum vendedor selecionado", "Selecione um vendedor na tabela.")
-            return
-        ativo = self._vendedor_selecionado_esta_ativo()
-
-        if ativo:
-            resposta = QMessageBox.question(
-                self, "Desativar vendedor",
-                f"Desativar '{nome}'? Ele(a) para de aparecer para escolher em cadastros novos e não "
-                "consegue mais logar - o histórico dele(a) continua intacto.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
-            )
-            if resposta != QMessageBox.StandardButton.Yes:
-                return
-            try:
-                vendedores_mod.desativar_vendedor(nome)
-            except vendedores_mod.ErroVendedor as exc:
-                QMessageBox.warning(self, "Não foi possível desativar", str(exc))
-                return
-            except bd.ErroArquivoBloqueado as exc:
-                QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-                return
-            except Exception as exc:  # nunca falhar em silencio
-                QMessageBox.critical(self, "Erro inesperado ao desativar", str(exc))
-                return
-        else:
-            try:
-                vendedores_mod.reativar_vendedor(nome)
-            except vendedores_mod.ErroVendedor as exc:
-                QMessageBox.warning(self, "Não foi possível reativar", str(exc))
-                return
-            except bd.ErroArquivoBloqueado as exc:
-                QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-                return
-            except Exception as exc:  # nunca falhar em silencio
-                QMessageBox.critical(self, "Erro inesperado ao reativar", str(exc))
-                return
-
-        self._carregar_vendedores()

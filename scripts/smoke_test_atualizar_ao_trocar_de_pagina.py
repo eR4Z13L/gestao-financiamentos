@@ -26,7 +26,7 @@ from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
-from desktop.main_window import PAGINA_ADMINISTRACAO, PAGINA_DASHBOARD, PAGINA_FICHA, PAGINA_PROPOSTAS
+from desktop.main_window import PAGINA_ADMINISTRACAO, PAGINA_CADASTROS, PAGINA_DASHBOARD, PAGINA_FICHA, PAGINA_PROPOSTAS
 from desktop.theme import TEMA_ESCURO
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 
@@ -74,9 +74,9 @@ def main() -> None:
     try:
         with Mensagens() as msgs:
             janela = amb.nova_janela("admin", TEMA_ESCURO)
-            ficha, propostas, dashboard, adm = (
-                janela._tela_ficha, janela._tela_propostas, janela._tela_dashboard, janela._tela_administracao)
-            for chave in (PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_ADMINISTRACAO, PAGINA_DASHBOARD):
+            ficha, propostas, dashboard, cadastros = (
+                janela._tela_ficha, janela._tela_propostas, janela._tela_dashboard, janela._tela_cadastros)
+            for chave in (PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_DASHBOARD):
                 _ir(janela, chave)  # todas as telas ja apareceram uma vez
 
             # ------------------------------------------------------------------------------------
@@ -90,13 +90,13 @@ def main() -> None:
 
             # ------------------------------------------------------------------------------------
             linha("2) Sem mudanca no arquivo, trocar de pagina NAO rele (continua instantaneo)")
-            for chave in (PAGINA_PROPOSTAS, PAGINA_ADMINISTRACAO, PAGINA_DASHBOARD, PAGINA_FICHA):
+            for chave in (PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_DASHBOARD, PAGINA_FICHA):
                 _ir(janela, chave)  # cada tela ve (uma vez, com razao) a mudanca do passo 1
             buscas = _Contador(clientes_mod, "buscar")
             recargas = [_Contador(propostas, "_carregar_dados"), _Contador(dashboard, "_carregar_dados"),
-                        _Contador(adm, "_carregar_vendedores")]
+                        _Contador(cadastros, "recarregar")]
             try:
-                for chave in (PAGINA_DASHBOARD, PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_ADMINISTRACAO, PAGINA_FICHA, PAGINA_DASHBOARD):
+                for chave in (PAGINA_DASHBOARD, PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_FICHA, PAGINA_DASHBOARD):
                     _ir(janela, chave)
                 assert buscas.vezes == 0, f"a Ficha releu {buscas.vezes}x sem o arquivo ter mudado"
                 assert [c.vezes for c in recargas] == [0, 0, 0], f"recargas sem o arquivo ter mudado: {[c.vezes for c in recargas]}"
@@ -165,15 +165,13 @@ def main() -> None:
             assert len(dashboard._propostas) == antes + 1
             print("OK: o Dashboard rele ao aparecer se o arquivo mudou.")
 
-            _ir(janela, PAGINA_ADMINISTRACAO)
+            _ir(janela, PAGINA_CADASTROS)
             _ir(janela, PAGINA_DASHBOARD)
             vendedores_mod.adicionar_vendedor("Vendedora Gravada Por Fora")
-            _ir(janela, PAGINA_ADMINISTRACAO)
-            nomes = list(adm._modelo_vendedores._df.iloc[:, 0]) if hasattr(adm._modelo_vendedores, "_df") else None
-            if nomes is None:
-                nomes = [adm._modelo_vendedores.data(adm._modelo_vendedores.index(i, 0)) for i in range(adm._modelo_vendedores.rowCount())]
+            _ir(janela, PAGINA_CADASTROS)
+            nomes = [c.item.titulo for c in cadastros.vendedores.cards if c.item is not None]
             assert "Vendedora Gravada Por Fora" in nomes, nomes
-            print("OK: a Administracao mostra o vendedor novo ao aparecer.")
+            print("OK: Cadastros mostra o vendedor novo ao aparecer.")
 
             # ------------------------------------------------------------------------------------
             linha("6) VENDEDOR le do Google, nao do arquivo: o vigia nunca pede releitura")
@@ -314,12 +312,12 @@ def main() -> None:
                                               "EQUIPAMENTO": "Equipamento Modelo X", "VALOR (R$)": 222})
             tique()
             assert len(dashboard._propostas) == antes + 1
-            _ir(janela, PAGINA_ADMINISTRACAO)
+            _ir(janela, PAGINA_CADASTROS)
             vendedores_mod.adicionar_vendedor("Vendedora Com A Tela Aberta")
             tique()
-            nomes = [adm._modelo_vendedores.data(adm._modelo_vendedores.index(i, 0)) for i in range(adm._modelo_vendedores.rowCount())]
+            nomes = [c.item.titulo for c in cadastros.vendedores.cards if c.item is not None]
             assert "Vendedora Com A Tela Aberta" in nomes, nomes
-            print("OK: Dashboard e Administracao abertos tambem releem sozinhos.")
+            print("OK: Dashboard e Cadastros abertos tambem releem sozinhos.")
 
             msgs.exigir_sem_erros("trocando de pagina")
         linha("TUDO OK")

@@ -130,6 +130,43 @@ def _link_externo(p: QPainter) -> None:
     p.drawLine(QPointF(10, 14), QPointF(20, 4))
 
 
+def _cadastros(p: QPainter) -> None:
+    # dois cards empilhados: o de tras so aparece pela borda de cima
+    p.drawRoundedRect(QRectF(4, 8, 16, 12), 2, 2)
+    p.drawLine(QPointF(6.5, 5), QPointF(17.5, 5))
+    p.drawLine(QPointF(7.5, 12.5), QPointF(16.5, 12.5))
+    p.drawLine(QPointF(7.5, 16), QPointF(13, 16))
+
+
+def _lapis(p: QPainter) -> None:
+    corpo = QPainterPath(QPointF(15.5, 5.5))
+    corpo.lineTo(18.5, 8.5)
+    corpo.lineTo(8.5, 18.5)
+    corpo.lineTo(4.5, 19.5)
+    corpo.lineTo(5.5, 15.5)
+    corpo.closeSubpath()
+    p.drawPath(corpo)
+    p.drawLine(QPointF(13.5, 7.5), QPointF(16.5, 10.5))  # a ponta da borracha
+
+
+def _tres_pontos(p: QPainter) -> None:
+    p.setBrush(p.pen().color())
+    for y in (6, 12, 18):
+        p.drawEllipse(QPointF(12, y), 1.2, 1.2)
+
+
+def _confirmar(p: QPainter) -> None:
+    marca = QPainterPath(QPointF(5, 12.5))
+    marca.lineTo(10, 17.5)
+    marca.lineTo(19, 7)
+    p.drawPath(marca)
+
+
+def _fechar(p: QPainter) -> None:
+    p.drawLine(QPointF(6.5, 6.5), QPointF(17.5, 17.5))
+    p.drawLine(QPointF(17.5, 6.5), QPointF(6.5, 17.5))
+
+
 _DESENHOS = {
     "dashboard": _dashboard,
     "ficha": _ficha,
@@ -141,6 +178,11 @@ _DESENHOS = {
     "lua": _lua,
     "whatsapp": _whatsapp,
     "link_externo": _link_externo,
+    "cadastros": _cadastros,
+    "lapis": _lapis,
+    "tres_pontos": _tres_pontos,
+    "confirmar": _confirmar,
+    "fechar": _fechar,
 }
 
 

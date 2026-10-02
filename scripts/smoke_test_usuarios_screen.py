@@ -30,6 +30,7 @@ from core import data_store as bd
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from desktop.screens.usuarios_screen import UsuariosScreen
+from desktop.widgets.cadastro_vendedores import CadastroVendedores
 
 
 def linha(titulo: str) -> None:
@@ -114,107 +115,81 @@ def main() -> None:
         assert auth.forca_da_senha("Abcdefgh123!") == "forte", "12+ caracteres e 3+ tipos"
         print("OK: forca_da_senha() classifica fraca/média/forte de forma consistente.")
 
-        linha("2) Cadastrar vendedor pela tela; status/carteira/senha na tabela")
-        total_antes = tela._modelo_vendedores.rowCount()
-        vendedores_mod.adicionar_vendedor("Vendedor Tela Teste")
-        geradas = vendedores_mod.gerar_senhas_iniciais_pendentes()
-        assert "Vendedor Tela Teste" in geradas
-        tela._carregar_vendedores()
-        assert tela._modelo_vendedores.rowCount() == total_antes + 1
-        assert tela._ativo_por_nome["Vendedor Tela Teste"] is True, "vendedor novo nasce ativo"
-        print(f"OK: vendedor cadastrado aparece na tabela ({total_antes} -> {tela._modelo_vendedores.rowCount()}), já ativo.")
+        linha("2) Cadastros > Vendedores (cards): cadastrar mostra a senha inicial; carteira e senha no card")
+        assert not hasattr(tela, "_tabela_vendedores"), "os vendedores sairam da Administracao"
+        cad = CadastroVendedores()
+        cad.resize(1100, 700)
+        cad.show()
+        QApplication.processEvents()
 
-        def _selecionar(nome: str) -> None:
-            indice_visual = next(
-                i for i in range(tela._modelo_vendedores.rowCount()) if tela._modelo_vendedores.indice_real(i) == nome
-            )
-            tela._tabela_vendedores.selectionModel().select(
-                tela._modelo_vendedores.index(indice_visual, 0),
-                tela._tabela_vendedores.selectionModel().SelectionFlag.ClearAndSelect
-                | tela._tabela_vendedores.selectionModel().SelectionFlag.Rows,
-            )
-            assert tela._nome_selecionado() == nome
+        def card(nome: str):
+            return next(c for c in cad.cards if c.item is not None and c.item.titulo == nome)
 
-        _selecionar("Vendedor Tela Teste")
-        assert tela._botao_desativar.text() == "Desativar", "ativo -> o botão oferece desativar"
+        total_antes = len(cad.cards)
+        cad.botao_novo.click()
+        cad._card_aberto().campos["nome"].setText("Vendedor Tela Teste")
+        cad._card_aberto().botoes["salvar"].click()
+        assert len(cad.cards) == total_antes + 1 and card("Vendedor Tela Teste").etiqueta.texto() == "Ativo"
+        assert "Senha inicial de acesso" in mensagens[-1]
+        senha_inicial = mensagens[-1].split("Senha inicial de acesso: ")[1].split()[0]
+        assert "Nenhum cliente" in card("Vendedor Tela Teste").detalhe.text() and "senha definida" in card("Vendedor Tela Teste").detalhe.text()
+        print(f"OK: '+ Novo vendedor' cadastra ({total_antes} -> {len(cad.cards)} cards), já ativo, e mostra a senha inicial.")
 
-        linha("3) Redefinir senha de um vendedor pela tela")
+        linha("3) Redefinir senha (três pontinhos)")
         def _senha_local_confere(nome: str, senha: str) -> bool:
             df = bd.ler_vendedores(tmp_xlsx)
             linha_vendedor = df[df["NOME"] == nome].iloc[0]
             return auth.senha_confere(senha, linha_vendedor["SENHA_HASH"], linha_vendedor["SALT"])
 
-        senha_inicial = geradas["Vendedor Tela Teste"]
         assert _senha_local_confere("Vendedor Tela Teste", senha_inicial)
-        tela._redefinir_senha_selecionado()
-        assert not _senha_local_confere("Vendedor Tela Teste", senha_inicial), "senha antiga invalidada"
-        print("OK: redefinir senha pela tela gera uma senha nova e invalida a antiga.")
+        respostas_sim.append(False)
+        card("Vendedor Tela Teste").acoes["Redefinir senha"].trigger()
+        assert _senha_local_confere("Vendedor Tela Teste", senha_inicial), "respondendo Não, nada muda"
+        card("Vendedor Tela Teste").acoes["Redefinir senha"].trigger()
+        assert not _senha_local_confere("Vendedor Tela Teste", senha_inicial) and "Nova senha" in mensagens[-1]
+        print("OK: redefinir senha pergunta antes; 'Sim' gera uma senha nova e invalida a antiga.")
 
-        tela._tabela_vendedores.clearSelection()
-        antes_msg = len(mensagens)
-        tela._redefinir_senha_selecionado()
-        assert len(mensagens) == antes_msg + 1
-        print("OK: sem seleção, redefinir avisa em vez de quebrar.")
-
-        linha("4) Status, carteira e desativar (exige carteira vazia)")
+        linha("4) Carteira no card; desativar exige carteira vazia")
         _cliente("11122233396", "CLIENTE DO TELA TESTE", "Vendedor Tela Teste")
-        tela._carregar_vendedores()
-        _selecionar("Vendedor Tela Teste")
-        linha_visual = next(
-            i for i in range(tela._modelo_vendedores.rowCount()) if tela._modelo_vendedores.indice_real(i) == "Vendedor Tela Teste"
-        )
-        assert tela._modelo_vendedores.data(tela._modelo_vendedores.index(linha_visual, 2)) == "1", "carteira = 1"
-        antes_msg = len(mensagens)
-        tela._alternar_ativo_selecionado()  # confirmação = Sim (default da fila), mas o core recusa: carteira nao vazia
+        cad.recarregar()
+        assert "1 cliente ·" in card("Vendedor Tela Teste").detalhe.text()
+        card("Vendedor Tela Teste").acoes["ativo"].trigger()  # confirmação = Sim, mas o core recusa
         assert vendedores_mod.esta_ativo(bd.ler_vendedores(tmp_xlsx).set_index("NOME").loc["Vendedor Tela Teste", "ATIVO"])
         assert "carteira" in mensagens[-1].lower()
-        print("OK: desativar com carteira não vazia é recusado, com o motivo explicado.")
+        print("OK: o card mostra a carteira; desativar com clientes é recusado, com o motivo explicado.")
 
-        linha("5) Transferir carteira, depois desativar (agora com carteira vazia)")
+        linha("5) Transferir carteira, depois desativar e reativar")
         vendedores_mod.adicionar_vendedor("Vendedor Destino")
-        tela._carregar_vendedores()
-        _selecionar("Vendedor Tela Teste")
-
+        cad.recarregar()
         import PySide6.QtWidgets as _qw
         original_getItem = _qw.QInputDialog.getItem
         _qw.QInputDialog.getItem = staticmethod(lambda *a, **k: ("Vendedor Destino", True))
         try:
-            tela._transferir_carteira_selecionado()
+            card("Vendedor Tela Teste").acoes["Transferir carteira"].trigger()
         finally:
             _qw.QInputDialog.getItem = original_getItem
         assert clientes_mod.buscar_por_cpf("11122233396")["VENDEDOR"] == "Vendedor Destino"
-        print("OK: transferir carteira move os clientes (o CPF de teste agora está com 'Vendedor Destino').")
+        assert "1 cliente(s)" in mensagens[-1] and "Nenhum cliente" in card("Vendedor Tela Teste").detalhe.text()
+        print("OK: transferir carteira move os clientes e o card atualiza a contagem.")
 
-        tela._carregar_vendedores()
-        _selecionar("Vendedor Tela Teste")
-        tela._alternar_ativo_selecionado()
+        card("Vendedor Tela Teste").acoes["ativo"].trigger()
         assert not vendedores_mod.esta_ativo(bd.ler_vendedores(tmp_xlsx).set_index("NOME").loc["Vendedor Tela Teste", "ATIVO"])
-        print("OK: com a carteira vazia, desativar funciona.")
-
-        tela._carregar_vendedores()
-        assert "Vendedor Tela Teste" not in vendedores_mod.listar_vendedores_ativos()
+        assert card("Vendedor Tela Teste").etiqueta.texto() == "Inativo"
         assert "Vendedor Tela Teste" in vendedores_mod.listar_vendedores(), "some dos ativos, mas continua no histórico"
-        _selecionar("Vendedor Tela Teste")
-        assert tela._botao_desativar.text() == "Reativar", "inativo -> o botão oferece reativar"
-
-        tela._alternar_ativo_selecionado()
+        assert card("Vendedor Tela Teste").acoes["ativo"].text() == "Reativar" and "excluir" not in card("Vendedor Tela Teste").acoes
+        card("Vendedor Tela Teste").acoes["ativo"].trigger()
         assert vendedores_mod.esta_ativo(bd.ler_vendedores(tmp_xlsx).set_index("NOME").loc["Vendedor Tela Teste", "ATIVO"])
-        print("OK: reativar funciona e volta a listar_vendedores_ativos().")
+        print("OK: com a carteira vazia desativa (etiqueta 'Inativo', sem opção de excluir); reativar volta.")
 
-        linha("6) Renomear vendedor (cascata pro cliente já cadastrado)")
-        import PySide6.QtWidgets as _qw
-        original_getText = _qw.QInputDialog.getText
-        _qw.QInputDialog.getText = staticmethod(lambda *a, **k: ("Vendedor Renomeado", True))
-        try:
-            tela._carregar_vendedores()
-            _selecionar("Vendedor Destino")
-            tela._renomear_selecionado()
-        finally:
-            _qw.QInputDialog.getText = original_getText
+        linha("6) Renomear pelo lápis (cascata pro cliente já cadastrado)")
+        card("Vendedor Destino").botoes["editar"].click()
+        cad._card_aberto().campos["nome"].setText("Vendedor Renomeado")
+        cad._card_aberto().botoes["salvar"].click()
         assert clientes_mod.buscar_por_cpf("11122233396")["VENDEDOR"] == "Vendedor Renomeado"
         assert "Vendedor Renomeado" in vendedores_mod.listar_vendedores()
         assert "Vendedor Destino" not in vendedores_mod.listar_vendedores()
         print("OK: renomear atualiza o cadastro E o cliente que já estava com o nome antigo.")
+        cad.close()
 
         linha("7) core.vendedores: validações extras (sem passar pela tela)")
         try:

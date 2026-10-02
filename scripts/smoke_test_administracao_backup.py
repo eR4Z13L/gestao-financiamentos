@@ -113,8 +113,7 @@ def main() -> None:
 
         linha("4) Restaurar pede confirmação, faz backup de segurança do estado atual e reflete na tela")
         vendedores_mod.adicionar_vendedor("Vendedora Depois Do Backup")
-        tela._carregar_vendedores()
-        assert "Vendedora Depois Do Backup" in tela._ativo_por_nome
+        assert "Vendedora Depois Do Backup" in vendedores_mod.listar_vendedores()
 
         sinais_recebidos = []
         tela.dados_atualizados.connect(lambda: sinais_recebidos.append(True))
@@ -127,8 +126,8 @@ def main() -> None:
         assert "TODOS os dados atuais" in mensagens[-2], "a pergunta avisa que é uma substituição completa"
         assert "restaurados" in mensagens[-1].lower()
         assert tela._modelo_backups.rowCount() == antes_backups + 1, "o backup de segurança entrou na lista"
-        assert "Vendedora Depois Do Backup" not in tela._ativo_por_nome, "a tabela de vendedores já reflete a restauração"
-        assert "Vendedora Original" in tela._ativo_por_nome
+        assert "Vendedora Depois Do Backup" not in vendedores_mod.listar_vendedores(), "os dados voltaram ao do backup"
+        assert "Vendedora Original" in vendedores_mod.listar_vendedores()
         assert sinais_recebidos == [True], "dados_atualizados disparado exatamente uma vez"
         print("OK: Restaurar confirma, cria o backup de segurança, atualiza vendedores na tela e avisa outras telas (dados_atualizados).")
 
@@ -144,10 +143,10 @@ def main() -> None:
         _selecionar_backup(tela, backup_mod.listar_backups(arquivo)[0].caminho)
         respostas_sim.append(False)
         total_antes = tela._modelo_backups.rowCount()
-        vendedores_antes = set(tela._ativo_por_nome)
+        vendedores_antes = set(vendedores_mod.listar_vendedores())
         tela._restaurar_selecionado()
         assert tela._modelo_backups.rowCount() == total_antes, "nenhum backup novo (nem de segurança) foi criado"
-        assert set(tela._ativo_por_nome) == vendedores_antes, "nada foi restaurado"
+        assert set(vendedores_mod.listar_vendedores()) == vendedores_antes, "nada foi restaurado"
         print("OK: respondendo 'Não' na confirmação, Restaurar não faz nada.")
 
         linha("7) showEvent recarrega a lista de backups (outro backup pode ter sido feito enquanto a tela sumida)")

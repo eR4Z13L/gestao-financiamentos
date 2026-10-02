@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gspread
 import pandas as pd
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QTabWidget
 
 import config
 
@@ -35,7 +35,9 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import sincronizacao
+from desktop.main_window import PAGINA_CADASTROS
 from desktop.theme import TEMA_ESCURO
+from desktop.widgets.cadastro_em_cards import LARGURA_CARD
 from desktop.widgets.formulario_proposta import FormularioProposta
 
 
@@ -45,6 +47,15 @@ def linha(titulo: str) -> None:
 
 def _hash(caminho: Path) -> str:
     return hashlib.sha256(caminho.read_bytes()).hexdigest()
+
+
+def card_de(titulo: str):
+    """O card (fechado ou aberto) do banco com esse titulo, no cadastro da tela em teste."""
+    cad = _cadastro_atual[0]
+    return next(c for c in cad.cards if c.item is not None and c.item.titulo == titulo)
+
+
+_cadastro_atual: list = []
 
 
 def _banco_das_propostas() -> list[str]:
@@ -231,59 +242,115 @@ def main() -> None:
             assert not f.tem_alteracoes(), "abrir uma proposta com banco fora da lista nao conta como alteracao"
             print("OK: a proposta mostra o banco exatamente como gravado ('SANTANDER', 'Banco Inativo'), sem trocar nada.")
 
-            linha("6) Administração > Cadastros > Bancos")
+            linha("6) Tela Cadastros (barra lateral, Ctrl+4) > Bancos, em cards")
             sessao_mod.encerrar()
             janela = amb.nova_janela("admin", TEMA_ESCURO)
             adm = janela._tela_administracao
-            abas = adm.findChild(__import__("PySide6.QtWidgets", fromlist=["QTabWidget"]).QTabWidget)
-            assert [abas.tabText(i) for i in range(abas.count())] == ["Usuários", "Sincronização e backup", "Cadastros"]
+            abas = adm.findChild(QTabWidget)
+            assert [abas.tabText(i) for i in range(abas.count())] == ["Meu acesso", "Sincronização e backup"]
             assert not hasattr(adm, "_botao_mesclar"), "o 'Mesclar grafias' saiu"
-            cad = adm._cadastro_bancos
-            modelo = cad._modelo
-            nomes_na_tabela = [modelo.indice_real(i) for i in range(modelo.rowCount())]
-            assert nomes_na_tabela == bancos_mod.listar_bancos()["NOME"].tolist()
-            print(f"OK: aba 'Cadastros' com {len(nomes_na_tabela)} bancos; o 'Mesclar' não existe mais.")
+            telas = janela._tela_cadastros
+            cad = telas.bancos
+            _cadastro_atual[:] = [cad]
+            janela.resize(1366, 768)
+            janela.ir_para(PAGINA_CADASTROS)
+            for _ in range(3):
+                QApplication.processEvents()
+            titulos = lambda: [c.item.titulo for c in cad.cards if c.item is not None]  # noqa: E731
+            assert titulos() == bancos_mod.listar_bancos()["NOME"].tolist(), (titulos(), cad._colunas, cad.width())
+            assert cad._colunas >= 3, (cad._colunas, cad.width(), cad.isVisible())
+            santander = card_de("Santander")
+            assert santander.etiqueta.texto() == "Ativo" and "proposta" in santander.detalhe.text()
+            print(f"OK: tela Cadastros com {len(titulos())} bancos em {cad._colunas} colunas; Administração só com 'Meu acesso' e 'Sincronização'.")
+
+            assert cad.busca.isHidden() and telas.vendedores.busca.isHidden(), "dentro da pagina: uma busca so, no topo"
+            telas.busca.setText("sant")
+            assert titulos() == ["Santander"]
+            assert [c.item.titulo for c in telas.vendedores.cards] == [], "a busca unica filtra todas as secoes"
+            telas.busca.setText("nada parecido")
+            assert titulos() == [] and not cad.vazio.isHidden() and "Nenhum banco encontrado" in cad.vazio.text()
+            telas.busca.clear()
+            assert telas.vendedores.cards, "limpar a busca volta tudo"
+            print("OK: a busca única do topo filtra Bancos e Vendedores (e cada seção diz quando não acha nada).")
 
             avisos = []
-            adm.dados_atualizados.connect(lambda: avisos.append(1))
-            original_texto = QInputDialog.getText
-            try:
-                QInputDialog.getText = staticmethod(lambda *a, **k: ("Banco Pela Tela", True))
-                msgs.limpar()
-                cad._botao_novo.click()
-                assert "Banco Pela Tela" in bancos_mod.nomes_ativos() and msgs.ultima()[1] == "Banco cadastrado" and avisos
-                QInputDialog.getText = staticmethod(lambda *a, **k: ("banco pela tela", True))
-                cad._botao_novo.click()
-                assert msgs.ultima()[1] == "Não foi possível cadastrar" and "já está" in msgs.ultima()[2]
-                print("OK: '+ Novo Banco' cadastra e avisa as outras telas; repetido mostra o motivo.")
+            telas.dados_atualizados.connect(lambda: avisos.append(1))
+            msgs.limpar()
+            cad.botao_novo.click()
+            novo = cad._card_aberto()
+            assert novo is not None and novo.item is None and cad.cards[0] is novo, "o card novo abre no topo"
+            novo.botoes["salvar"].click()
+            assert msgs.ultima()[1] == "Campo obrigatório"
+            novo.campos["nome"].setText("Banco Pela Tela")
+            novo.botoes["salvar"].click()
+            assert "Banco Pela Tela" in bancos_mod.nomes_ativos() and msgs.ultima()[1] == "Banco cadastrado" and avisos
+            assert cad._card_aberto() is None and "Banco Pela Tela" in titulos()
+            cad.botao_novo.click()
+            cad._card_aberto().campos["nome"].setText("banco pela tela")
+            cad._card_aberto().botoes["salvar"].click()
+            assert msgs.ultima()[1] == "Não foi possível cadastrar" and "já está" in msgs.ultima()[2]
+            assert cad._card_aberto() is not None, "deu erro: o card continua aberto com o que foi digitado"
+            cad._card_aberto().botoes["cancelar"].click()
+            assert cad._card_aberto() is None
+            print("OK: '+ Novo banco' abre um card em branco; vazio, repetido e certo dão a resposta certa.")
 
-                cad._tabela.selectRow([cad._modelo.indice_real(i) for i in range(cad._modelo.rowCount())].index("Santander"))
-                assert cad._botao_ativo.text() == "Desativar" and "Usado em" in cad._botao_excluir.toolTip()
-                msgs.limpar()
-                cad._botao_excluir.click()
-                assert msgs.ultima()[1] == "Não foi possível excluir" and "Santander" in bancos_mod.nomes_ativos()
-                msgs.resposta_pergunta = QMessageBox.StandardButton.No
-                cad._botao_ativo.click()
-                assert "Santander" in bancos_mod.nomes_ativos(), "respondendo Não, nada muda"
-                msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
-                cad._botao_ativo.click()
-                assert "Santander" not in bancos_mod.nomes_ativos() and msgs.ultima()[1] == "Banco desativado"
-                cad._tabela.selectRow([cad._modelo.indice_real(i) for i in range(cad._modelo.rowCount())].index("Santander"))
-                assert cad._botao_ativo.text() == "Reativar"
-                cad._botao_ativo.click()
-                assert "Santander" in bancos_mod.nomes_ativos()
-                print("OK: excluir banco com propostas explica; desativar pergunta antes; reativar volta.")
+            largura_fechado = card_de("Santander").width()
+            card_de("Santander").botoes["editar"].click()
+            aberto = cad._card_aberto()
+            assert aberto is not None and aberto.item.titulo == "Santander", "o lapis edita"
+            assert aberto.no_lugar and aberto._editor is None and aberto.titulo.isHidden(), "1 campo: edita no lugar"
+            assert aberto.width() == largura_fechado == LARGURA_CARD, "editar nao muda a largura do card"
+            print("OK: o lápis edita no próprio card (1 campo), sem mudar a largura.")
+            aberto.campos["nome"].setText("Santander Digitado")
+            cad.busca.setText("santander")  # remontar a lista nao perde o que foi digitado
+            assert cad._card_aberto().campos["nome"].text() == "Santander Digitado"
+            cad.busca.clear()
+            msgs.resposta_pergunta = QMessageBox.StandardButton.No
+            cad._editar(card_de("Banco Da Nuvem"))
+            assert cad._card_aberto().item.titulo == "Santander", "Não: continua no card que estava sendo editado"
+            cad.recarregar()
+            assert cad._card_aberto().campos["nome"].text() == "Santander Digitado", "reler nao atropela a edicao"
+            sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
+            bancos_mod.renomear_banco("Santander", "Santander Outro PC")  # outro PC mexe nele durante a edicao
+            cad.recarregar()
+            assert cad._card_aberto() is not None and cad._card_aberto().campos["nome"].text() == "Santander Digitado",                 "o banco mudou por fora enquanto era editado: o card continua aberto com o que foi digitado"
+            bancos_mod.renomear_banco("Santander Outro PC", "Santander")
+            msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
+            cad._editar(card_de("Banco Da Nuvem"))
+            assert cad._card_aberto().item.titulo == "Banco Da Nuvem" and cad._card_aberto().campos["nome"].text() == "Banco Da Nuvem"
+            assert "Santander Digitado" not in bancos_mod.listar_bancos()["NOME"].tolist()
+            print("OK: trocar de card com algo digitado pergunta; reler a lista não apaga o que está sendo digitado.")
 
-                bancos_mod.adicionar_banco("Banco Exemplo SA")  # o passo 3 trocou o cadastro pelo da nuvem
-                cad.recarregar()
-                cad._tabela.selectRow([cad._modelo.indice_real(i) for i in range(cad._modelo.rowCount())].index("Banco Exemplo SA"))
-                QInputDialog.getText = staticmethod(lambda *a, **k: ("Banco Exemplo Renomeado", True))
-                cad._botao_renomear.click()
-                assert msgs.ultima()[1] == "Banco renomeado" and f"{mudaram} proposta(s)" in msgs.ultima()[2]
-                assert _banco_das_propostas().count("Banco Exemplo Renomeado") == mudaram
-                print("OK: renomear pela tela diz quantas propostas mudaram.")
-            finally:
-                QInputDialog.getText = original_texto
+            cad._editar(card_de("Santander"))
+            msgs.limpar()
+            cad._card_aberto().acoes["excluir"].trigger()
+            assert msgs.ultima()[1] == "Não foi possível excluir" and "Santander" in bancos_mod.nomes_ativos()
+            msgs.resposta_pergunta = QMessageBox.StandardButton.No
+            cad._card_aberto().acoes["ativo"].trigger()
+            assert "Santander" in bancos_mod.nomes_ativos(), "respondendo Não, nada muda"
+            msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
+            cad._card_aberto().acoes["ativo"].trigger()
+            assert "Santander" not in bancos_mod.nomes_ativos() and msgs.ultima()[1] == "Banco desativado"
+            assert card_de("Santander").etiqueta.texto() == "Inativo"
+            cad._editar(card_de("Santander"))
+            assert cad._card_aberto().acoes["ativo"].text() == "Reativar"
+            cad._card_aberto().acoes["ativo"].trigger()
+            assert "Santander" in bancos_mod.nomes_ativos()
+            print("OK: excluir banco com propostas explica; desativar pergunta antes e a etiqueta vira 'Inativo'; reativar volta.")
+
+            bancos_mod.adicionar_banco("Banco Exemplo SA")  # o passo 3 trocou o cadastro pelo da nuvem
+            cad.recarregar()
+            cad._editar(card_de("Banco Exemplo SA"))
+            cad._card_aberto().campos["nome"].setText("Banco Exemplo Renomeado")
+            cad._card_aberto().botoes["salvar"].click()
+            assert msgs.ultima()[1] == "Alterações salvas" and f"{mudaram} proposta(s)" in msgs.ultima()[2]
+            assert _banco_das_propostas().count("Banco Exemplo Renomeado") == mudaram
+            print("OK: renomear pelo card diz quantas propostas mudaram.")
+
+            cad._editar(card_de("Banco Pela Tela"))
+            cad._card_aberto().acoes["excluir"].trigger()
+            assert msgs.ultima()[1] == "Banco excluído" and "Banco Pela Tela" not in titulos()
+            print("OK: excluir um banco sem propostas pergunta e apaga.")
         linha("TUDO OK")
     finally:
         amb.encerrar()

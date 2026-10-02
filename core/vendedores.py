@@ -71,6 +71,13 @@ def contar_carteira(nome: str) -> int:
     return int((df["VENDEDOR"].str.strip().str.upper() == alvo).sum())
 
 
+def carteiras() -> dict[str, int]:
+    """Quantos clientes cada vendedor tem (chave: nome em MAIUSCULAS, sem espacos nas pontas) - uma
+    leitura so da planilha, pra quem precisa da carteira de todos de uma vez (a tela de Cadastros)."""
+    vendedores = bd.ler_clientes(CAMINHO_XLSX)["VENDEDOR"].str.strip().str.upper()
+    return vendedores[vendedores != ""].value_counts().to_dict()
+
+
 def adicionar_vendedor(nome: str) -> str:
     """Cadastra um vendedor novo e devolve o nome ja normalizado (sem espaco
     nas pontas). Se ja existir um vendedor com o mesmo nome (ignorando

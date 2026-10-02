@@ -41,6 +41,7 @@ from core import sheets_sync
 from core import sincronizacao as sincronizacao_mod
 from desktop import settings as settings_mod
 from desktop.dialogs import escolha_dialog
+from desktop.screens.cadastros_screen import CadastrosScreen
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.screens.propostas_screen import PropostasScreen
@@ -60,6 +61,7 @@ _logger = logging.getLogger(__name__)
 PAGINA_DASHBOARD = "dashboard"
 PAGINA_FICHA = "ficha"
 PAGINA_PROPOSTAS = "propostas"
+PAGINA_CADASTROS = "cadastros"
 PAGINA_ADMINISTRACAO = "administracao"
 
 _LARGURA_EXPANDIDA = 230
@@ -108,6 +110,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_tela_administracao"):
             self._tela_administracao.dados_atualizados.connect(self._atualizar_selo_propostas)
             self._tela_administracao.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
+            # Cadastros: renomear um banco ou um vendedor muda propostas e clientes
+            self._tela_cadastros.dados_atualizados.connect(self._atualizar_selo_propostas)
+            self._tela_cadastros.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
         self._tela_dashboard.ficha_pedida.connect(self.abrir_ficha_do_cliente)
@@ -153,13 +158,15 @@ class MainWindow(QMainWindow):
             (PAGINA_PROPOSTAS, "Todas as Propostas", "propostas", self._tela_propostas),
         ]
         grupos_e_telas = [("Visão geral", visao_geral)]
-        # gestao de usuarios (trocar a propria senha, cadastrar vendedor, redefinir senha de
-        # vendedor) e coisa de ADMIN - nem aparece no menu pro VENDEDOR, que so tem leitura
+        # Cadastros (bancos, vendedores) e Administracao (PIN, sincronizacao, backup) sao coisa de ADMIN - nem
+        # aparecem no menu pro VENDEDOR, que so tem leitura
         if sessao_mod.eh_admin():
+            self._tela_cadastros = CadastrosScreen()
             self._tela_administracao = UsuariosScreen()
-            grupos_e_telas.append(
-                ("Administração", [(PAGINA_ADMINISTRACAO, "Administração", "administracao", self._tela_administracao)])
-            )
+            grupos_e_telas.append(("Administração", [
+                (PAGINA_CADASTROS, "Cadastros", "cadastros", self._tela_cadastros),
+                (PAGINA_ADMINISTRACAO, "Administração", "administracao", self._tela_administracao),
+            ]))
 
         grupos = []
         numero = 0

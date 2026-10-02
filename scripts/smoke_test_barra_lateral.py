@@ -48,6 +48,7 @@ from desktop import main as main_mod
 from desktop import settings as settings_mod
 from desktop.main_window import (
     PAGINA_ADMINISTRACAO,
+    PAGINA_CADASTROS,
     PAGINA_DASHBOARD,
     PAGINA_FICHA,
     PAGINA_PROPOSTAS,
@@ -123,16 +124,18 @@ def testar_menu_e_grupos(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         ("Ficha de Cliente", PAGINA_FICHA),
         ("Todas as Propostas", PAGINA_PROPOSTAS),
         ("Administração", None),
+        ("Cadastros", PAGINA_CADASTROS),
         ("Administração", PAGINA_ADMINISTRACAO),
     ], linhas
     assert all("Usuários" not in texto for texto, _ in linhas), "o item 'Usuários' virou 'Administração'"
     assert menu.item(0).flags() == Qt.ItemFlag.NoItemFlags and menu.item(4).flags() == Qt.ItemFlag.NoItemFlags
     assert "Administração" in janela._tela_administracao.findChildren(QLabel)[0].text(), "o titulo da tela acompanha o menu"
-    print("OK: ADMIN ve 2 grupos (Visão geral / Administração), o item se chama 'Administração' e os titulos nao sao selecionaveis.")
+    assert "Cadastros" in janela._tela_cadastros.findChildren(QLabel)[0].text()
+    print("OK: ADMIN ve 2 grupos (Visão geral / Administração: Cadastros e Administração) e os titulos nao sao selecionaveis.")
 
-    for chave, atalho in ((PAGINA_DASHBOARD, "Ctrl+1"), (PAGINA_FICHA, "Ctrl+2"), (PAGINA_PROPOSTAS, "Ctrl+3"), (PAGINA_ADMINISTRACAO, "Ctrl+4")):
+    for chave, atalho in ((PAGINA_DASHBOARD, "Ctrl+1"), (PAGINA_FICHA, "Ctrl+2"), (PAGINA_PROPOSTAS, "Ctrl+3"), (PAGINA_CADASTROS, "Ctrl+4"), (PAGINA_ADMINISTRACAO, "Ctrl+5")):
         assert atalho in menu._itens_por_chave[chave].toolTip(), f"o tooltip de {chave} deveria citar {atalho}"
-    print("OK: o tooltip de cada item cita o atalho (Ctrl+1..4).")
+    print("OK: o tooltip de cada item cita o atalho (Ctrl+1..5).")
 
     vendedor = amb.nova_janela("vendedor", tema)
     linhas_v = [(vendedor._menu.item(i).text(), vendedor._menu.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(vendedor._menu.count())]
@@ -141,8 +144,9 @@ def testar_menu_e_grupos(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         ("Ficha de Cliente", PAGINA_FICHA),
         ("Todas as Propostas", PAGINA_PROPOSTAS),
     ], linhas_v
-    assert PAGINA_ADMINISTRACAO not in vendedor._indice_por_chave and vendedor._botao_nova_proposta is None
-    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Administração e sem '+ Nova proposta'.")
+    assert PAGINA_ADMINISTRACAO not in vendedor._indice_por_chave and PAGINA_CADASTROS not in vendedor._indice_por_chave
+    assert vendedor._botao_nova_proposta is None
+    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Cadastros, sem Administração e sem '+ Nova proposta'.")
     msgs.exigir_vazio("montar o menu")
 
 
@@ -155,10 +159,12 @@ def testar_navegacao_por_teclado_e_atalhos(amb: Ambiente, msgs: Mensagens, tema:
 
     menu.setFocus()
     sequencia = []
-    for _ in range(4):
+    for _ in range(5):
         QTest.keyClick(menu, Qt.Key.Key_Down)
         sequencia.append(janela.chave_atual())
-    assert sequencia == [PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_ADMINISTRACAO, PAGINA_ADMINISTRACAO], sequencia
+    assert sequencia == [PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_ADMINISTRACAO], sequencia
+    QTest.keyClick(menu, Qt.Key.Key_Up)
+    assert janela.chave_atual() == PAGINA_CADASTROS
     QTest.keyClick(menu, Qt.Key.Key_Up)
     assert janela.chave_atual() == PAGINA_PROPOSTAS
     print("OK: as setas percorrem os itens pulando o titulo do grupo, e o QStackedWidget acompanha.")
@@ -173,17 +179,18 @@ def testar_navegacao_por_teclado_e_atalhos(amb: Ambiente, msgs: Mensagens, tema:
     for nome_da_tecla, tecla, esperado in (
         ("Ctrl+2", Qt.Key.Key_2, PAGINA_FICHA),
         ("Ctrl+3", Qt.Key.Key_3, PAGINA_PROPOSTAS),
-        ("Ctrl+4", Qt.Key.Key_4, PAGINA_ADMINISTRACAO),
+        ("Ctrl+4", Qt.Key.Key_4, PAGINA_CADASTROS),
+        ("Ctrl+5", Qt.Key.Key_5, PAGINA_ADMINISTRACAO),
         ("Ctrl+1", Qt.Key.Key_1, PAGINA_DASHBOARD),
     ):
         QTest.keyClick(janela, tecla, Qt.KeyboardModifier.ControlModifier)
         assert janela.chave_atual() == esperado, f"{nome_da_tecla} deveria abrir {esperado}, abriu {janela.chave_atual()}"
-    print("OK: Ctrl+1..4 abrem as telas na ordem do menu.")
+    print("OK: Ctrl+1..5 abrem as telas na ordem do menu.")
 
     vendedor = amb.nova_janela("vendedor", tema)
     assert {s.key().toString() for s in vendedor.findChildren(QShortcut)} == {"Ctrl+1", "Ctrl+2", "Ctrl+3"}
     QTest.keyClick(vendedor, Qt.Key.Key_4, Qt.KeyboardModifier.ControlModifier)
-    assert vendedor.chave_atual() == PAGINA_DASHBOARD, "VENDEDOR nao tem Ctrl+4 (nao existe Administração pra ele)"
+    assert vendedor.chave_atual() == PAGINA_DASHBOARD, "VENDEDOR nao tem Ctrl+4 (nao existe Cadastros pra ele)"
     print("OK: o VENDEDOR so tem Ctrl+1..3.")
     msgs.exigir_vazio("navegar")
 
@@ -723,6 +730,7 @@ def testar_recolher_e_tema(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         (PAGINA_DASHBOARD, "Dashboard de Propostas"),
         (PAGINA_FICHA, "Ficha de Cliente"),
         (PAGINA_PROPOSTAS, "Todas as Propostas"),
+        (PAGINA_CADASTROS, "Cadastros"),
         (PAGINA_ADMINISTRACAO, "Administração"),
     ):
         assert rotulo in menu._itens_por_chave[chave].toolTip(), f"recolhido, o rotulo de {chave} vai no tooltip"
@@ -850,21 +858,24 @@ def testar_fundo_dos_rotulos_e_tooltip(amb: Ambiente, msgs: Mensagens, tema: str
     # ficam com altura 0 (grab() de 0x0), mesmo com isVisibleTo(tela) dando True.
     janela.ir_para(PAGINA_ADMINISTRACAO)
     QApplication.processEvents()
+    janela.ir_para(PAGINA_CADASTROS)
+    QApplication.processEvents()
 
     # Dashboard, Administração e a barra lateral: rotulos sem fundo (sem a faixa escura sobre o card)
     # isVisibleTo(tela): visivel se SO se olhar pra dentro de `tela` (ignora se `tela` em si
     # e a pagina atual do QStackedWidget - isso nao afeta o grab()). Um rotulo dentro de algo
     # com .setVisible(False) DIRETO (ex.: "Minha senha" recolhida) fica de fora, e com razao:
     # o Qt nunca da geometria de verdade pra ele, e ninguem ve uma faixa que nunca e desenhada
-    for nome, tela in (("Dashboard", janela._tela_dashboard), ("Administração", janela._tela_administracao), ("barra lateral", janela._sidebar)):
+    for nome, tela, minimo in (("Dashboard", janela._tela_dashboard, 3), ("Administração", janela._tela_administracao, 2),
+                               ("Cadastros", janela._tela_cadastros, 3), ("barra lateral", janela._sidebar, 3)):
         rotulos = [r for r in tela.findChildren(QLabel) if r.isVisibleTo(tela)]
-        assert len(rotulos) >= 3, nome
+        assert len(rotulos) >= minimo, (nome, len(rotulos))
         com_fundo = [r.text() for r in rotulos if not transparente(r)]
         assert not com_fundo, f"{nome}: rotulos com fundo proprio (faixa atras do texto): {com_fundo}"
     for card in (janela._tela_dashboard._card_em_analise, janela._tela_dashboard._card_taxa):
         for rotulo in card.findChildren(QLabel):
             assert transparente(rotulo)
-    print("OK: os rotulos do Dashboard (cards), da Administração e da barra lateral nao tem fundo proprio.")
+    print("OK: os rotulos do Dashboard (cards), da Administração, dos Cadastros e da barra lateral nao tem fundo proprio.")
 
     # ... e a foto do card confirma: onde nao ha letra, o fundo e o do CARD (nao o da janela)
     card = janela._tela_dashboard._card_em_analise
