@@ -42,11 +42,15 @@ from PySide6.QtWidgets import (
 import config
 from core import auth
 from core import backup as backup_mod
+from core import conta_google
 from core import data_store as bd
+from core import data_store_sheets as leitura_sheets
 from core import propostas as propostas_mod
+from core import sheets_sync
 from core import sincronizacao as sincronizacao_mod
 from core import vendedores as vendedores_mod
 from desktop import settings as settings_mod
+from desktop.espera import rodar_esperando
 from desktop.table_model import PandasTableModel
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
@@ -321,6 +325,16 @@ class UsuariosScreen(QWidget):
         cabecalho.addWidget(botao_sincronizar)
         layout_cartao.addLayout(cabecalho)
 
+        linha_conta = QHBoxLayout()
+        self._rotulo_conta_google = QLabel("")
+        self._rotulo_conta_google.setWordWrap(True)
+        linha_conta.addWidget(self._rotulo_conta_google, stretch=1)
+        self._botao_conta_google = QPushButton("")
+        self._botao_conta_google.clicked.connect(self._ao_clicar_conta_google)
+        linha_conta.addWidget(self._botao_conta_google)
+        layout_cartao.addLayout(linha_conta)
+        self._atualizar_conta_google()
+
         explicacao = QLabel(
             "Cada alteração já é enviada automaticamente. Se uma sincronização falhar (sem "
             "internet, por exemplo), o aplicativo tenta de novo sozinho em instantes. "
@@ -336,6 +350,91 @@ class UsuariosScreen(QWidget):
         layout_cartao.addWidget(explicacao)
 
         return cartao
+
+    # -- conta Google ------------------------------------------------------------------
+
+    def _atualizar_conta_google(self) -> None:
+        conta = conta_google.conta_conectada()
+        if conta is not None:
+            self._rotulo_conta_google.setText(f"Conta Google conectada: <b>{conta.email}</b> (a sincronização usa esta conta)")
+            self._botao_conta_google.setText("Desconectar")
+            self._botao_conta_google.setEnabled(True)
+            self._botao_conta_google.setToolTip("Apaga a autorização guardada neste computador.")
+            return
+        if conta_google.ha_acesso_a_nuvem():
+            situacao = "a sincronização usa a chave do Google instalada neste computador"
+        else:
+            situacao = "sem conta nem chave, este computador não sincroniza"
+        self._rotulo_conta_google.setText(f"Nenhuma conta Google conectada ({situacao}).")
+        self._botao_conta_google.setText("Conectar com Google")
+        disponivel = conta_google.cliente_oauth_disponivel()
+        self._botao_conta_google.setEnabled(disponivel)
+        self._botao_conta_google.setToolTip(
+            "Abre o navegador para entrar na sua conta Google e autorizar o aplicativo." if disponivel
+            else "O arquivo de configuração do login Google não está neste computador."
+        )
+
+    def _ao_clicar_conta_google(self) -> None:
+        if conta_google.conta_conectada() is not None:
+            self._desconectar_conta_google()
+        else:
+            self._conectar_conta_google()
+
+    def _esquecer_conexoes(self) -> None:
+        sheets_sync.esquecer_conexao()
+        leitura_sheets.esquecer_conexao()
+
+    def _conectar_conta_google(self) -> None:
+        try:
+            conta = rodar_esperando(
+                self, "Entre na sua conta Google no navegador que abriu e autorize o aplicativo…",
+                conta_google.conectar, limite_s=None,
+            )
+        except conta_google.ErroContaGoogle as exc:
+            QMessageBox.warning(self, "Não foi possível conectar", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro ao conectar com o Google", f"{type(exc).__name__}: {exc}")
+            return
+        self._esquecer_conexoes()
+        # confere na hora se essa conta abre a planilha: senao a sincronizacao pararia sem ninguem saber
+        try:
+            rodar_esperando(self, "Conferindo o acesso à planilha…", sheets_sync.ler_meta_da_nuvem, limite_s=60)
+        except Exception as exc:
+            conta_google.desconectar()
+            self._esquecer_conexoes()
+            self._atualizar_conta_google()
+            QMessageBox.warning(
+                self,
+                "Conta sem acesso à planilha",
+                f"A conta {conta.email} entrou, mas não conseguiu abrir a planilha da nuvem ({type(exc).__name__}: {exc}).\n\n"
+                "Peça para quem é dono da planilha compartilhá-la com essa conta como Editor e conecte de novo. "
+                "Enquanto isso, nada mudou: a sincronização continua como antes.",
+            )
+            return
+        self._atualizar_conta_google()
+        QMessageBox.information(
+            self, "Conta Google conectada",
+            f"Conectado como {conta.email}. A partir de agora, a sincronização com a nuvem usa esta conta.",
+        )
+
+    def _desconectar_conta_google(self) -> None:
+        resposta = QMessageBox.question(
+            self,
+            "Desconectar a conta Google",
+            "Apagar a autorização da conta Google guardada neste computador? A sincronização volta a usar a "
+            "chave do Google instalada aqui (se houver); sem ela, este computador para de sincronizar até conectar de novo.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            rodar_esperando(self, "Desconectando…", conta_google.desconectar, limite_s=20)
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, "Erro ao desconectar", f"{type(exc).__name__}: {exc}")
+        self._esquecer_conexoes()
+        self._atualizar_conta_google()
 
     def _sincronizar_agora(self) -> None:
         if not config.SINCRONIZACAO_GOOGLE_ATIVADA:

@@ -43,6 +43,11 @@ BANCOS_CONHECIDOS = [
 # sucedida); a credencial e a chave da conta de servico do Google Cloud, que
 # fica FORA do repositorio (pasta credentials/, no .gitignore).
 CAMINHO_CREDENCIAIS_GOOGLE = DIRETORIO_BASE / "credentials" / "service_account_admin.json"
+# Login com a conta Google (core/conta_google.py): o cliente OAuth do app ("App para computador", nao e
+# segredo de verdade) e a autorizacao da pessoa, criptografada pelo Windows. Com a conta conectada, ela e
+# usada no lugar da chave acima.
+CAMINHO_CLIENTE_OAUTH_GOOGLE = DIRETORIO_BASE / "credentials" / "oauth_cliente_google.json"
+CAMINHO_CONTA_GOOGLE = DIRETORIO_BASE / "credentials" / "conta_google.dat"
 GOOGLE_SHEETS_ID = "1-Iedzv3gw0QcurzpoFIzri4J68-OGjfsKihcqes0ACc"
 
 # Senha do ADMIN (login com dois niveis de acesso - Fase 2) - fica 100%

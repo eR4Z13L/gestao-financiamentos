@@ -19,9 +19,8 @@ from datetime import datetime
 
 import gspread
 import pandas as pd
-from google.oauth2.service_account import Credentials
-
 import config
+from core import conta_google
 from core import data_store as bd
 
 _ESCOPOS_LEITURA = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -40,13 +39,19 @@ def ultima_leitura() -> datetime | None:
 
 
 def _obter_cliente():
+    """Conta Google conectada, se ha; senao a chave da conta de servico (core/conta_google.py decide)."""
     global _cliente
     if _cliente is None:
-        creds = Credentials.from_service_account_file(
-            str(config.CAMINHO_CREDENCIAIS_GOOGLE), scopes=_ESCOPOS_LEITURA
-        )
-        _cliente = gspread.authorize(creds)
+        _cliente = gspread.authorize(conta_google.credenciais_para_planilha(_ESCOPOS_LEITURA))
     return _cliente
+
+
+def esquecer_conexao() -> None:
+    """Conectou ou desconectou a conta Google: a proxima leitura autoriza de novo com a credencial certa."""
+    global _cliente, _planilha_em_cache
+    _cliente = None
+    with _planilha_lock:
+        _planilha_em_cache = None
 
 
 def _obter_planilha():

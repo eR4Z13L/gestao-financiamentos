@@ -24,6 +24,7 @@ import pandas as pd
 import config
 from config import CAMINHO_XLSX
 from core import backup as backup_mod
+from core import conta_google
 from core import data_store as bd
 from core import data_store_sheets as nuvem
 from core import estado_sincronizacao as estado_mod
@@ -240,7 +241,7 @@ def consultar_nuvem_para_primeira_abertura() -> NuvemParaPrimeiraAbertura:
     thread). Nunca levanta: qualquer falha vira NUVEM_SEM_REDE com o motivo em `detalhe`."""
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         return NuvemParaPrimeiraAbertura(NUVEM_DESATIVADA)
-    if not Path(config.CAMINHO_CREDENCIAIS_GOOGLE).exists():
+    if not conta_google.ha_acesso_a_nuvem():  # nem conta Google conectada, nem a chave
         return NuvemParaPrimeiraAbertura(NUVEM_SEM_CHAVE)
     leitores = {
         bd.ABA_CLIENTES: nuvem.ler_clientes,

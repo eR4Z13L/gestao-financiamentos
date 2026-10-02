@@ -33,9 +33,8 @@ from datetime import datetime, timedelta, timezone
 
 import gspread
 import pandas as pd
-from google.oauth2.service_account import Credentials
-
 import config
+from core import conta_google
 from core import estado_sincronizacao as estado_mod
 
 _logger = logging.getLogger(__name__)
@@ -266,19 +265,23 @@ def _reiniciar_estado() -> None:
 
 
 def _obter_cliente():
-    """Autoriza (uma vez, com cache em memoria) o cliente gspread com a
-    conta de servico do ADMIN. So e chamada dentro da thread de
-    sincronizacao - se a credencial nao existir (ex: maquina de um
-    VENDEDOR, que nunca deveria escrever), a excecao e tratada como
-    qualquer outra falha de sincronizacao (log, tenta de novo depois)."""
+    """Autoriza (uma vez, com cache em memoria) o cliente gspread: com a conta Google conectada, se ha;
+    senao com a chave da conta de servico (core/conta_google.py decide). So e chamada dentro da thread de
+    sincronizacao - sem nenhuma credencial, a excecao e tratada como qualquer outra falha de
+    sincronizacao (log, tenta de novo depois)."""
     global _cliente
     with _cliente_lock:
         if _cliente is None:
-            creds = Credentials.from_service_account_file(
-                str(config.CAMINHO_CREDENCIAIS_GOOGLE), scopes=_ESCOPOS
-            )
-            _cliente = gspread.authorize(creds)
+            _cliente = gspread.authorize(conta_google.credenciais_para_planilha(_ESCOPOS))
         return _cliente
+
+
+def esquecer_conexao() -> None:
+    """Conectou ou desconectou a conta Google: a proxima chamada autoriza de novo com a credencial certa."""
+    global _cliente
+    with _cliente_lock:
+        _cliente = None
+    _esquecer_planilha_aberta()
 
 
 def _obter_planilha():
