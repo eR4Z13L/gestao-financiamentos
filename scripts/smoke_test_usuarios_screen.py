@@ -24,6 +24,7 @@ from config import CAMINHO_XLSX
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import acesso, auth, conta_google
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
@@ -63,7 +64,7 @@ def main() -> None:
     tmp_xlsx = CAMINHO_XLSX.parent / "_smoke_test_usuarios.xlsx"
     tmp_admin_senha = CAMINHO_XLSX.parent / "_smoke_test_usuarios_admin.json"
     shutil.copy(CAMINHO_XLSX, tmp_xlsx)
-    clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = tmp_xlsx
+    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = tmp_xlsx
     caminho_original_admin = auth.CAMINHO_CREDENCIAIS_ADMIN
     auth.CAMINHO_CREDENCIAIS_ADMIN = tmp_admin_senha
     pasta_acesso = Path(tempfile.mkdtemp(prefix="_smoke_usuarios_acesso_"))
@@ -263,7 +264,7 @@ def main() -> None:
         auth.CAMINHO_CREDENCIAIS_ADMIN = caminho_original_admin
         config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_PIN_ACESSO = originais_acesso
         shutil.rmtree(pasta_acesso, ignore_errors=True)
-        clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_xlsx.unlink(missing_ok=True)
         tmp_admin_senha.unlink(missing_ok=True)
         sessao_mod.encerrar()

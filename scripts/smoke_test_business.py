@@ -21,6 +21,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import equipamentos as equipamentos_mod
@@ -46,6 +47,7 @@ def main() -> None:
     clientes_mod.CAMINHO_XLSX = tmp_path
     equipamentos_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    bancos_mod.CAMINHO_XLSX = tmp_path
     vendedores_mod.CAMINHO_XLSX = tmp_path
 
     try:

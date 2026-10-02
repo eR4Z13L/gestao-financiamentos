@@ -35,6 +35,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
@@ -953,6 +954,7 @@ def main() -> None:
     shutil.copy(CAMINHO_XLSX, tmp)
     clientes_mod.CAMINHO_XLSX = tmp
     propostas_mod.CAMINHO_XLSX = tmp
+    bancos_mod.CAMINHO_XLSX = tmp
     vendedores_mod.CAMINHO_XLSX = tmp
     try:
         with _Mensagens() as msgs:

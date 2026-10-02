@@ -24,6 +24,7 @@ from openpyxl.utils import get_column_letter
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import migracao_endereco as mig
@@ -325,6 +326,7 @@ def testar_migracao_legado() -> None:
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
         clientes_mod.CAMINHO_XLSX = arquivo
         propostas_mod.CAMINHO_XLSX = arquivo
+        bancos_mod.CAMINHO_XLSX = arquivo
         try:
             clientes_mod.atualizar_cliente(
                 "39053344705",
@@ -342,6 +344,7 @@ def testar_migracao_legado() -> None:
         finally:
             clientes_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
             propostas_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
+            bancos_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
             sessao_mod.encerrar()
         df2 = bd.ler_clientes(arquivo)
         tres2 = df2[df2["CPF/CNPJ"] == "39053344705"].iloc[0]

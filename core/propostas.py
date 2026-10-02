@@ -12,7 +12,6 @@ from typing import Mapping
 import pandas as pd
 
 from config import CAMINHO_XLSX
-from core import backup as backup_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
@@ -675,40 +674,3 @@ def encerrar_propostas(indices: list[int]) -> int:
     if alteradas:
         bd.escrever_propostas(CAMINHO_XLSX, df)
     return alteradas
-
-
-def bancos_distintos() -> list[tuple[str, int]]:
-    """Cada grafia distinta ja usada no campo BANCO das propostas, com quantas propostas usam
-    cada uma - pra escolher o que mesclar (mesclar_bancos). Ordenado alfabeticamente; grafias
-    diferentes so por maiuscula/espaco aparecem como linhas SEPARADAS de proposito (e
-    exatamente isso que a tela deixa escolher pra mesclar). Banco em branco nunca aparece -
-    nao faz sentido "mesclar" o campo vazio."""
-    df = bd.ler_propostas(CAMINHO_XLSX)
-    contagem = df.loc[df["BANCO"] != "", "BANCO"].value_counts()
-    return sorted(contagem.items(), key=lambda item: item[0].upper())
-
-
-def mesclar_bancos(grafias: list[str], canonica: str) -> int:
-    """Reescreve o campo BANCO de TODA proposta cuja grafia esteja em `grafias` para `canonica`
-    - mexe no HISTORICO inteiro, nao so daqui pra frente (decisao confirmada com o usuario).
-    Compara grafia por igualdade EXATA (as opcoes vem de bancos_distintos(), que ja lista cada
-    grafia literal separadamente). Sempre faz um backup do estado atual antes (motivo
-    pre-mesclagem) - do mesmo jeito que Restaurar, pra poder desfazer se precisar. Recusa com
-    menos de 2 grafias distintas ou grafia final em branco. Devolve quantas propostas mudaram."""
-    sessao_mod.exigir_admin()
-    grafias_distintas = {g for g in grafias if g}
-    if len(grafias_distintas) < 2:
-        raise ErroProposta("Selecione pelo menos 2 grafias diferentes para mesclar.")
-    canonica = canonica.strip()
-    if not canonica:
-        raise ErroProposta("Informe a grafia final (o texto que vai substituir as outras).")
-
-    backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_MESCLAGEM, CAMINHO_XLSX)
-
-    df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
-    afetadas = df["BANCO"].isin(grafias_distintas)
-    quantidade = int(afetadas.sum())
-    if quantidade:
-        df.loc[afetadas, "BANCO"] = canonica
-        bd.escrever_propostas(CAMINHO_XLSX, df)
-    return quantidade

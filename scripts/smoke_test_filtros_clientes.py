@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
@@ -337,6 +338,7 @@ def main() -> None:
     _criar_planilha_vazia(arquivo)
     clientes_mod.CAMINHO_XLSX = arquivo
     propostas_mod.CAMINHO_XLSX = arquivo
+    bancos_mod.CAMINHO_XLSX = arquivo
     vendedores_mod.CAMINHO_XLSX = arquivo
     try:
         vendedores_mod.adicionar_vendedor("ANA")
@@ -354,6 +356,7 @@ def main() -> None:
     finally:
         clientes_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
         propostas_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
+        bancos_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
         vendedores_mod.CAMINHO_XLSX = config.CAMINHO_XLSX
         sessao_mod.encerrar()
         shutil.rmtree(pasta, ignore_errors=True)

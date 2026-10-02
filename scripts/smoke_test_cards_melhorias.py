@@ -38,6 +38,7 @@ except ImportError:  # pragma: no cover - depende da versao do PySide6
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -423,7 +424,7 @@ def main() -> None:
     pasta = Path(tempfile.mkdtemp(prefix="_smoke_cards_melhorias_"))
     arquivo = pasta / "controle.xlsx"
     _criar_planilha_vazia(arquivo)
-    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
         modulo.CAMINHO_XLSX = arquivo
     try:
         with _Stubs() as stubs:
@@ -432,7 +433,7 @@ def main() -> None:
             tela.close()
         linha("TUDO OK")
     finally:
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
         sessao_mod.encerrar()
         shutil.rmtree(pasta, ignore_errors=True)

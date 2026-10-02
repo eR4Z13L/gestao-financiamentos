@@ -358,6 +358,8 @@ def main() -> None:
 
                 repor_nuvem_do_dono()
                 chave_original = config.CAMINHO_CREDENCIAIS_GOOGLE
+                conta_original = config.CAMINHO_CONTA_GOOGLE
+                config.CAMINHO_CONTA_GOOGLE = raiz / "sem_conta_google.dat"  # a conta conectada de verdade aqui nao conta
                 chave_falsa = raiz / "chave_falsa.json"
                 chave_falsa.write_text("{}", encoding="utf-8")
                 pasta_nova = raiz / "instalacao_nova"
@@ -434,6 +436,7 @@ def main() -> None:
                     assert not nova.exists() and len(escolhas.vistas) == 2
                     print("OK: se o download falha, a janela explica, nao deixa arquivo pela metade e pergunta de novo.")
                 finally:
+                    config.CAMINHO_CONTA_GOOGLE = conta_original
                     config.CAMINHO_CREDENCIAIS_GOOGLE = chave_original
                     t._usar_nuvem(nuvem)
                     nuvem.sem_rede = False

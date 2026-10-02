@@ -1,6 +1,6 @@
 """Sincronizar com a nuvem alem do envio automatico de cada gravacao (core/data_store.py):
 
-- sincronizar_tudo_agora: reenvia as 4 abas sob pedido (botao "Sincronizar agora");
+- sincronizar_tudo_agora: reenvia todas as abas sob pedido (botao "Sincronizar agora");
 - verificar_ao_abrir: ao abrir o app como Administrador, compara este computador com a nuvem
   (versao, o que ficou pendente, quem mais esta com o app aberto) e diz o que fazer;
 - baixar_da_nuvem: troca os dados LOCAIS pelos da nuvem (backup antes, tudo-ou-nada);
@@ -45,6 +45,7 @@ _LEITORES_LOCAIS = {
     bd.ABA_EQUIPAMENTOS: bd.ler_equipamentos,
     bd.ABA_PROPOSTAS: bd.ler_propostas,
     bd.ABA_VENDEDORES: bd.ler_vendedores,
+    bd.ABA_BANCOS: bd.ler_bancos,
 }
 
 
@@ -84,7 +85,7 @@ class NuvemParaPrimeiraAbertura:
 
 
 def sincronizar_tudo_agora(caminho_xlsx: Path | None = None) -> None:
-    """Relê as 4 abas do disco agora mesmo e reenvia pro Google Sheets, mesmo que nada
+    """Relê as abas do disco agora mesmo e reenvia pro Google Sheets, mesmo que nada
     tenha mudado desde a última sincronização - útil depois de restaurar um backup
     (core/backup.py: Restaurar só mexe no arquivo local) ou pra forçar uma tentativa
     sem esperar a fila de repetição (core.sheets_sync.reenviar_pendentes)."""
@@ -93,6 +94,7 @@ def sincronizar_tudo_agora(caminho_xlsx: Path | None = None) -> None:
     sheets_sync.sincronizar_em_background(bd.ABA_EQUIPAMENTOS, bd.ler_equipamentos(caminho_xlsx))
     sheets_sync.sincronizar_em_background(bd.ABA_PROPOSTAS, bd.ler_propostas(caminho_xlsx))
     sheets_sync.sincronizar_em_background(bd.ABA_VENDEDORES, bd.ler_vendedores(caminho_xlsx))
+    sheets_sync.sincronizar_em_background(bd.ABA_BANCOS, bd.ler_bancos(caminho_xlsx))
 
 
 def enviar_pendentes_do_estado(caminho_xlsx: Path | None = None) -> list[str]:
@@ -134,9 +136,10 @@ def verificar_ao_abrir(caminho_xlsx: Path | None = None) -> SituacaoAoAbrir:
 
 
 def _ler_dados_da_nuvem() -> dict[str, pd.DataFrame]:
-    """As 4 abas da nuvem, ja com os tipos do app. Tudo ou nada: se uma aba falhar, levanta."""
+    """As abas da nuvem, ja com os tipos do app. Tudo ou nada: se uma aba falhar, levanta. BANCOS e a
+    excecao: uma nuvem de antes do cadastro de bancos nao tem essa aba, e ela so fica de fora."""
     try:
-        return {
+        dados = {
             bd.ABA_CLIENTES: nuvem.ler_clientes(),
             bd.ABA_EQUIPAMENTOS: nuvem.ler_equipamentos(),
             bd.ABA_VENDEDORES: nuvem.ler_vendedores(),
@@ -144,6 +147,11 @@ def _ler_dados_da_nuvem() -> dict[str, pd.DataFrame]:
         }
     except gspread.WorksheetNotFound as exc:
         raise ErroNuvem(f"A nuvem não tem a aba {exc}. Nada foi alterado.") from exc
+    try:
+        dados[bd.ABA_BANCOS] = nuvem.ler_bancos()
+    except gspread.WorksheetNotFound:
+        pass
+    return dados
 
 
 def _gravar_dados_no_arquivo(caminho: Path, dados: dict[str, pd.DataFrame]) -> None:
@@ -153,6 +161,7 @@ def _gravar_dados_no_arquivo(caminho: Path, dados: dict[str, pd.DataFrame]) -> N
         dados[bd.ABA_EQUIPAMENTOS],
         dados[bd.ABA_VENDEDORES],
         dados[bd.ABA_PROPOSTAS],
+        dados.get(bd.ABA_BANCOS),
     )
 
 
@@ -160,6 +169,8 @@ def _recusar_se_a_nuvem_parece_vazia_por_engano(dados: dict[str, pd.DataFrame], 
     """Um envio que caiu no meio pode deixar uma aba da nuvem VAZIA (ela e apagada e reescrita).
     Baixar isso apagaria os dados daqui, entao uma aba vazia na nuvem com linhas aqui e recusada."""
     for aba, leitor in _LEITORES_LOCAIS.items():
+        if aba not in dados:  # BANCOS numa nuvem de antes do cadastro: a aba daqui fica como esta
+            continue
         aqui = len(leitor(caminho))
         if len(dados[aba]) == 0 and aqui > 0:
             raise ErroNuvem(
@@ -264,7 +275,7 @@ def consultar_nuvem_para_primeira_abertura() -> NuvemParaPrimeiraAbertura:
 
 
 def salvar_copia_da_nuvem(caminho_xlsx: Path | None = None) -> Path:
-    """Guarda em backups/ um arquivo com o que a nuvem tem AGORA (o arquivo local, com as 4 abas
+    """Guarda em backups/ um arquivo com o que a nuvem tem AGORA (o arquivo local, com as abas
     trocadas pelas da nuvem). Serve pra nao perder o que a nuvem tinha quando o envio a sobrescreve.
     Nao mexe no arquivo de dados nem na nuvem. Rede!"""
     caminho = caminho_xlsx or CAMINHO_XLSX
@@ -277,7 +288,7 @@ def salvar_copia_da_nuvem(caminho_xlsx: Path | None = None) -> Path:
 def enviar_para_a_nuvem_substituindo(caminho_xlsx: Path | None = None, *, copia_obrigatoria: bool = True) -> Path | None:
     """Manda os dados DESTE computador por cima da nuvem, de proposito: primeiro guarda uma copia do
     que a nuvem tem (se `copia_obrigatoria` e a copia falhar, aborta sem enviar nada), depois adota a
-    versao atual da nuvem (preparar_envio_forcado) e dispara o envio das 4 abas. Devolve o caminho da
+    versao atual da nuvem (preparar_envio_forcado) e dispara o envio de todas as abas. Devolve o caminho da
     copia (None se nao houve). Rede!"""
     caminho = caminho_xlsx or CAMINHO_XLSX
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:

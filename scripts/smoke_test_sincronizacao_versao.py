@@ -318,7 +318,7 @@ def testar_sem_controle_nao_envia(a: Maquina, nuvem: NuvemFalsa) -> None:
 
 
 def testar_envio_forcado_liga_o_controle(a: Maquina, nuvem: NuvemFalsa) -> None:
-    linha("2) Envio deliberado: cria a META, manda as 4 abas, baixa o alarme")
+    linha("2) Envio deliberado: cria a META, manda as 5 abas, baixa o alarme")
     with _Ambiente(nuvem):
         a.ativar()
         sheets_sync._registrar_conflito(sheets_sync.ConflitoDeSincronizacao(
@@ -326,17 +326,17 @@ def testar_envio_forcado_liga_o_controle(a: Maquina, nuvem: NuvemFalsa) -> None:
         copia = sincronizacao_mod.enviar_para_a_nuvem_substituindo(a.arquivo, copia_obrigatoria=False)
         _esperar_envios()
         assert copia is None, "nuvem vazia: nao ha o que copiar"
-        assert set(nuvem.abas) == {"META", "CLIENTES", "EQUIPAMENTOS", "PROPOSTAS", "VENDEDORES"}, set(nuvem.abas)
-        assert nuvem.revisao() == 5, f"1 (criacao) + 4 abas enviadas = 5, veio {nuvem.revisao()}"
-        assert a.estado().revisao_conhecida == 5 and a.estado().abas_pendentes == ()
+        assert set(nuvem.abas) == {"META", "CLIENTES", "EQUIPAMENTOS", "PROPOSTAS", "VENDEDORES", "BANCOS"}, set(nuvem.abas)
+        assert nuvem.revisao() == 6, f"1 (criacao) + 5 abas enviadas = 6, veio {nuvem.revisao()}"
+        assert a.estado().revisao_conhecida == 6 and a.estado().abas_pendentes == ()
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
-        print("OK: META criada, 4 abas enviadas, este PC sabe a versao 5 e nao tem nada pendente.")
+        print("OK: META criada, 5 abas enviadas, este PC sabe a versao 6 e nao tem nada pendente.")
 
         _adicionar_cliente_simples("CLIENTE NORMAL", CPF_3)
         _esperar_envios()
-        assert nuvem.revisao() == 6 and a.estado().revisao_conhecida == 6
+        assert nuvem.revisao() == 7 and a.estado().revisao_conhecida == 7
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
-        print("OK: com o controle ligado, cada gravacao envia e sobe a versao (6).")
+        print("OK: com o controle ligado, cada gravacao envia e sobe a versao (7).")
 
 
 def testar_segundo_computador_nao_sobrescreve(a: Maquina, b: Maquina, nuvem: NuvemFalsa) -> None:
@@ -722,14 +722,14 @@ def testar_sinal_de_outro_computador(a: Maquina, b: Maquina, nuvem: NuvemFalsa) 
 
 
 def testar_restaurar_backup_marca_pendente(a: Maquina, nuvem: NuvemFalsa) -> None:
-    linha("12) Restaurar um backup marca as 4 abas como pendentes (o arquivo mudou por fora dos envios)")
+    linha("12) Restaurar um backup marca as 5 abas como pendentes (o arquivo mudou por fora dos envios)")
     with _Ambiente(nuvem):
         a.ativar()
         estado_mod.registrar_download(nuvem.revisao(), a.arquivo)
         manual = backup_mod.fazer_backup(backup_mod.MOTIVO_MANUAL, a.arquivo)
         backup_mod.restaurar_backup(manual, a.arquivo)
-        assert set(a.estado().abas_pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES}
-        print("OK: depois de Restaurar, as 4 abas ficam marcadas como pendentes em disco.")
+        assert set(a.estado().abas_pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}
+        print("OK: depois de Restaurar, as 5 abas ficam marcadas como pendentes em disco.")
 
 
 def testar_estado_corrompido_e_atomico(a: Maquina) -> None:
@@ -884,6 +884,8 @@ def testar_consulta_da_primeira_abertura(a: Maquina, nuvem: NuvemFalsa, raiz: Pa
     chave_falsa = raiz / "chave_falsa.json"
     chave_falsa.write_text("{}", encoding="utf-8")
     chave_original = config.CAMINHO_CREDENCIAIS_GOOGLE
+    conta_original = config.CAMINHO_CONTA_GOOGLE
+    config.CAMINHO_CONTA_GOOGLE = raiz / "sem_conta_google.dat"  # a conta conectada de verdade neste PC nao conta aqui
     try:
         with _Ambiente(nuvem):
             config.SINCRONIZACAO_GOOGLE_ATIVADA = False
@@ -908,6 +910,7 @@ def testar_consulta_da_primeira_abertura(a: Maquina, nuvem: NuvemFalsa, raiz: Pa
             assert consulta.tipo == S.NUVEM_SEM_REDE and "sem internet" in consulta.detalhe
             print("OK: cada situacao vira o tipo certo (com dados: as contagens batem com as da nuvem; sem rede: nunca levanta).")
     finally:
+        config.CAMINHO_CONTA_GOOGLE = conta_original
         config.CAMINHO_CREDENCIAIS_GOOGLE = chave_original
 
 

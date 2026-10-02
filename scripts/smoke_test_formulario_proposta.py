@@ -30,6 +30,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
@@ -71,6 +72,7 @@ def main() -> None:
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    bancos_mod.CAMINHO_XLSX = tmp_path
     vendedores_mod.CAMINHO_XLSX = tmp_path
 
     try:
@@ -81,6 +83,7 @@ def main() -> None:
         dialogo = FormularioProposta(novo_cpf, "Cliente Formulario Teste")
         gravou = _espiar_gravacao(dialogo)
         dialogo._valor.setValue(50000)
+        dialogo._banco.addItem("Banco Teste")  # como se ja estivesse no cadastro (a lista e fechada)
         dialogo._banco.setCurrentText("Banco Teste")
         dialogo._salvar()
         assert gravou == [], "sem equipamento nao pode avisar que gravou"
@@ -94,6 +97,7 @@ def main() -> None:
         dialogo._valor.setValue(75000)
         dialogo._meses.setValue(36)
         dialogo._equipamento.setCurrentText("Equipamento Dialogo Teste")
+        dialogo._banco.addItem("Banco Dialogo Teste")  # como se ja estivesse no cadastro (a lista e fechada)
         dialogo._banco.setCurrentText("Banco Dialogo Teste")
         dialogo._salvar()
         assert gravou == ["gravada"]

@@ -26,6 +26,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
@@ -146,6 +147,7 @@ def testar_exclusao_cliente(app: QApplication) -> None:
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    bancos_mod.CAMINHO_XLSX = tmp_path
 
     # QMessageBox.question e modal (.exec() proprio) - em modo headless trava
     # esperando um clique que nunca vem. Troca por um stub que so responde "Sim".
@@ -201,6 +203,7 @@ def testar_edicao_proposta(app: QApplication) -> None:
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    bancos_mod.CAMINHO_XLSX = tmp_path
 
     # QMessageBox.warning/critical/question sao modais - se a edicao for
     # rejeitada por algum motivo (valor em branco na proposta escolhida,
@@ -318,6 +321,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
+    bancos_mod.CAMINHO_XLSX = tmp_path
 
     # token de proposito sem "/", "-", "." ou espaço nenhum - o pior caso,
     # onde o Qt normalmente nao tem NENHUM ponto de quebra natural
@@ -366,6 +370,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
     finally:
         clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
         propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        bancos_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_path.unlink(missing_ok=True)
 
 

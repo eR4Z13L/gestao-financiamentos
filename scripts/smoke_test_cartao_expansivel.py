@@ -39,6 +39,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -612,6 +613,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     via.duplo_clique_no_card("SANTANDER")
     f = expansor.formulario()
     f._botao_editar.click()
+    f._banco.addItem("OUTRO BANCO")  # como se ja estivesse no cadastro (a lista e fechada)
     f._banco.setCurrentText("OUTRO BANCO")
     assert f.tem_alteracoes()
     stubs.resposta = QMessageBox.StandardButton.No
@@ -683,6 +685,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     stubs.resposta = QMessageBox.StandardButton.Yes
 
     # escolher o banco e salvar: proposta NOVA e independente; o card novo aparece e fica selecionado
+    n._banco.addItem("HUBCRED BV 2")  # como se ja estivesse no cadastro (a lista e fechada)
     n._banco.setCurrentText("HUBCRED BV 2")
     n._botao_ok.click()
     assert not expansor.esta_expandido() and not modelo.tem_rascunho(), "gravar tira o card 'Nova proposta'"
@@ -841,6 +844,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
         n = expansor.formulario()
         n._valor.setValue(4321)
         n._equipamento.setCurrentText("Equip Novo")
+        n._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
         n._banco.setCurrentText("Banco Novo")
         n._botao_ok.click()
         assert via.modelo.total() == 1 and via.modelo.item(0)["titulo"] == "Banco Novo" and not expansor.esta_expandido()
@@ -858,7 +862,7 @@ def testar_telas(app: QApplication) -> None:
         pasta = Path(tempfile.mkdtemp(prefix="_smoke_cartao_"))
         arquivo = pasta / "controle.xlsx"
         _criar_planilha_vazia(arquivo)
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = arquivo
         try:
             with _Stubs() as stubs:
@@ -869,7 +873,7 @@ def testar_telas(app: QApplication) -> None:
                 finally:
                     via.tela.close()
         finally:
-            for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+            for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
                 modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
             shutil.rmtree(pasta, ignore_errors=True)
 
@@ -915,7 +919,7 @@ def testar_vendedor(app: QApplication) -> None:
     pasta = Path(tempfile.mkdtemp(prefix="_smoke_cartao_v_"))
     arquivo = pasta / "controle.xlsx"
     _criar_planilha_vazia(arquivo)
-    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
         modulo.CAMINHO_XLSX = arquivo
     fontes = (clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa, equipamentos_mod.listar_nomes_equipamento)
     try:
@@ -952,7 +956,7 @@ def testar_vendedor(app: QApplication) -> None:
             print("OK: o vendedor expande o card em leitura (com copiar) nas duas telas, sem 'Editar' nem 'Duplicar', e o expansor recusa duplicar.")
     finally:
         (clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa, equipamentos_mod.listar_nomes_equipamento) = fontes
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
         shutil.rmtree(pasta, ignore_errors=True)
 

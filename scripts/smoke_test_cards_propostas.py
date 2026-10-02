@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -351,7 +352,7 @@ def _nomes_dos_cards(tela: PropostasScreen) -> list[str]:
 def testar_tela(app: QApplication, pasta: Path) -> None:
     arquivo = pasta / "controle.xlsx"
     _criar_planilha_vazia(arquivo)
-    clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
+    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
     vendedores_mod.adicionar_vendedor("ANA")
     vendedores_mod.adicionar_vendedor("BIA")
     clientes_mod.adicionar_cliente({"CPF/CNPJ": _cpf(0), "CLIENTE": "MARIA ANA", "TIPO": "Cliente", "VENDEDOR": "ANA"})
@@ -474,6 +475,7 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
             dialogo._cliente_combo.setCurrentText(f"MARIA ANA — {_cpf(0)}")
             dialogo._valor.setValue(77777)
             dialogo._equipamento.setCurrentText("Equip Novo")
+            dialogo._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Novo")
             dialogo._salvar()
 
@@ -531,7 +533,7 @@ def main() -> None:
         testar_tela(app, pasta)
         linha("TUDO OK")
     finally:
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
         sessao_mod.encerrar()
         shutil.rmtree(pasta, ignore_errors=True)

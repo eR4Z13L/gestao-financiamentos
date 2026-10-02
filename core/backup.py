@@ -28,6 +28,7 @@ import config
 from config import CAMINHO_XLSX
 from core import estado_sincronizacao as estado_mod
 from core.data_store import (
+    ABA_BANCOS,
     ABA_CLIENTES,
     ABA_EQUIPAMENTOS,
     ABA_PROPOSTAS,
@@ -38,14 +39,14 @@ from core.data_store import (
 
 _logger = logging.getLogger(__name__)
 
-_ABAS_SINCRONIZADAS = [ABA_CLIENTES, ABA_EQUIPAMENTOS, ABA_PROPOSTAS, ABA_VENDEDORES]
+_ABAS_SINCRONIZADAS = [ABA_CLIENTES, ABA_EQUIPAMENTOS, ABA_PROPOSTAS, ABA_VENDEDORES, ABA_BANCOS]
 
 MAXIMO_BACKUPS_AUTOMATICOS = 7
 
 MOTIVO_AUTOMATICO = "auto"
 MOTIVO_MANUAL = "manual"
 MOTIVO_PRE_RESTAURACAO = "pre-restauracao"
-MOTIVO_PRE_MESCLAGEM = "pre-mesclagem"  # antes de core.propostas.mesclar_bancos reescrever o historico
+MOTIVO_PRE_MESCLAGEM = "pre-mesclagem"  # antes do antigo "Mesclar grafias de banco" (saiu do app); so para reconhecer esses backups
 MOTIVO_PRE_NUVEM = "pre-nuvem"  # antes de "Baixar da nuvem" trocar os dados locais pelos da nuvem
 MOTIVO_COPIA_DA_NUVEM = "copia-da-nuvem"  # o que a nuvem tinha, guardado antes de o envio sobrescreve-la
 

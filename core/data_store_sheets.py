@@ -151,6 +151,17 @@ def ler_vendedores() -> pd.DataFrame:
     return df
 
 
+def ler_bancos() -> pd.DataFrame:
+    """Levanta gspread.WorksheetNotFound se a nuvem ainda nao tem a aba (antes do cadastro de bancos)."""
+    df = _ler_aba_bruta(bd.ABA_BANCOS)
+    if df.empty:
+        return pd.DataFrame(columns=bd.BANCOS_COLUNAS)
+    df = _com_colunas_esperadas(df, bd.BANCOS_COLUNAS)
+    for col in bd.BANCOS_COLUNAS:
+        df[col] = _texto(df[col])
+    return df
+
+
 def ler_propostas() -> pd.DataFrame:
     """A aba PROPOSTAS no Sheets ja chega com VENDEDOR/CLIENTE/TEMPO
     calculados (core/data_store.py sincroniza a visao completa, nunca

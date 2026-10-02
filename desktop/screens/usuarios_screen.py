@@ -1,5 +1,5 @@
 """Tela Administração (antes "Usuários") - só o ADMIN acessa (nem aparece no menu lateral
-pra um VENDEDOR - ver desktop/main_window.py). Duas abas:
+pra um VENDEDOR - ver desktop/main_window.py). Três abas:
 1. "Usuários": trocar o PIN de entrada deste computador (recolhido por padrão - usado
    raramente, não precisa competir por espaço com a lista de vendedores) e gerir
    vendedores - cadastrar, ver status/carteira/senha, redefinir senha, renomear,
@@ -9,11 +9,8 @@ pra um VENDEDOR - ver desktop/main_window.py). Duas abas:
    hora - core/sincronizacao.py; cada escrita já sincroniza sozinha, e uma falha entra
    numa fila que tenta de novo sozinha - core/sheets_sync.reenviar_pendentes), backup
    automático (1x/dia, ao abrir o app - core/backup.py e desktop/main.py), manual
-   ("Fazer backup agora") e "Restaurar", e "Mesclar grafias de banco" (reescreve o
-   BANCO de propostas antigas - core.propostas.mesclar_bancos).
-
-A aba de Cadastros do prompt original ainda não foi feita - ver
-[[projeto-melhorias-em-etapas]] na memória do projeto.
+   ("Fazer backup agora") e "Restaurar".
+3. "Cadastros": o cadastro de Bancos (desktop/widgets/cadastro_bancos.py, regras em core/bancos.py).
 """
 
 from __future__ import annotations
@@ -28,9 +25,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QTableView,
@@ -44,7 +38,6 @@ from core import acesso
 from core import backup as backup_mod
 from core import conta_google
 from core import data_store as bd
-from core import propostas as propostas_mod
 from core import sincronizacao as sincronizacao_mod
 from core import vendedores as vendedores_mod
 from desktop import settings as settings_mod
@@ -53,6 +46,7 @@ from desktop.espera import rodar_esperando
 from desktop.table_model import PandasTableModel
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
+from desktop.widgets.cadastro_bancos import CadastroBancos
 from desktop.widgets.campo_de_pin import campo_de_pin
 from desktop.widgets.shadow import aplicar_sombra_suave
 
@@ -113,11 +107,11 @@ class UsuariosScreen(QWidget):
         abas = QTabWidget()
         abas.addTab(self._construir_aba_usuarios(), "Usuários")
         abas.addTab(self._construir_aba_backup(), "Sincronização e backup")
+        abas.addTab(self._construir_aba_cadastros(), "Cadastros")
         layout.addWidget(abas, stretch=1)
 
         self._carregar_vendedores()
         self._carregar_backups()
-        self._carregar_bancos()
 
     def showEvent(self, evento) -> None:
         super().showEvent(evento)
@@ -125,16 +119,16 @@ class UsuariosScreen(QWidget):
         # e um backup manual pode ter sido feito na sessao anterior. Sempre reler ao
         # reaparecer, do mesmo jeito que Propostas rele os vendedores (mostrar_screen).
         self._carregar_backups()
-        self._carregar_bancos()
         if self._vigia.mudou_desde_a_leitura():  # ex.: baixou da nuvem ou restaurou um backup
             self._carregar_vendedores()
+            self._cadastro_bancos.recarregar()
 
     def recarregar_se_mudou(self) -> None:
         """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele as listas
         (vendedores, bancos e backups; os campos digitados ficam como estao)."""
         if self._vigia.mudou_desde_a_leitura():
             self._carregar_vendedores()
-            self._carregar_bancos()
+            self._cadastro_bancos.recarregar()
             self._carregar_backups()
 
     # -- aba "Usuários" ----------------------------------------------------------------
@@ -302,7 +296,19 @@ class UsuariosScreen(QWidget):
         layout.setSpacing(16)
         layout.addWidget(self._construir_secao_sincronizacao())
         layout.addWidget(self._construir_secao_backup(), stretch=1)
-        layout.addWidget(self._construir_secao_mesclar_bancos())
+        return aba
+
+    # -- aba "Cadastros" -----------------------------------------------------------------
+
+    def _construir_aba_cadastros(self) -> QWidget:
+        aba = QWidget()
+        layout = QVBoxLayout(aba)
+        layout.setContentsMargins(0, 16, 0, 0)
+        layout.setSpacing(16)
+        self._cadastro_bancos = CadastroBancos()
+        # banco novo/renomeado: o formulario de proposta e os filtros das outras telas precisam reler
+        self._cadastro_bancos.alterado.connect(self.dados_atualizados.emit)
+        layout.addWidget(self._cadastro_bancos, stretch=1)
         return aba
 
     def _construir_secao_sincronizacao(self) -> QWidget:
@@ -510,7 +516,7 @@ class UsuariosScreen(QWidget):
         e avisa as outras telas."""
         self._carregar_backups()
         self._carregar_vendedores()
-        self._carregar_bancos()
+        self._cadastro_bancos.recarregar()
         self.dados_atualizados.emit()
 
     def _construir_secao_backup(self) -> QWidget:
@@ -635,130 +641,12 @@ class UsuariosScreen(QWidget):
 
         self._carregar_backups()
         self._carregar_vendedores()
-        self._carregar_bancos()
+        self._cadastro_bancos.recarregar()
         self.dados_atualizados.emit()
         QMessageBox.information(
             self,
             "Backup restaurado",
             f"Dados restaurados com sucesso.\n\nO estado anterior foi salvo em:\n{seguranca}",
-        )
-
-    # -- mesclar grafias de banco -------------------------------------------------------
-
-    def _construir_secao_mesclar_bancos(self) -> QWidget:
-        cartao = QFrame()
-        cartao.setProperty("role", "card")
-        aplicar_sombra_suave(cartao, settings_mod.obter_tema())
-        layout_cartao = QVBoxLayout(cartao)
-        layout_cartao.setContentsMargins(16, 16, 16, 16)
-        layout_cartao.setSpacing(12)
-
-        subtitulo = QLabel("Mesclar grafias de banco")
-        subtitulo.setProperty("role", "subtitulo")
-        layout_cartao.addWidget(subtitulo)
-
-        explicacao = QLabel(
-            "Escolha 2 ou mais grafias do mesmo banco (ex.: \"Hubcred BV\" e \"HUBCRED BV\") e o "
-            "texto final - todas as propostas com as grafias marcadas passam a usar o texto "
-            "final, incluindo propostas antigas. Um backup do estado atual é feito "
-            "automaticamente antes."
-        )
-        explicacao.setProperty("role", "secundario")
-        explicacao.setWordWrap(True)
-        layout_cartao.addWidget(explicacao)
-
-        self._lista_bancos = QListWidget()
-        self._lista_bancos.itemChanged.connect(self._atualizar_botao_mesclar)
-        layout_cartao.addWidget(self._lista_bancos)
-
-        form = QFormLayout()
-        self._grafia_final = QLineEdit()
-        self._grafia_final.setPlaceholderText("Texto final (ex.: Hubcred BV)")
-        self._grafia_final.textChanged.connect(self._atualizar_botao_mesclar)
-        form.addRow("Grafia final", self._grafia_final)
-        layout_cartao.addLayout(form)
-
-        self._botao_mesclar = QPushButton("Mesclar")
-        self._botao_mesclar.setProperty("role", "botao_primario")
-        self._botao_mesclar.setEnabled(False)
-        self._botao_mesclar.clicked.connect(self._mesclar_bancos_selecionados)
-        layout_cartao.addWidget(self._botao_mesclar)
-
-        return cartao
-
-    def _carregar_bancos(self) -> None:
-        try:
-            bancos = propostas_mod.bancos_distintos()
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro ao carregar bancos", str(exc))
-            return
-
-        self._lista_bancos.blockSignals(True)
-        try:
-            self._lista_bancos.clear()
-            for banco, quantidade in bancos:
-                sufixo = "proposta" if quantidade == 1 else "propostas"
-                item = QListWidgetItem(f"{banco}  ({quantidade} {sufixo})")
-                item.setData(Qt.ItemDataRole.UserRole, banco)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Unchecked)
-                self._lista_bancos.addItem(item)
-        finally:
-            self._lista_bancos.blockSignals(False)
-        self._atualizar_botao_mesclar()
-
-    def _bancos_selecionados(self) -> list[str]:
-        selecionados = []
-        for i in range(self._lista_bancos.count()):
-            item = self._lista_bancos.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selecionados.append(item.data(Qt.ItemDataRole.UserRole))
-        return selecionados
-
-    def _atualizar_botao_mesclar(self, *_args) -> None:
-        self._botao_mesclar.setEnabled(
-            len(self._bancos_selecionados()) >= 2 and bool(self._grafia_final.text().strip())
-        )
-
-    def _mesclar_bancos_selecionados(self) -> None:
-        selecionados = self._bancos_selecionados()
-        final = self._grafia_final.text().strip()
-        if len(selecionados) < 2 or not final:
-            return  # o botao ja fica desabilitado nesse caso - so uma garantia a mais
-
-        resposta = QMessageBox.question(
-            self,
-            "Mesclar grafias de banco",
-            "Isso reescreve TODAS as propostas com:\n"
-            + "\n".join(f"- {banco}" for banco in selecionados)
-            + f'\n\npara "{final}" - incluindo propostas antigas. Um backup do estado atual é '
-            "feito antes. Continuar?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if resposta != QMessageBox.StandardButton.Yes:
-            return
-
-        try:
-            quantidade = propostas_mod.mesclar_bancos(selecionados, final)
-        except propostas_mod.ErroProposta as exc:
-            QMessageBox.warning(self, "Não foi possível mesclar", str(exc))
-            return
-        except bd.ErroArquivoBloqueado as exc:
-            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
-            return
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro inesperado ao mesclar", str(exc))
-            return
-
-        self._grafia_final.clear()
-        self._carregar_bancos()
-        self._carregar_backups()
-        self.dados_atualizados.emit()
-        QMessageBox.information(
-            self,
-            "Grafias mescladas",
-            f'{quantidade} proposta(s) atualizada(s) para "{final}".',
         )
 
     def _carregar_vendedores(self) -> None:

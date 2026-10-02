@@ -29,6 +29,7 @@ from config import CAMINHO_XLSX
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
@@ -129,6 +130,7 @@ def main() -> None:
     shutil.copy(CAMINHO_XLSX, tmp_xlsx)
     clientes_mod.CAMINHO_XLSX = tmp_xlsx
     propostas_mod.CAMINHO_XLSX = tmp_xlsx
+    bancos_mod.CAMINHO_XLSX = tmp_xlsx
     duracao_original = botao_copiar_mod.DURACAO_FEEDBACK_MS
 
     try:
@@ -148,7 +150,7 @@ def main() -> None:
         assert dialogo._banco.currentText() == proposta["BANCO"]
         assert dialogo._status.currentText() == proposta["STATUS"]
         assert dialogo._observacoes.toPlainText() == proposta["OBSERVAÇÕES"]
-        assert dialogo._equipamento.lineEdit().cursorPosition() == 0 and dialogo._banco.lineEdit().cursorPosition() == 0, \
+        assert dialogo._equipamento.lineEdit().cursorPosition() == 0, \
             "um nome comprido tem que mostrar o COMECO no campo, nao so o final"
         print("OK: campos mostram os valores da proposta (o começo do texto, se for comprido).")
 
@@ -250,7 +252,7 @@ def main() -> None:
         assert not any([dialogo._valor.isReadOnly(), dialogo._meses.isReadOnly(), dialogo._observacoes.isReadOnly()])
         assert not any(c.travado() for c in (dialogo._equipamento, dialogo._banco, dialogo._status))
         assert not dialogo._status.isEditable(), "Status volta a ser lista fechada (so opcoes oficiais)"
-        assert dialogo._equipamento.isEditable() and dialogo._banco.isEditable()
+        assert dialogo._equipamento.isEditable() and not dialogo._banco.isEditable(), "Banco e lista fechada (o cadastro)"
         assert dialogo._status.currentText() == proposta["STATUS"], "trocar de modo nao pode mudar o status"
         assert not any(b.isVisible() for b in dialogo._botoes_copiar), "Copiar some ao editar"
         assert dialogo._botao_ok.isVisible() and dialogo._botao_cancelar.isVisible()
@@ -450,6 +452,7 @@ def main() -> None:
         (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question) = original_msg
         clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
         propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        bancos_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_xlsx.unlink(missing_ok=True)
         sessao_mod.encerrar()
 

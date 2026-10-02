@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QWidget
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 import fixture_ficticia as fx
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -237,7 +238,7 @@ def main() -> None:
     try:
         arquivo = tmp / "controle.xlsx"
         _criar_planilha_vazia(arquivo)
-        clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
+        bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
         vendedores_mod.adicionar_vendedor("ANA")
 

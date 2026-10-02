@@ -32,6 +32,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
+import config
 from core import sheets_sync
 from core.validators import apenas_digitos
 
@@ -41,6 +42,7 @@ ABA_CLIENTES = "CLIENTES"
 ABA_EQUIPAMENTOS = "EQUIPAMENTOS"
 ABA_PROPOSTAS = "PROPOSTAS"
 ABA_VENDEDORES = "VENDEDORES"
+ABA_BANCOS = "BANCOS"
 
 # As colunas A-E (DATA CADASTRO, CPF/CNPJ, VENDEDOR, TIPO, CLIENTE) NAO podem
 # mudar de lugar: as formulas de VENDEDOR/CLIENTE na aba PROPOSTAS fazem
@@ -89,6 +91,12 @@ EQUIPAMENTOS_COLUNAS = [
 # outra coisa (inclusive vazio, de planilha anterior a esta coluna existir) conta
 # como ativo - ver vendedores.esta_ativo().
 VENDEDORES_COLUNAS = ["NOME", "SENHA_HASH", "SALT", "ATIVO"]
+
+# Cadastro de bancos (core/bancos.py). ATIVO segue a regra de VENDEDORES: "Não" desativa, qualquer outra
+# coisa conta como ativo. "Todos" (a proposta foi para todos os bancos) e uma opcao do formulario, nunca
+# uma linha daqui.
+BANCOS_COLUNAS = ["NOME", "ATIVO"]
+BANCO_TODOS = "Todos"
 
 # Colunas realmente digitadas/gravadas na aba PROPOSTAS.
 PROPOSTAS_COLUNAS_EDITAVEIS = [
@@ -393,6 +401,47 @@ def _garantir_coluna_ativo_vendedores(wb) -> bool:
     return True
 
 
+def _garantir_aba_bancos(wb) -> bool:
+    """Cria (na planilha aberta, em memoria) a aba BANCOS se o arquivo ainda nao tem uma (planilhas de
+    antes do cadastro de bancos), com config.BANCOS_INICIAIS + os bancos ja usados em PROPOSTAS - um por
+    banco, sem diferenca de maiusculas/espacos: vale a grafia da lista inicial, senao a mais usada. Banco em
+    branco e "Todos" ficam de fora. Retorna True se criou agora."""
+    if ABA_BANCOS in wb.sheetnames:
+        return False
+
+    grafias: dict[str, dict[str, int]] = {}
+    ws_propostas = wb[ABA_PROPOSTAS]
+    cabecalho = [_normalizar_texto(c.value) for c in ws_propostas[1]]
+    if "BANCO" in cabecalho:
+        coluna = cabecalho.index("BANCO")
+        for linha in ws_propostas.iter_rows(min_row=2, values_only=True):
+            nome = _normalizar_texto(linha[coluna] if linha and len(linha) > coluna else None)
+            if nome and nome.upper() != BANCO_TODOS.upper():
+                contagem = grafias.setdefault(nome.upper(), {})
+                contagem[nome] = contagem.get(nome, 0) + 1
+    nomes = {chave: max(contagem, key=lambda g: (contagem[g], g)) for chave, contagem in grafias.items()}
+    for nome in config.BANCOS_INICIAIS:
+        nomes[nome.upper()] = nome
+
+    ws = wb.create_sheet(ABA_BANCOS)
+    ws.append(BANCOS_COLUNAS)
+    for nome in sorted(nomes.values(), key=str.upper):
+        ws.append([nome, "Sim"])
+    return True
+
+
+def ler_bancos(caminho_xlsx: Path) -> pd.DataFrame:
+    """O cadastro de bancos. Ler NUNCA grava: sem a aba BANCOS, devolve a lista inicial calculada na hora
+    (_garantir_aba_bancos so na memoria); a aba passa a existir no arquivo na primeira gravacao do cadastro."""
+    with _carregar_planilha(caminho_xlsx) as wb:
+        _garantir_aba_bancos(wb)
+        linhas = list(_linhas_da_aba(wb[ABA_BANCOS], len(BANCOS_COLUNAS)))
+    df = pd.DataFrame(linhas, columns=BANCOS_COLUNAS)
+    for col in BANCOS_COLUNAS:
+        df[col] = df[col].map(_normalizar_texto)
+    return df
+
+
 def ler_vendedores(caminho_xlsx: Path) -> pd.DataFrame:
     with _carregar_planilha(caminho_xlsx) as wb:
         migrou = _garantir_aba_vendedores(wb)
@@ -485,7 +534,8 @@ def _salvar_planilha(wb, caminho_xlsx: Path) -> None:
 def criar_planilha_vazia(caminho_xlsx: Path) -> None:
     """Cria o arquivo de dados do zero: as 4 abas, na ordem do arquivo real, so com os cabecalhos. E o
     que a primeira abertura usa quando nao ha planilha (instalacao nova). Nunca sobrescreve: se ja
-    existe um arquivo nesse caminho, levanta FileExistsError sem tocar nele."""
+    existe um arquivo nesse caminho, levanta FileExistsError sem tocar nele. A aba BANCOS nasce na primeira
+    leitura (ler_bancos), ja com config.BANCOS_INICIAIS."""
     if caminho_xlsx.exists():
         raise FileExistsError(f"Já existe um arquivo de dados em '{caminho_xlsx}' - nada foi criado.")
     caminho_xlsx.parent.mkdir(parents=True, exist_ok=True)
@@ -612,6 +662,14 @@ def escrever_vendedores(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     sheets_sync.sincronizar_em_background(ABA_VENDEDORES, ler_vendedores(caminho_xlsx))
 
 
+def escrever_bancos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
+    with _carregar_planilha(caminho_xlsx) as wb:
+        _garantir_aba_bancos(wb)
+        _escrever_linhas_simples(wb[ABA_BANCOS], ABA_BANCOS, BANCOS_COLUNAS, df.to_dict("records"))
+        _salvar_planilha(wb, caminho_xlsx)
+    sheets_sync.sincronizar_em_background(ABA_BANCOS, ler_bancos(caminho_xlsx))
+
+
 def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     """`df` deve conter apenas as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS)."""
     with _carregar_planilha(caminho_xlsx) as wb:
@@ -638,11 +696,13 @@ def escrever_tudo(
     equipamentos: pd.DataFrame,
     vendedores: pd.DataFrame,
     propostas: pd.DataFrame,
+    bancos: pd.DataFrame | None = None,
 ) -> None:
-    """Regrava as 4 abas numa UNICA gravacao atomica (ou grava as 4, ou nenhuma) e NAO dispara
+    """Regrava as abas numa UNICA gravacao atomica (ou grava todas, ou nenhuma) e NAO dispara
     sincronizacao: e o que "baixar da nuvem" usa - mandar de volta o que acabou de vir de la seria
     um vai-e-vem inutil. `propostas` pode vir com as colunas calculadas (VENDEDOR/CLIENTE/TEMPO):
-    so as editaveis sao gravadas, as formulas voltam sozinhas."""
+    so as editaveis sao gravadas, as formulas voltam sozinhas. `bancos` None (nuvem de antes do cadastro
+    de bancos, sem essa aba) deixa a aba BANCOS daqui como esta."""
     with _carregar_planilha(caminho_xlsx) as wb:
         _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
         _garantir_aba_vendedores(wb)
@@ -656,4 +716,10 @@ def escrever_tudo(
         _escrever_linhas_propostas(
             wb[ABA_PROPOSTAS], _registros_para_gravar(propostas[PROPOSTAS_COLUNAS_EDITAVEIS])
         )
+        if bancos is not None:
+            ws = wb[ABA_BANCOS] if ABA_BANCOS in wb.sheetnames else wb.create_sheet(ABA_BANCOS)
+            if ws.max_row < 1 or _normalizar_texto(ws.cell(row=1, column=1).value) != BANCOS_COLUNAS[0]:
+                for j, coluna in enumerate(BANCOS_COLUNAS, start=1):
+                    ws.cell(row=1, column=j, value=coluna)
+            _escrever_linhas_simples(ws, ABA_BANCOS, BANCOS_COLUNAS, _registros_para_gravar(bancos))
         _salvar_planilha(wb, caminho_xlsx)

@@ -25,9 +25,10 @@ VERSAO_APP = "1.0.0"
 # variavel ficou historico (CAMINHO_XLSX), mesmo a extensao real sendo .dat.
 CAMINHO_XLSX = DIRETORIO_DADOS / "controle_financiamentos.dat"
 
-# Bancos/financeiras parceiros conhecidos (apenas para preencher a lista de
-# sugestoes no formulario de proposta - o campo continua sendo texto livre).
-BANCOS_CONHECIDOS = [
+# Bancos/financeiras com que o cadastro de Bancos (aba BANCOS, core/bancos.py) NASCE numa planilha que
+# ainda nao tem essa aba - junto com os bancos ja usados nas propostas. Depois disso, quem manda e o
+# cadastro (Administracao > Cadastros); esta lista nao e mais lida.
+BANCOS_INICIAIS = [
     "Santander",
     "Portobank",
     "Hubcred BV",
@@ -35,7 +36,6 @@ BANCOS_CONHECIDOS = [
     "Medicalsan",
     "Gloriabank",
     "Mova HTM",
-    "Todos",
 ]
 
 # Sincronizacao com Google Sheets (login com dois niveis de acesso - Fase 1).

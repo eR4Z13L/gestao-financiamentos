@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -542,6 +543,7 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
         def _nova(dialogo: FormularioProposta) -> None:
             dialogo._valor.setValue(4321)
             dialogo._equipamento.setCurrentText("Equip Novo")
+            dialogo._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Novo")
             dialogo._status.setCurrentText("Em Análise")
             dialogo._salvar()
@@ -753,7 +755,7 @@ def main() -> None:
     pasta = Path(tempfile.mkdtemp(prefix="_smoke_ficha_cards_"))
     arquivo = pasta / "controle.xlsx"
     _criar_planilha_vazia(arquivo)
-    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+    for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
         modulo.CAMINHO_XLSX = arquivo
     try:
         cpfs = _cadastrar(arquivo)
@@ -764,7 +766,7 @@ def main() -> None:
             testar_vendedor(app, stubs, cpfs, arquivo)
         linha("TUDO OK")
     finally:
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
         sessao_mod.encerrar()
         shutil.rmtree(pasta, ignore_errors=True)

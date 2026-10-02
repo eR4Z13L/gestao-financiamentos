@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from core import backup as backup_mod
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import equipamentos as equipamentos_mod
 from core import estado_sincronizacao as estado_mod
@@ -195,7 +196,7 @@ def criar_volumoso(diretorio: Path, n_clientes: int = 26, semente: int = 7) -> P
     return destino
 
 
-_MODULOS = (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, backup_mod, sincronizacao_mod, estado_mod)
+_MODULOS = (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, backup_mod, sincronizacao_mod, estado_mod, bancos_mod)
 
 
 class ColetorDeLog(logging.Handler):

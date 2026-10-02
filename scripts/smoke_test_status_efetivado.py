@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import data_store as bd
@@ -196,7 +197,7 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
 
     arquivo = pasta / "controle.xlsx"
     _criar_planilha_vazia(arquivo)
-    clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
+    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
     vendedores_mod.adicionar_vendedor("ANA")
     vendedores_mod.adicionar_vendedor("BIA")
     for i, vendedor in enumerate(("ANA", "BIA")):
@@ -211,6 +212,7 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
         assert dialogo._status.findText("Efetivado") > dialogo._status.findText("Garantia Assinada")
         dialogo._valor.setValue(11111)
         dialogo._equipamento.setCurrentText("Equip Efetivado")
+        dialogo._banco.addItem("Banco Teste")  # como se ja estivesse no cadastro (a lista e fechada)
         dialogo._banco.setCurrentText("Banco Teste")
         dialogo._status.setCurrentText("Efetivado")
         dialogo._salvar()
@@ -258,7 +260,7 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     linha("5b) Dashboard sem nenhuma Aprovada/Efetivada")
     arquivo2 = pasta / "controle2.xlsx"
     _criar_planilha_vazia(arquivo2)
-    clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo2
+    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo2
     vendedores_mod.adicionar_vendedor("ANA")
     clientes_mod.adicionar_cliente({"CPF/CNPJ": _cpf(0), "CLIENTE": "CLIENTE ANA", "TIPO": "Cliente", "VENDEDOR": "ANA"})
     _add(_cpf(0), "Em Análise", 1000)
@@ -267,7 +269,7 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     assert tela._card_a_efetivar.detalhe() == "0 efetivadas até agora" and tela._card_a_efetivar.detalhe_em_aviso()
     assert tela._card_taxa.valor() == "—" and tela._card_taxa.detalhe() == "Nenhuma proposta decidida"
     tela.close()
-    clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
+    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
     print("OK: sem Aprovadas nem Efetivadas o card mostra 0 e '0 efetivadas até agora' em aviso; sem decididas a taxa e '—' (sem divisão por zero).")
 
     linha("6) Planilha gravada com a regra antiga: atualizar só as fórmulas de TEMPO")
@@ -320,7 +322,7 @@ def main() -> None:
         testar_telas_e_arquivo(app, pasta)
         linha("TUDO OK")
     finally:
-        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod):
+        for modulo in (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, bancos_mod):
             modulo.CAMINHO_XLSX = config.CAMINHO_XLSX
         sessao_mod.encerrar()
         shutil.rmtree(pasta, ignore_errors=True)

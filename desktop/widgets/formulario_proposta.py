@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import BANCOS_CONHECIDOS
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import equipamentos as equipamentos_mod
@@ -161,10 +161,11 @@ class FormularioProposta(QWidget):
         if not sessao_mod.eh_vendedor():
             self._equipamento.addItems(equipamentos_mod.listar_nomes_equipamento())
 
+        # lista FECHADA: os bancos ativos do cadastro (Administracao > Cadastros) + "Todos"
         self._banco = ComboTravavel()
-        self._banco.setEditable(True)
         _combo_flexivel(self._banco)
-        self._banco.addItems(BANCOS_CONHECIDOS)
+        if not sessao_mod.eh_vendedor():
+            self._banco.addItems([*bancos_mod.nomes_ativos(), bancos_mod.BANCO_TODOS])
 
         self._status = ComboTravavel()
         _combo_flexivel(self._status)
@@ -296,10 +297,9 @@ class FormularioProposta(QWidget):
         self._meses.setValue(int(meses) if meses is not None and not pd.isna(meses) else 0)
 
         self._equipamento.setCurrentText(proposta.get("EQUIPAMENTO", "") if proposta else "")
-        self._banco.setCurrentText(proposta.get("BANCO", "") if proposta else "")
+        self._definir_banco(proposta.get("BANCO", "") if proposta else "")
         # o cursor fica no FIM do texto depois de preencher e um nome comprido mostraria so o final dele
-        for combo in (self._equipamento, self._banco):
-            combo.lineEdit().setCursorPosition(0)
+        self._equipamento.lineEdit().setCursorPosition(0)
 
         status_atual = (proposta.get("STATUS") if proposta else "") or ""
         if status_atual:
@@ -307,6 +307,20 @@ class FormularioProposta(QWidget):
 
         self._observacoes.setPlainText(proposta.get("OBSERVAÇÕES", "") if proposta else "")
         self._estado_inicial = self._estado_atual()
+
+    def _definir_banco(self, nome) -> None:
+        """Seleciona o banco gravado na proposta, EXATAMENTE como esta. Um banco fora da lista (desativado,
+        ou numa grafia de antes do cadastro) entra nela so para esta proposta: editar outra coisa nunca troca
+        o banco sem a pessoa escolher."""
+        nome = nome.strip() if isinstance(nome, str) else ""
+        if not nome:
+            self._banco.setCurrentIndex(-1)
+            return
+        indice = self._banco.findText(nome, Qt.MatchFlag.MatchFixedString | Qt.MatchFlag.MatchCaseSensitive)
+        if indice < 0:
+            self._banco.insertItem(0, nome)
+            indice = 0
+        self._banco.setCurrentIndex(indice)
 
     def _estado_atual(self) -> tuple:
         return (

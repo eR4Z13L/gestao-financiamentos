@@ -17,7 +17,7 @@ from typing import Iterable
 
 import pandas as pd
 
-import config
+from core import bancos as bancos_mod
 from core import vendedores as vendedores_mod
 from core.formatting import dias_do_tempo
 from core.propostas import (
@@ -669,19 +669,19 @@ def para_reenviar(
     bancos_conhecidos: Iterable[str] | None = None,
 ) -> list[ClienteParaReenviar]:
     """Clientes cujas propostas foram TODAS negadas (olhando o historico inteiro de `propostas`), com os
-    bancos ja tentados e os que ainda nao (os conhecidos + os ja usados em qualquer proposta). Com
+    bancos ja tentados e os que ainda nao (os ativos do cadastro + os ja usados em qualquer proposta). Com
     `intervalo`, so quem teve a ultima proposta nele. "Todos" nao e banco: nunca entra em nenhuma das duas listas.
     Mais recentes primeiro."""
     if propostas.empty:
         return []
-    conhecidos = config.BANCOS_CONHECIDOS if bancos_conhecidos is None else bancos_conhecidos
+    conhecidos = bancos_mod.nomes_ativos() if bancos_conhecidos is None else bancos_conhecidos
 
     chaves = _texto_normalizado(propostas["BANCO"])
     grafias: dict[str, str] = {}
     for chave in set(chaves) - {""} - NAO_SAO_BANCO:
         grafias[chave] = _grafia_mais_usada(propostas.loc[chaves == chave, "BANCO"])
     uso = Counter(c for c in chaves if c and c not in NAO_SAO_BANCO)
-    for nome in conhecidos:  # a grafia da lista de config.py e a "oficial": vale sobre a digitada nas propostas
+    for nome in conhecidos:  # a grafia do cadastro e a "oficial": vale sobre a digitada nas propostas
         chave = nome.strip().upper()
         if chave and chave not in NAO_SAO_BANCO:
             grafias[chave] = nome.strip()
