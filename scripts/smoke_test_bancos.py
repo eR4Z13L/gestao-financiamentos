@@ -167,13 +167,14 @@ def main() -> None:
                 assert enviados == [bd.ABA_BANCOS], enviados
                 enviados.clear()
                 sincronizacao.sincronizar_tudo_agora(caminho)
-                assert bd.ABA_BANCOS in enviados and len(enviados) == 5, enviados
+                assert bd.ABA_BANCOS in enviados and len(enviados) == 7, enviados
             finally:
                 sheets_sync.sincronizar_em_background = original_envio
-            print("OK: gravar o cadastro envia a aba BANCOS; 'Sincronizar agora' envia as 5 abas.")
+            print("OK: gravar o cadastro envia a aba BANCOS; 'Sincronizar agora' envia todas as abas.")
 
             leitores = {nome: getattr(nuvem, nome) for nome in
-                        ("ler_clientes", "ler_equipamentos", "ler_vendedores", "ler_propostas", "ler_bancos")}
+                        ("ler_clientes", "ler_equipamentos", "ler_vendedores", "ler_propostas", "ler_bancos",
+                         "ler_vendas", "ler_historico")}
             local = {
                 "ler_clientes": bd.ler_clientes(caminho), "ler_equipamentos": bd.ler_equipamentos(caminho),
                 "ler_vendedores": bd.ler_vendedores(caminho), "ler_propostas": bd.ler_propostas(caminho),
@@ -186,6 +187,8 @@ def main() -> None:
                     raise gspread.WorksheetNotFound(bd.ABA_BANCOS)
 
                 nuvem.ler_bancos = _sem_aba
+                for nome in ("ler_vendas", "ler_historico"):  # nuvem de antes das vendas tambem
+                    setattr(nuvem, nome, lambda nome=nome: (_ for _ in ()).throw(gspread.WorksheetNotFound(nome)))
                 dados = sincronizacao._ler_dados_da_nuvem()
                 assert bd.ABA_BANCOS not in dados and len(dados) == 4
                 antes_bancos = bd.ler_bancos(caminho)

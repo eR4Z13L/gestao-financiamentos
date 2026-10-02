@@ -675,14 +675,12 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     assert expansor.indice_aberto() == indice_santander and expansor.formulario()._modo_leitura, "Esc na duplicata tambem volta pra original"
     print("OK: Cancel (e Esc) na duplicata tira o card novo e reabre a leitura da proposta original.")
 
-    # sem escolher o banco o app pergunta (regra que ja existia); 'Nao' nao grava
+    # sem escolher o banco a proposta nova e recusada (ela e o pedido a UM banco - core/vendas.py); nada grava
     expansor.formulario()._botao_duplicar.click()
     n = expansor.formulario()
-    stubs.resposta = QMessageBox.StandardButton.No
     stubs.limpar()
     n._salvar()
-    assert stubs.titulos == ["Campo recomendado em branco"] and expansor.eh_rascunho() and _linhas_editaveis(arquivo) == antes
-    stubs.resposta = QMessageBox.StandardButton.Yes
+    assert stubs.titulos == ["Banco em branco"] and expansor.eh_rascunho() and _linhas_editaveis(arquivo) == antes
 
     # escolher o banco e salvar: proposta NOVA e independente; o card novo aparece e fica selecionado
     n._banco.addItem("HUBCRED BV 2")  # como se ja estivesse no cadastro (a lista e fechada)
@@ -693,10 +691,13 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     assert len(depois) == len(antes) + 1 and depois[:-1] == antes, "as propostas que já existiam ficam exatamente como estavam"
     nova = depois[-1]
     assert apenas_digitos(nova["CPF"]) == apenas_digitos(via.cpfs["alfa"]), "o mesmo cliente"
-    assert {**nova, "CPF": None} == {
+    assert {**nova, "CPF": None, "ID_PROPOSTA": None, "ID_VENDA": None} == {
         "DATA": pd.Timestamp(date.today()), "CPF": None, "VALOR (R$)": 75000.0, "MESES": 36.0,
         "EQUIPAMENTO": "HAKON", "BANCO": "HUBCRED BV 2", "STATUS": "Em Análise", "OBSERVAÇÕES": "obs HAKON",
+        "ID_PROPOSTA": None, "ID_VENDA": None,
     }, nova
+    # a copia de uma proposta de antes das vendas (sem venda) nasce numa venda nova, com o proprio ID
+    assert nova["ID_PROPOSTA"].startswith("P-") and nova["ID_VENDA"].startswith("V-"), nova
     assert depois[indice_santander]["BANCO"] == "SANTANDER" and depois[indice_santander]["STATUS"] == "Negado", "a original segue no historico"
     assert via.selecionado() == len(depois) - 1, "o card da proposta nova fica selecionado"
     assert "HUBCRED BV 2" in via.bancos_dos_cards() and "SANTANDER" in via.bancos_dos_cards(), "os dois aparecem"

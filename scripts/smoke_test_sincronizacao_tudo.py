@@ -99,7 +99,7 @@ def testar_sincronizar_tudo_agora(arquivo: Path) -> None:
         sincronizacao_mod.sincronizar_tudo_agora(arquivo)
         _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
         abas_chamadas = {aba for aba, _n in rede.chamadas}
-        assert abas_chamadas == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}, abas_chamadas
+        assert abas_chamadas == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS, bd.ABA_VENDAS, bd.ABA_HISTORICO}, abas_chamadas
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
         _, linhas_vendedores = next(c for c in rede.chamadas if c[0] == bd.ABA_VENDEDORES)
         assert linhas_vendedores == len(vendedores_mod.listar_vendedores()), "leu o estado ATUAL, com o vendedor novo"
@@ -140,7 +140,7 @@ def testar_sincronizar_tudo_agora_entra_na_fila_se_falhar(arquivo: Path) -> None
     try:
         sincronizacao_mod.sincronizar_tudo_agora(arquivo)
         _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
-        assert set(sheets_sync._pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}
+        assert set(sheets_sync._pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS, bd.ABA_VENDAS, bd.ABA_HISTORICO}
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_FALHOU
     finally:
         config.SINCRONIZACAO_GOOGLE_ATIVADA = False

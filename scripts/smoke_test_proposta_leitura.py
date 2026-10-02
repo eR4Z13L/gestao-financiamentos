@@ -142,8 +142,8 @@ def main() -> None:
         assert _todos_habilitados(dialogo), "campos ficam habilitados (com a caixa de sempre) - so nao editam"
         assert len(dialogo._botoes_copiar) == len(dialogo._campos_editaveis()) == 7
         assert dialogo._botao_recolher.text() == "Recolher" and dialogo._botao_editar.text() == "Editar"
-        assert dialogo._botao_duplicar.text() == "Duplicar"
-        print("OK: 7 campos somente leitura (habilitados), 7 botões de copiar, Editar + Duplicar + Recolher (sem OK/Cancel).")
+        assert dialogo._botao_duplicar.text() == "Mandar a outro banco"
+        print("OK: 7 campos somente leitura (habilitados), 7 botões de copiar, Editar + Mandar a outro banco + Recolher (sem OK/Cancel).")
 
         assert dialogo._data.texto() == proposta["DATA"].strftime("%d/%m/%Y")
         assert dialogo._equipamento.currentText() == proposta["EQUIPAMENTO"]

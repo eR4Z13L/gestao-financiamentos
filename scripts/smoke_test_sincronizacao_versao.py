@@ -318,7 +318,7 @@ def testar_sem_controle_nao_envia(a: Maquina, nuvem: NuvemFalsa) -> None:
 
 
 def testar_envio_forcado_liga_o_controle(a: Maquina, nuvem: NuvemFalsa) -> None:
-    linha("2) Envio deliberado: cria a META, manda as 5 abas, baixa o alarme")
+    linha("2) Envio deliberado: cria a META, manda as 7 abas, baixa o alarme")
     with _Ambiente(nuvem):
         a.ativar()
         sheets_sync._registrar_conflito(sheets_sync.ConflitoDeSincronizacao(
@@ -326,17 +326,17 @@ def testar_envio_forcado_liga_o_controle(a: Maquina, nuvem: NuvemFalsa) -> None:
         copia = sincronizacao_mod.enviar_para_a_nuvem_substituindo(a.arquivo, copia_obrigatoria=False)
         _esperar_envios()
         assert copia is None, "nuvem vazia: nao ha o que copiar"
-        assert set(nuvem.abas) == {"META", "CLIENTES", "EQUIPAMENTOS", "PROPOSTAS", "VENDEDORES", "BANCOS"}, set(nuvem.abas)
-        assert nuvem.revisao() == 6, f"1 (criacao) + 5 abas enviadas = 6, veio {nuvem.revisao()}"
-        assert a.estado().revisao_conhecida == 6 and a.estado().abas_pendentes == ()
+        assert set(nuvem.abas) == {"META", "CLIENTES", "EQUIPAMENTOS", "PROPOSTAS", "VENDEDORES", "BANCOS", "VENDAS", "HISTÓRICO"}, set(nuvem.abas)
+        assert nuvem.revisao() == 8, f"1 (criacao) + 7 abas enviadas = 8, veio {nuvem.revisao()}"
+        assert a.estado().revisao_conhecida == 8 and a.estado().abas_pendentes == ()
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
-        print("OK: META criada, 5 abas enviadas, este PC sabe a versao 6 e nao tem nada pendente.")
+        print("OK: META criada, 7 abas enviadas, este PC sabe a versao 8 e nao tem nada pendente.")
 
         _adicionar_cliente_simples("CLIENTE NORMAL", CPF_3)
         _esperar_envios()
-        assert nuvem.revisao() == 7 and a.estado().revisao_conhecida == 7
+        assert nuvem.revisao() == 9 and a.estado().revisao_conhecida == 9
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
-        print("OK: com o controle ligado, cada gravacao envia e sobe a versao (7).")
+        print("OK: com o controle ligado, cada gravacao envia e sobe a versao (9).")
 
 
 def testar_segundo_computador_nao_sobrescreve(a: Maquina, b: Maquina, nuvem: NuvemFalsa) -> None:
@@ -722,14 +722,15 @@ def testar_sinal_de_outro_computador(a: Maquina, b: Maquina, nuvem: NuvemFalsa) 
 
 
 def testar_restaurar_backup_marca_pendente(a: Maquina, nuvem: NuvemFalsa) -> None:
-    linha("12) Restaurar um backup marca as 5 abas como pendentes (o arquivo mudou por fora dos envios)")
+    linha("12) Restaurar um backup marca as 7 abas como pendentes (o arquivo mudou por fora dos envios)")
     with _Ambiente(nuvem):
         a.ativar()
         estado_mod.registrar_download(nuvem.revisao(), a.arquivo)
         manual = backup_mod.fazer_backup(backup_mod.MOTIVO_MANUAL, a.arquivo)
         backup_mod.restaurar_backup(manual, a.arquivo)
-        assert set(a.estado().abas_pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}
-        print("OK: depois de Restaurar, as 5 abas ficam marcadas como pendentes em disco.")
+        assert set(a.estado().abas_pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS,
+                                               bd.ABA_VENDAS, bd.ABA_HISTORICO}
+        print("OK: depois de Restaurar, as 7 abas ficam marcadas como pendentes em disco.")
 
 
 def testar_estado_corrompido_e_atomico(a: Maquina) -> None:

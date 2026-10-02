@@ -29,6 +29,7 @@ from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import equipamentos as equipamentos_mod
 from core import estado_sincronizacao as estado_mod
+from core import migracao_vendas as migracao_vendas_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sincronizacao as sincronizacao_mod
@@ -196,7 +197,9 @@ def criar_volumoso(diretorio: Path, n_clientes: int = 26, semente: int = 7) -> P
     return destino
 
 
-_MODULOS = (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, backup_mod, sincronizacao_mod, estado_mod, bancos_mod)
+# core/vendas.py nao tem caminho proprio: segue sempre o de propostas_mod
+_MODULOS = (clientes_mod, propostas_mod, vendedores_mod, equipamentos_mod, backup_mod, sincronizacao_mod, estado_mod, bancos_mod,
+            migracao_vendas_mod)
 
 
 class ColetorDeLog(logging.Handler):

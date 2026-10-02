@@ -15,7 +15,7 @@ com a largura que o conteudo pede, pro card expandido ser o menos alto possivel.
 
 Uma proposta existente abre primeiro em MODO LEITURA (campos travados - mesma
 caixa da edicao, mas so pra ler/selecionar -, com um botao de copiar ao lado
-de cada um, e os botoes Editar, Duplicar e Recolher). So depois de "Editar" o
+de cada um, e os botoes Editar, Mandar a outro banco e Recolher). So depois de "Editar" o
 formulario vira o de edicao, com OK/Cancel - e Cancel descarta o que foi digitado e
 VOLTA pra leitura (so "Recolher" fecha o card). Proposta nova abre direto em
 edicao (nao ha o que "voltar"): Cancel avisa `cancelada`.
@@ -52,6 +52,7 @@ from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
 from desktop.widgets.combo_travavel import ComboTravavel
@@ -108,6 +109,8 @@ class FormularioProposta(QWidget):
         self._existente = proposta is not None
         self._proposta_original = proposta  # o que "Cancel" restaura, e o que o arquivo tem que ainda ter ao gravar
         self._foco_inicial_no_banco = proposta is None and base is not None  # duplicata: o banco e o que falta escolher
+        # proposta nova: grava criando a venda junto, ou - vinda de "Mandar a outro banco" - dentro da mesma venda
+        self._id_venda = (base or {}).get("ID_VENDA", "") if proposta is None else ""
         self._modo_leitura = False
         self._botoes_copiar: list[BotaoCopiar] = []
         self._clientes_por_rotulo: dict[str, str] = {}
@@ -169,7 +172,8 @@ class FormularioProposta(QWidget):
 
         self._status = ComboTravavel()
         _combo_flexivel(self._status)
-        opcoes_status = list(propostas_mod.STATUS_OPCOES)
+        # proposta nova so nasce com uma resposta de banco; o andamento do negocio fica na venda (core/vendas.py)
+        opcoes_status = list(propostas_mod.STATUS_OPCOES if self._existente else vendas_mod.STATUS_DA_PROPOSTA)
         status_atual = (origem.get("STATUS") if origem else "") or ""
         if status_atual and status_atual not in opcoes_status:
             # dados antigos tem status em CAIXA ALTA ("APROVADO", "NEGADO")
@@ -222,7 +226,7 @@ class FormularioProposta(QWidget):
         # Editar/Duplicar/Recolher so em modo leitura; OK/Cancel so em modo edicao -
         # _aplicar_modo() alterna a visibilidade
         self._botao_editar = self._botao("Editar", self._habilitar_edicao)
-        self._botao_duplicar = self._botao("Duplicar", self.duplicacao_pedida.emit)
+        self._botao_duplicar = self._botao("Mandar a outro banco", self.duplicacao_pedida.emit)
         self._botao_recolher = self._botao("Recolher", self.recolher_pedido.emit)
         self._botao_ok = self._botao("OK", self._salvar)
         self._botao_cancelar = self._botao("Cancel", self._cancelar_edicao)
@@ -490,6 +494,9 @@ class FormularioProposta(QWidget):
 
         banco = self._banco.currentText().strip()
         status = self._status.currentText().strip()
+        if not self._existente and not banco:
+            QMessageBox.warning(self, "Banco em branco", "Escolha o banco/financeira para onde a proposta vai.")
+            return
         faltando = [rotulo for rotulo, valor in (("Banco/financeira", banco), ("Status", status)) if not valor]
         if faltando:
             plural = len(faltando) > 1
@@ -523,13 +530,18 @@ class FormularioProposta(QWidget):
         }
         try:
             if self._indice is None:
-                self.indice_gravado = propostas_mod.adicionar_proposta(campos)
+                if self._id_venda:
+                    id_proposta = vendas_mod.mandar_a_outro_banco(self._id_venda, campos)
+                else:
+                    # "Laser X + Cadeira Y" no equipamento: uma venda com os dois, e esta proposta cobrindo ambos
+                    _, id_proposta = vendas_mod.criar_venda(cpf, campos["EQUIPAMENTO"].split("+"), campos)
+                self.indice_gravado = vendas_mod.indice_da_proposta(id_proposta)
             else:
                 # `esperado`: se a linha desse indice ja nao for a proposta que abrimos (outra tela
                 # mexeu no arquivo), recusa em vez de gravar por cima de outra
                 propostas_mod.atualizar_proposta(self._indice, campos, esperado=self._proposta_original)
                 self.indice_gravado = self._indice
-        except propostas_mod.ErroProposta as exc:
+        except (propostas_mod.ErroProposta, vendas_mod.ErroVenda) as exc:
             QMessageBox.warning(self, "Não foi possível salvar", str(exc))
             return
         except sessao_mod.PermissaoNegada as exc:

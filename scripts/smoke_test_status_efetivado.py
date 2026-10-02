@@ -37,6 +37,7 @@ from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf
 from desktop.widgets.formulario_proposta import FormularioProposta
@@ -203,21 +204,24 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     for i, vendedor in enumerate(("ANA", "BIA")):
         clientes_mod.adicionar_cliente({"CPF/CNPJ": _cpf(i), "CLIENTE": f"CLIENTE {vendedor}", "TIPO": "Cliente", "VENDEDOR": vendedor})
 
-    linha("4) Formulário de proposta: 'Efetivado' na lista, grava e encerra o TEMPO")
+    linha("4) Formulário de proposta: 'Efetivado' na lista da edição, grava e encerra o TEMPO")
     with _Stubs() as stubs:
-        dialogo = FormularioProposta(_cpf(0), "CLIENTE ANA")
+        # proposta NOVA so nasce com uma resposta de banco (o andamento fica na venda - core/vendas.py)
+        nova = FormularioProposta(_cpf(0), "CLIENTE ANA")
+        assert [nova._status.itemText(i) for i in range(nova._status.count())] == vendas_mod.STATUS_DA_PROPOSTA
+        indice = propostas_mod.adicionar_proposta(
+            {"CPF": _cpf(0), "VALOR (R$)": 11111, "MESES": 12, "EQUIPAMENTO": "Equip Efetivado", "BANCO": "Banco Teste"}
+        )
+        dialogo = FormularioProposta(_cpf(0), "CLIENTE ANA", proposta=bd.ler_propostas(arquivo).loc[indice].to_dict(), indice=indice)
         gravou: list[str] = []  # a funcao ligada ao sinal captura so a lista, nunca o formulario (ciclo de referencias)
         dialogo.gravada.connect(lambda: gravou.append("gravada"))
         assert [dialogo._status.itemText(i) for i in range(dialogo._status.count())] == propostas_mod.STATUS_OPCOES
         assert dialogo._status.findText("Efetivado") > dialogo._status.findText("Garantia Assinada")
-        dialogo._valor.setValue(11111)
-        dialogo._equipamento.setCurrentText("Equip Efetivado")
-        dialogo._banco.addItem("Banco Teste")  # como se ja estivesse no cadastro (a lista e fechada)
-        dialogo._banco.setCurrentText("Banco Teste")
+        dialogo._habilitar_edicao()
         dialogo._status.setCurrentText("Efetivado")
         dialogo._salvar()
         assert gravou == ["gravada"], stubs.textos
-    print("OK: 'Efetivado' está na lista do formulário (depois de Garantia Assinada) e a proposta grava.")
+    print("OK: proposta nova só com os 4 status do banco; na edição 'Efetivado' está na lista (depois de Garantia Assinada) e grava.")
 
     # cenario do dashboard: ANA: Aprovado x2, Efetivado x1 (a de cima), NF x1 ; BIA: Efetivado x2, Em Analise x1
     def _add(cpf: str, status: str, valor: int) -> None:

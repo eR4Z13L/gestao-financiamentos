@@ -130,6 +130,14 @@ def _link_externo(p: QPainter) -> None:
     p.drawLine(QPointF(10, 14), QPointF(20, 4))
 
 
+def _vendas(p: QPainter) -> None:
+    # uma maleta: o negocio (a venda), que junta as propostas mandadas aos bancos
+    p.drawRoundedRect(QRectF(3, 7.5, 18, 12.5), 2.2, 2.2)
+    p.drawRoundedRect(QRectF(9, 4, 6, 3.5), 1.2, 1.2)  # a alca
+    p.drawLine(QPointF(3, 12.5), QPointF(21, 12.5))
+    p.drawLine(QPointF(12, 11), QPointF(12, 14))  # o fecho
+
+
 def _cadastros(p: QPainter) -> None:
     # dois cards empilhados: o de tras so aparece pela borda de cima
     p.drawRoundedRect(QRectF(4, 8, 16, 12), 2, 2)
@@ -178,6 +186,7 @@ _DESENHOS = {
     "lua": _lua,
     "whatsapp": _whatsapp,
     "link_externo": _link_externo,
+    "vendas": _vendas,
     "cadastros": _cadastros,
     "lapis": _lapis,
     "tres_pontos": _tres_pontos,

@@ -35,6 +35,7 @@ from core import conta_google
 from core import data_store as bd
 from core import sincronizacao as sincronizacao_mod
 from desktop import settings as settings_mod
+from desktop.dialogs import organizar_vendas_dialog
 from desktop.entrar_com_google import conectar_e_conferir, esquecer_conexoes
 from desktop.espera import rodar_esperando
 from desktop.table_model import PandasTableModel
@@ -50,6 +51,7 @@ _ROTULO_POR_MOTIVO = {
     backup_mod.MOTIVO_PRE_MESCLAGEM: "Pré-mesclagem",
     backup_mod.MOTIVO_PRE_NUVEM: "Antes de baixar da nuvem",
     backup_mod.MOTIVO_COPIA_DA_NUVEM: "Cópia da nuvem (antes de sobrescrever)",
+    backup_mod.MOTIVO_PRE_VENDAS: "Antes de juntar as propostas em vendas",
 }
 
 
@@ -110,6 +112,7 @@ class UsuariosScreen(QWidget):
         # e um backup manual pode ter sido feito na sessao anterior. Sempre reler ao
         # reaparecer, do mesmo jeito que Propostas rele os vendedores (mostrar_screen).
         self._carregar_backups()
+        self._atualizar_vendas_antigas()
 
     def recarregar_se_mudou(self) -> None:
         """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele a lista de backups
@@ -117,6 +120,7 @@ class UsuariosScreen(QWidget):
         if self._vigia.mudou_desde_a_leitura():
             self._vigia.registrar_leitura()
             self._carregar_backups()
+            self._atualizar_vendas_antigas()
 
     # -- aba "Meu acesso" ---------------------------------------------------------------
 
@@ -237,8 +241,44 @@ class UsuariosScreen(QWidget):
         layout.setContentsMargins(0, 16, 0, 0)
         layout.setSpacing(16)
         layout.addWidget(self._construir_secao_sincronizacao())
+        layout.addWidget(self._construir_secao_vendas_antigas())
         layout.addWidget(self._construir_secao_backup(), stretch=1)
         return aba
+
+    # -- propostas antigas -> vendas (uma vez) ---------------------------------------------
+
+    def _construir_secao_vendas_antigas(self) -> QWidget:
+        self._cartao_vendas_antigas = QFrame()
+        self._cartao_vendas_antigas.setProperty("role", "card")
+        aplicar_sombra_suave(self._cartao_vendas_antigas, settings_mod.obter_tema())
+        linha = QHBoxLayout(self._cartao_vendas_antigas)
+        linha.setContentsMargins(16, 12, 16, 12)
+        self._texto_vendas_antigas = QLabel("")
+        self._texto_vendas_antigas.setWordWrap(True)
+        linha.addWidget(self._texto_vendas_antigas, stretch=1)
+        self._botao_vendas_antigas = QPushButton("Juntar em vendas…")
+        self._botao_vendas_antigas.setProperty("role", "botao_primario")
+        self._botao_vendas_antigas.clicked.connect(self._juntar_propostas_antigas)
+        linha.addWidget(self._botao_vendas_antigas)
+        self._atualizar_vendas_antigas()
+        return self._cartao_vendas_antigas
+
+    def _atualizar_vendas_antigas(self) -> None:
+        try:
+            sem_venda = int((bd.ler_propostas(config.CAMINHO_XLSX)["ID_VENDA"] == "").sum())
+        except Exception as exc:  # nunca falhar em silencio
+            self._texto_vendas_antigas.setText(f"Não foi possível contar as propostas sem venda: {type(exc).__name__}: {exc}")
+            return
+        # depois de juntar, o cartao some: e uma tarefa de uma vez so
+        self._cartao_vendas_antigas.setVisible(sem_venda > 0)
+        self._texto_vendas_antigas.setText(
+            f"<b>{sem_venda} proposta(s) de antes das vendas.</b> Junte-as em vendas uma vez, neste computador "
+            "(os outros recebem pela nuvem). Os casos em dúvida passam por você."
+        )
+
+    def _juntar_propostas_antigas(self) -> None:
+        if organizar_vendas_dialog.organizar(self):
+            self.recarregar_apos_mudar_os_dados()
 
     def _construir_secao_sincronizacao(self) -> QWidget:
         cartao = QFrame()
@@ -444,6 +484,7 @@ class UsuariosScreen(QWidget):
         """Depois de trocar os dados por fora das telas (baixar da nuvem, restaurar): relê as listas daqui
         e avisa as outras telas."""
         self._carregar_backups()
+        self._atualizar_vendas_antigas()
         self.dados_atualizados.emit()
 
     def _construir_secao_backup(self) -> QWidget:

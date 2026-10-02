@@ -131,6 +131,7 @@ def testar_dialogo_cliente_avulso(app: QApplication) -> None:
             dialogo._cliente_combo.setCurrentText(rotulo)
             dialogo._valor.setValue(12345)
             dialogo._equipamento.setCurrentText("Equip Avulso Teste")
+            dialogo._banco.addItem("Banco Avulso Teste")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Avulso Teste")
             dialogo._salvar()
             assert gravou == ["gravada"]
@@ -233,6 +234,7 @@ def testar_propostas_screen(app: QApplication) -> None:
             formulario._cliente_combo.setCurrentText(rotulo)
             formulario._valor.setValue(9999)
             formulario._equipamento.setCurrentText("Equip Nova Tela")
+            formulario._banco.addItem("Banco Nova Tela")  # como se ja estivesse no cadastro (a lista e fechada)
             formulario._banco.setCurrentText("Banco Nova Tela")
             formulario._salvar()
             assert not tela._expansor.esta_expandido(), "gravar tira o card 'Nova proposta'"

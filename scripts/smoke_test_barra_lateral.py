@@ -52,6 +52,7 @@ from desktop.main_window import (
     PAGINA_DASHBOARD,
     PAGINA_FICHA,
     PAGINA_PROPOSTAS,
+    PAGINA_VENDAS,
     MainWindow,
 )
 from desktop.theme import CORES_STATUS, PALETAS, TEMA_CLARO, TEMA_ESCURO
@@ -122,20 +123,22 @@ def testar_menu_e_grupos(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         ("Visão geral", None),
         ("Dashboard de Propostas", PAGINA_DASHBOARD),
         ("Ficha de Cliente", PAGINA_FICHA),
+        ("Vendas", PAGINA_VENDAS),
         ("Todas as Propostas", PAGINA_PROPOSTAS),
         ("Administração", None),
         ("Cadastros", PAGINA_CADASTROS),
         ("Administração", PAGINA_ADMINISTRACAO),
     ], linhas
     assert all("Usuários" not in texto for texto, _ in linhas), "o item 'Usuários' virou 'Administração'"
-    assert menu.item(0).flags() == Qt.ItemFlag.NoItemFlags and menu.item(4).flags() == Qt.ItemFlag.NoItemFlags
+    assert menu.item(0).flags() == Qt.ItemFlag.NoItemFlags and menu.item(5).flags() == Qt.ItemFlag.NoItemFlags
     assert "Administração" in janela._tela_administracao.findChildren(QLabel)[0].text(), "o titulo da tela acompanha o menu"
     assert "Cadastros" in janela._tela_cadastros.findChildren(QLabel)[0].text()
-    print("OK: ADMIN ve 2 grupos (Visão geral / Administração: Cadastros e Administração) e os titulos nao sao selecionaveis.")
+    print("OK: ADMIN ve 2 grupos (Visão geral com Vendas / Administração: Cadastros e Administração) e os titulos nao sao selecionaveis.")
 
-    for chave, atalho in ((PAGINA_DASHBOARD, "Ctrl+1"), (PAGINA_FICHA, "Ctrl+2"), (PAGINA_PROPOSTAS, "Ctrl+3"), (PAGINA_CADASTROS, "Ctrl+4"), (PAGINA_ADMINISTRACAO, "Ctrl+5")):
+    for chave, atalho in ((PAGINA_DASHBOARD, "Ctrl+1"), (PAGINA_FICHA, "Ctrl+2"), (PAGINA_VENDAS, "Ctrl+3"), (PAGINA_PROPOSTAS, "Ctrl+4"),
+                          (PAGINA_CADASTROS, "Ctrl+5"), (PAGINA_ADMINISTRACAO, "Ctrl+6")):
         assert atalho in menu._itens_por_chave[chave].toolTip(), f"o tooltip de {chave} deveria citar {atalho}"
-    print("OK: o tooltip de cada item cita o atalho (Ctrl+1..5).")
+    print("OK: o tooltip de cada item cita o atalho (Ctrl+1..6).")
 
     vendedor = amb.nova_janela("vendedor", tema)
     linhas_v = [(vendedor._menu.item(i).text(), vendedor._menu.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(vendedor._menu.count())]
@@ -145,8 +148,9 @@ def testar_menu_e_grupos(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         ("Todas as Propostas", PAGINA_PROPOSTAS),
     ], linhas_v
     assert PAGINA_ADMINISTRACAO not in vendedor._indice_por_chave and PAGINA_CADASTROS not in vendedor._indice_por_chave
+    assert PAGINA_VENDAS not in vendedor._indice_por_chave, "Vendas ainda e so do ADMIN"
     assert vendedor._botao_nova_proposta is None
-    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Cadastros, sem Administração e sem '+ Nova proposta'.")
+    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Vendas, Cadastros e Administração e sem '+ Nova proposta'.")
     msgs.exigir_vazio("montar o menu")
 
 
@@ -159,10 +163,10 @@ def testar_navegacao_por_teclado_e_atalhos(amb: Ambiente, msgs: Mensagens, tema:
 
     menu.setFocus()
     sequencia = []
-    for _ in range(5):
+    for _ in range(6):
         QTest.keyClick(menu, Qt.Key.Key_Down)
         sequencia.append(janela.chave_atual())
-    assert sequencia == [PAGINA_FICHA, PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_ADMINISTRACAO], sequencia
+    assert sequencia == [PAGINA_FICHA, PAGINA_VENDAS, PAGINA_PROPOSTAS, PAGINA_CADASTROS, PAGINA_ADMINISTRACAO, PAGINA_ADMINISTRACAO], sequencia
     QTest.keyClick(menu, Qt.Key.Key_Up)
     assert janela.chave_atual() == PAGINA_CADASTROS
     QTest.keyClick(menu, Qt.Key.Key_Up)
@@ -178,14 +182,15 @@ def testar_navegacao_por_teclado_e_atalhos(amb: Ambiente, msgs: Mensagens, tema:
     janela.ir_para(PAGINA_DASHBOARD)
     for nome_da_tecla, tecla, esperado in (
         ("Ctrl+2", Qt.Key.Key_2, PAGINA_FICHA),
-        ("Ctrl+3", Qt.Key.Key_3, PAGINA_PROPOSTAS),
-        ("Ctrl+4", Qt.Key.Key_4, PAGINA_CADASTROS),
-        ("Ctrl+5", Qt.Key.Key_5, PAGINA_ADMINISTRACAO),
+        ("Ctrl+3", Qt.Key.Key_3, PAGINA_VENDAS),
+        ("Ctrl+4", Qt.Key.Key_4, PAGINA_PROPOSTAS),
+        ("Ctrl+5", Qt.Key.Key_5, PAGINA_CADASTROS),
+        ("Ctrl+6", Qt.Key.Key_6, PAGINA_ADMINISTRACAO),
         ("Ctrl+1", Qt.Key.Key_1, PAGINA_DASHBOARD),
     ):
         QTest.keyClick(janela, tecla, Qt.KeyboardModifier.ControlModifier)
         assert janela.chave_atual() == esperado, f"{nome_da_tecla} deveria abrir {esperado}, abriu {janela.chave_atual()}"
-    print("OK: Ctrl+1..5 abrem as telas na ordem do menu.")
+    print("OK: Ctrl+1..6 abrem as telas na ordem do menu.")
 
     vendedor = amb.nova_janela("vendedor", tema)
     assert {s.key().toString() for s in vendedor.findChildren(QShortcut)} == {"Ctrl+1", "Ctrl+2", "Ctrl+3"}

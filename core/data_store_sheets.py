@@ -162,6 +162,25 @@ def ler_bancos() -> pd.DataFrame:
     return df
 
 
+def _ler_aba_de_texto(nome_aba: str, colunas: list[str], colunas_de_data: set[str]) -> pd.DataFrame:
+    """Levanta gspread.WorksheetNotFound se a nuvem ainda nao tem a aba."""
+    df = _ler_aba_bruta(nome_aba)
+    if df.empty:
+        return pd.DataFrame(columns=colunas)
+    df = _com_colunas_esperadas(df, colunas)
+    for col in colunas:
+        df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True) if col in colunas_de_data else _texto(df[col])
+    return df
+
+
+def ler_vendas() -> pd.DataFrame:
+    return _ler_aba_de_texto(bd.ABA_VENDAS, bd.VENDAS_COLUNAS, {"DATA_CRIACAO"})
+
+
+def ler_historico() -> pd.DataFrame:
+    return _ler_aba_de_texto(bd.ABA_HISTORICO, bd.HISTORICO_COLUNAS, {"QUANDO"})
+
+
 def ler_propostas() -> pd.DataFrame:
     """A aba PROPOSTAS no Sheets ja chega com VENDEDOR/CLIENTE/TEMPO
     calculados (core/data_store.py sincroniza a visao completa, nunca

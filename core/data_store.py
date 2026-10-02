@@ -43,6 +43,8 @@ ABA_EQUIPAMENTOS = "EQUIPAMENTOS"
 ABA_PROPOSTAS = "PROPOSTAS"
 ABA_VENDEDORES = "VENDEDORES"
 ABA_BANCOS = "BANCOS"
+ABA_VENDAS = "VENDAS"
+ABA_HISTORICO = "HISTÓRICO"
 
 # As colunas A-E (DATA CADASTRO, CPF/CNPJ, VENDEDOR, TIPO, CLIENTE) NAO podem
 # mudar de lugar: as formulas de VENDEDOR/CLIENTE na aba PROPOSTAS fazem
@@ -108,6 +110,8 @@ PROPOSTAS_COLUNAS_EDITAVEIS = [
     "BANCO",
     "STATUS",
     "OBSERVAÇÕES",
+    "ID_PROPOSTA",
+    "ID_VENDA",
 ]
 
 # Ordem completa da aba, incluindo as colunas calculadas (VENDEDOR, CLIENTE,
@@ -127,7 +131,19 @@ PROPOSTAS_COLUNAS = [
     "TEMPO",
     "STATUS",
     "OBSERVAÇÕES",
+    # o vinculo com a venda (core/vendas.py): no FIM da aba, pra nao deslocar as colunas com formula.
+    # Planilha de antes disso nao tem essas colunas - le em branco e ganha o cabecalho na 1a gravacao.
+    "ID_PROPOSTA",
+    "ID_VENDA",
 ]
+
+# Uma linha por venda (cliente + um ou mais equipamentos); as propostas dela apontam pra ela pelo ID_VENDA.
+# EQUIPAMENTOS: os nomes separados por " + ". BANCO_ESCOLHIDO: o ID_PROPOSTA da proposta escolhida.
+VENDAS_COLUNAS = ["ID_VENDA", "CPF", "EQUIPAMENTOS", "STATUS", "BANCO_ESCOLHIDO", "MOTIVO", "DATA_CRIACAO", "OBSERVAÇÕES"]
+
+# Uma linha por mudanca de status (de venda ou de proposta): e dela que saem os tempos de cada etapa.
+# Nunca e regravada a mao: so cresce (core/vendas.py).
+HISTORICO_COLUNAS = ["QUANDO", "TIPO", "ID", "DE", "PARA", "MOTIVO", "COMPUTADOR"]
 
 # Palavras (em CAIXA ALTA) que contam como "negado" pro calculo de TEMPO e
 # pras categorias do dashboard (core/propostas.py reaproveita esta lista, em
@@ -163,6 +179,7 @@ STATUS_ENCERRADO = PALAVRAS_STATUS_EFETIVADO | PALAVRAS_STATUS_NEGADO | PALAVRAS
 _COLUNAS_DE_DATA = {
     ABA_CLIENTES: {"DATA CADASTRO", "NASCIMENTO"},
     ABA_PROPOSTAS: {"DATA"},
+    ABA_VENDAS: {"DATA_CRIACAO"},
 }
 _COLUNAS_DE_MOEDA = {
     ABA_EQUIPAMENTOS: {"VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"},
@@ -180,7 +197,7 @@ _COLUNAS_FORCADAS_A_TEXTO = {
 }
 _EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
-_PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES"]
+_PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES", "ID_PROPOSTA", "ID_VENDA"]
 _PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES"]
 _VENDEDORES_COLUNAS_TEXTO = ["NOME", "SENHA_HASH", "SALT", "ATIVO"]
 
@@ -442,6 +459,33 @@ def ler_bancos(caminho_xlsx: Path) -> pd.DataFrame:
     return df
 
 
+def _ler_aba_opcional(caminho_xlsx: Path, nome_aba: str, colunas: list[str]) -> pd.DataFrame:
+    """Uma aba que planilhas antigas nao tem: sem ela, devolve a tabela vazia (ler nunca cria nada)."""
+    with _carregar_planilha(caminho_xlsx) as wb:
+        if nome_aba not in wb.sheetnames:
+            return pd.DataFrame(columns=colunas)
+        linhas = list(_linhas_da_aba(wb[nome_aba], len(colunas)))
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def ler_vendas(caminho_xlsx: Path) -> pd.DataFrame:
+    df = _ler_aba_opcional(caminho_xlsx, ABA_VENDAS, VENDAS_COLUNAS)
+    for col in VENDAS_COLUNAS:
+        if col != "DATA_CRIACAO":
+            df[col] = df[col].map(_normalizar_texto)
+    df["DATA_CRIACAO"] = pd.to_datetime(df["DATA_CRIACAO"], errors="coerce")
+    return df
+
+
+def ler_historico(caminho_xlsx: Path) -> pd.DataFrame:
+    df = _ler_aba_opcional(caminho_xlsx, ABA_HISTORICO, HISTORICO_COLUNAS)
+    for col in HISTORICO_COLUNAS:
+        if col != "QUANDO":
+            df[col] = df[col].map(_normalizar_texto)
+    df["QUANDO"] = pd.to_datetime(df["QUANDO"], errors="coerce")
+    return df
+
+
 def ler_vendedores(caminho_xlsx: Path) -> pd.DataFrame:
     with _carregar_planilha(caminho_xlsx) as wb:
         migrou = _garantir_aba_vendedores(wb)
@@ -599,6 +643,12 @@ def _escrever_linhas_propostas(ws, registros: list[dict]) -> None:
         ws.cell(row=i, column=9, value=_formula_tempo(i))
         ws.cell(row=i, column=10, value=registro.get("STATUS"))
         ws.cell(row=i, column=11, value=registro.get("OBSERVAÇÕES"))
+        ws.cell(row=i, column=12, value=_limpar_valor(registro.get("ID_PROPOSTA")))
+        ws.cell(row=i, column=13, value=_limpar_valor(registro.get("ID_VENDA")))
+    # planilha de antes do vinculo com a venda: as 2 colunas novas ganham o cabecalho aqui
+    for j, coluna in ((12, "ID_PROPOSTA"), (13, "ID_VENDA")):
+        if _normalizar_texto(ws.cell(row=1, column=j).value) != coluna:
+            ws.cell(row=1, column=j, value=coluna)
 
 
 def _formula_tempo(linha: int) -> str:
@@ -670,6 +720,43 @@ def escrever_bancos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     sheets_sync.sincronizar_em_background(ABA_BANCOS, ler_bancos(caminho_xlsx))
 
 
+def _aba_com_cabecalho(wb, nome_aba: str, colunas: list[str]):
+    ws = wb[nome_aba] if nome_aba in wb.sheetnames else wb.create_sheet(nome_aba)
+    for j, coluna in enumerate(colunas, start=1):
+        if _normalizar_texto(ws.cell(row=1, column=j).value) != coluna:
+            ws.cell(row=1, column=j, value=coluna)
+    return ws
+
+
+def escrever_vendas_e_propostas(
+    caminho_xlsx: Path,
+    *,
+    propostas: pd.DataFrame | None = None,
+    vendas: pd.DataFrame | None = None,
+    historico_novo: list[dict] | None = None,
+) -> None:
+    """Grava, numa UNICA gravacao (todas ou nenhuma), o que mudou de propostas e vendas e ACRESCENTA as linhas
+    novas do historico - criar uma venda mexe nas tres abas, e nenhuma pode ficar sem a outra. Depois sincroniza
+    cada aba que mudou. `propostas` so com as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS)."""
+    with _carregar_planilha(caminho_xlsx) as wb:
+        if propostas is not None:
+            _escrever_linhas_propostas(wb[ABA_PROPOSTAS], _registros_para_gravar(propostas[PROPOSTAS_COLUNAS_EDITAVEIS]))
+        if vendas is not None:
+            ws = _aba_com_cabecalho(wb, ABA_VENDAS, VENDAS_COLUNAS)
+            _escrever_linhas_simples(ws, ABA_VENDAS, VENDAS_COLUNAS, _registros_para_gravar(vendas[VENDAS_COLUNAS]))
+        if historico_novo:
+            ws = _aba_com_cabecalho(wb, ABA_HISTORICO, HISTORICO_COLUNAS)
+            for registro in historico_novo:
+                ws.append([_limpar_valor(registro.get(coluna)) for coluna in HISTORICO_COLUNAS])
+        _salvar_planilha(wb, caminho_xlsx)
+    if propostas is not None:
+        sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, ler_propostas(caminho_xlsx))
+    if vendas is not None:
+        sheets_sync.sincronizar_em_background(ABA_VENDAS, ler_vendas(caminho_xlsx))
+    if historico_novo:
+        sheets_sync.sincronizar_em_background(ABA_HISTORICO, ler_historico(caminho_xlsx))
+
+
 def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     """`df` deve conter apenas as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS)."""
     with _carregar_planilha(caminho_xlsx) as wb:
@@ -697,12 +784,14 @@ def escrever_tudo(
     vendedores: pd.DataFrame,
     propostas: pd.DataFrame,
     bancos: pd.DataFrame | None = None,
+    vendas: pd.DataFrame | None = None,
+    historico: pd.DataFrame | None = None,
 ) -> None:
     """Regrava as abas numa UNICA gravacao atomica (ou grava todas, ou nenhuma) e NAO dispara
     sincronizacao: e o que "baixar da nuvem" usa - mandar de volta o que acabou de vir de la seria
     um vai-e-vem inutil. `propostas` pode vir com as colunas calculadas (VENDEDOR/CLIENTE/TEMPO):
-    so as editaveis sao gravadas, as formulas voltam sozinhas. `bancos` None (nuvem de antes do cadastro
-    de bancos, sem essa aba) deixa a aba BANCOS daqui como esta."""
+    so as editaveis sao gravadas, as formulas voltam sozinhas. `bancos`, `vendas` ou `historico` None (nuvem de
+    antes dessas abas existirem) deixa a aba daqui como esta."""
     with _carregar_planilha(caminho_xlsx) as wb:
         _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
         _garantir_aba_vendedores(wb)
@@ -722,4 +811,8 @@ def escrever_tudo(
                 for j, coluna in enumerate(BANCOS_COLUNAS, start=1):
                     ws.cell(row=1, column=j, value=coluna)
             _escrever_linhas_simples(ws, ABA_BANCOS, BANCOS_COLUNAS, _registros_para_gravar(bancos))
+        for nome_aba, colunas, df in ((ABA_VENDAS, VENDAS_COLUNAS, vendas), (ABA_HISTORICO, HISTORICO_COLUNAS, historico)):
+            if df is not None:
+                ws = _aba_com_cabecalho(wb, nome_aba, colunas)
+                _escrever_linhas_simples(ws, nome_aba, colunas, _registros_para_gravar(df[colunas]))
         _salvar_planilha(wb, caminho_xlsx)

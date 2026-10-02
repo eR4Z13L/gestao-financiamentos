@@ -46,7 +46,12 @@ _LEITORES_LOCAIS = {
     bd.ABA_PROPOSTAS: bd.ler_propostas,
     bd.ABA_VENDEDORES: bd.ler_vendedores,
     bd.ABA_BANCOS: bd.ler_bancos,
+    bd.ABA_VENDAS: bd.ler_vendas,
+    bd.ABA_HISTORICO: bd.ler_historico,
 }
+# abas que uma nuvem de antes delas existirem nao tem: a falta delas nao e erro, e a aba daqui fica como esta.
+# Pelo NOME da funcao (lida na hora): guardar a funcao em si congelaria a de agora.
+_ABAS_OPCIONAIS_NA_NUVEM = {bd.ABA_BANCOS: "ler_bancos", bd.ABA_VENDAS: "ler_vendas", bd.ABA_HISTORICO: "ler_historico"}
 
 
 class ErroNuvem(Exception):
@@ -95,6 +100,8 @@ def sincronizar_tudo_agora(caminho_xlsx: Path | None = None) -> None:
     sheets_sync.sincronizar_em_background(bd.ABA_PROPOSTAS, bd.ler_propostas(caminho_xlsx))
     sheets_sync.sincronizar_em_background(bd.ABA_VENDEDORES, bd.ler_vendedores(caminho_xlsx))
     sheets_sync.sincronizar_em_background(bd.ABA_BANCOS, bd.ler_bancos(caminho_xlsx))
+    sheets_sync.sincronizar_em_background(bd.ABA_VENDAS, bd.ler_vendas(caminho_xlsx))
+    sheets_sync.sincronizar_em_background(bd.ABA_HISTORICO, bd.ler_historico(caminho_xlsx))
 
 
 def enviar_pendentes_do_estado(caminho_xlsx: Path | None = None) -> list[str]:
@@ -147,10 +154,11 @@ def _ler_dados_da_nuvem() -> dict[str, pd.DataFrame]:
         }
     except gspread.WorksheetNotFound as exc:
         raise ErroNuvem(f"A nuvem não tem a aba {exc}. Nada foi alterado.") from exc
-    try:
-        dados[bd.ABA_BANCOS] = nuvem.ler_bancos()
-    except gspread.WorksheetNotFound:
-        pass
+    for aba, nome_do_leitor in _ABAS_OPCIONAIS_NA_NUVEM.items():
+        try:
+            dados[aba] = getattr(nuvem, nome_do_leitor)()
+        except gspread.WorksheetNotFound:
+            pass
     return dados
 
 
@@ -162,6 +170,8 @@ def _gravar_dados_no_arquivo(caminho: Path, dados: dict[str, pd.DataFrame]) -> N
         dados[bd.ABA_VENDEDORES],
         dados[bd.ABA_PROPOSTAS],
         dados.get(bd.ABA_BANCOS),
+        dados.get(bd.ABA_VENDAS),
+        dados.get(bd.ABA_HISTORICO),
     )
 
 
@@ -169,7 +179,7 @@ def _recusar_se_a_nuvem_parece_vazia_por_engano(dados: dict[str, pd.DataFrame], 
     """Um envio que caiu no meio pode deixar uma aba da nuvem VAZIA (ela e apagada e reescrita).
     Baixar isso apagaria os dados daqui, entao uma aba vazia na nuvem com linhas aqui e recusada."""
     for aba, leitor in _LEITORES_LOCAIS.items():
-        if aba not in dados:  # BANCOS numa nuvem de antes do cadastro: a aba daqui fica como esta
+        if aba not in dados:  # aba opcional que a nuvem ainda nao tem: a daqui fica como esta
             continue
         aqui = len(leitor(caminho))
         if len(dados[aba]) == 0 and aqui > 0:

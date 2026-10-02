@@ -31,7 +31,9 @@ from core.data_store import (
     ABA_BANCOS,
     ABA_CLIENTES,
     ABA_EQUIPAMENTOS,
+    ABA_HISTORICO,
     ABA_PROPOSTAS,
+    ABA_VENDAS,
     ABA_VENDEDORES,
     ErroArquivoBloqueado,
     arquivo_esta_bloqueado,
@@ -39,7 +41,7 @@ from core.data_store import (
 
 _logger = logging.getLogger(__name__)
 
-_ABAS_SINCRONIZADAS = [ABA_CLIENTES, ABA_EQUIPAMENTOS, ABA_PROPOSTAS, ABA_VENDEDORES, ABA_BANCOS]
+_ABAS_SINCRONIZADAS = [ABA_CLIENTES, ABA_EQUIPAMENTOS, ABA_PROPOSTAS, ABA_VENDEDORES, ABA_BANCOS, ABA_VENDAS, ABA_HISTORICO]
 
 MAXIMO_BACKUPS_AUTOMATICOS = 7
 
@@ -49,6 +51,7 @@ MOTIVO_PRE_RESTAURACAO = "pre-restauracao"
 MOTIVO_PRE_MESCLAGEM = "pre-mesclagem"  # antes do antigo "Mesclar grafias de banco" (saiu do app); so para reconhecer esses backups
 MOTIVO_PRE_NUVEM = "pre-nuvem"  # antes de "Baixar da nuvem" trocar os dados locais pelos da nuvem
 MOTIVO_COPIA_DA_NUVEM = "copia-da-nuvem"  # o que a nuvem tinha, guardado antes de o envio sobrescreve-la
+MOTIVO_PRE_VENDAS = "pre-vendas"  # antes de juntar as propostas antigas em vendas (core/migracao_vendas.py)
 
 _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # só reconhece arquivos que ESTE módulo gerou (motivo + timestamp no formato exato, com um
@@ -59,7 +62,7 @@ _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # .dat (extensao atual do arquivo real) quanto .xlsx (extensao antiga, de backups feitos antes
 # da troca - ver config.py) - assim nenhum backup ja existente some da listagem.
 _PADRAO_NOME = re.compile(
-    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem|pre-nuvem|copia-da-nuvem)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
+    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem|pre-nuvem|copia-da-nuvem|pre-vendas)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
 )
 
 

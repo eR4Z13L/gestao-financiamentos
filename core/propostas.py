@@ -481,8 +481,8 @@ def dados_para_duplicar(proposta: Mapping, hoje: date | None = None) -> dict:
     comum e reenviar a mesma proposta a outro banco depois de uma negativa.
     Leva cliente, equipamento, valor, meses e observacoes; a data e a de hoje, o
     banco fica em branco (quem duplica escolhe o novo) e o status volta a "Em
-    Analise" (nunca herda Negado/Aprovado). Nao grava nada: quem salva e
-    adicionar_proposta, e a original continua como estava."""
+    Analise" (nunca herda Negado/Aprovado). Leva tambem a venda (ID_VENDA): gravar a copia manda o mesmo
+    negocio a outro banco (core/vendas.py). Nao grava nada, e a original continua como estava."""
 
     def _texto(valor) -> str:
         return valor if isinstance(valor, str) else ""
@@ -499,6 +499,7 @@ def dados_para_duplicar(proposta: Mapping, hoje: date | None = None) -> dict:
         "BANCO": "",
         "STATUS": STATUS_EM_ANALISE,
         "OBSERVAÇÕES": _texto(proposta.get("OBSERVAÇÕES")),
+        "ID_VENDA": _texto(proposta.get("ID_VENDA")),
     }
 
 
@@ -620,6 +621,10 @@ def remover_proposta(indice: int, esperado: Mapping | None = None) -> None:
         raise ErroProposta("Proposta não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
     if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
         raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
+    id_proposta = df.loc[indice, "ID_PROPOSTA"]
+    if id_proposta and id_proposta in set(bd.ler_vendas(CAMINHO_XLSX)["BANCO_ESCOLHIDO"]):
+        # a venda ficaria apontando para um banco que nao existe mais
+        raise ErroProposta("Esta é a proposta do banco escolhido numa venda. Troque o banco escolhido antes de excluí-la.")
     bd.escrever_propostas(CAMINHO_XLSX, df.drop(index=indice).reset_index(drop=True))
 
 

@@ -134,7 +134,7 @@ def main() -> None:
             _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
             assert len(mensagens) == antes + 1
             assert "enviadas para sincronizar" in mensagens[-1].lower()
-            assert set(chamadas) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}, chamadas
+            assert set(chamadas) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS, bd.ABA_VENDAS, bd.ABA_HISTORICO}, chamadas
         print(f"OK: clicar em 'Sincronizar agora' disparou as 4 abas ({sorted(set(chamadas))}) e avisou.")
 
         linha("3) Uma falha (rede fora) não quebra o botão - a aba fica na fila de repetição")
@@ -148,7 +148,7 @@ def main() -> None:
             _esperar(lambda: sheets_sync.estado_atual().em_andamento == 0)
             assert len(mensagens) == antes + 1, "o botao ainda avisa que iniciou (a falha e so depois, em background)"
             assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_FALHOU
-            assert set(sheets_sync._pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS}
+            assert set(sheets_sync._pendentes) == {bd.ABA_CLIENTES, bd.ABA_EQUIPAMENTOS, bd.ABA_PROPOSTAS, bd.ABA_VENDEDORES, bd.ABA_BANCOS, bd.ABA_VENDAS, bd.ABA_HISTORICO}
         print("OK: uma falha de rede não quebra o botão - as 4 abas ficam pendentes pra fila tentar de novo.")
 
         linha("TUDO OK")

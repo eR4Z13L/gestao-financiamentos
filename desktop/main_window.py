@@ -46,6 +46,7 @@ from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.screens.propostas_screen import PropostasScreen
 from desktop.screens.usuarios_screen import UsuariosScreen
+from desktop.screens.vendas_screen import VendasScreen
 from desktop.theme import TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.botao_lateral import BotaoLateral
 from desktop.widgets.identidade_usuario import IdentidadeUsuario
@@ -60,6 +61,7 @@ _logger = logging.getLogger(__name__)
 
 PAGINA_DASHBOARD = "dashboard"
 PAGINA_FICHA = "ficha"
+PAGINA_VENDAS = "vendas"
 PAGINA_PROPOSTAS = "propostas"
 PAGINA_CADASTROS = "cadastros"
 PAGINA_ADMINISTRACAO = "administracao"
@@ -113,6 +115,9 @@ class MainWindow(QMainWindow):
             # Cadastros: renomear um banco ou um vendedor muda propostas e clientes
             self._tela_cadastros.dados_atualizados.connect(self._atualizar_selo_propostas)
             self._tela_cadastros.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
+            self._tela_vendas.dados_atualizados.connect(self._atualizar_selo_propostas)
+            self._tela_vendas.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
+            self._tela_vendas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
         self._tela_dashboard.ficha_pedida.connect(self.abrir_ficha_do_cliente)
@@ -157,6 +162,10 @@ class MainWindow(QMainWindow):
             (PAGINA_FICHA, "Ficha de Cliente", "ficha", self._tela_ficha),
             (PAGINA_PROPOSTAS, "Todas as Propostas", "propostas", self._tela_propostas),
         ]
+        # Vendas: so o ADMIN por enquanto (a leitura do VENDEDOR vem do Google Sheets e ainda nao tem as vendas)
+        if sessao_mod.eh_admin():
+            self._tela_vendas = VendasScreen()
+            visao_geral.insert(2, (PAGINA_VENDAS, "Vendas", "vendas", self._tela_vendas))
         grupos_e_telas = [("Visão geral", visao_geral)]
         # Cadastros (bancos, vendedores) e Administracao (PIN, sincronizacao, backup) sao coisa de ADMIN - nem
         # aparecem no menu pro VENDEDOR, que so tem leitura
