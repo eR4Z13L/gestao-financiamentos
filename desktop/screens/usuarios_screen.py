@@ -126,6 +126,14 @@ class UsuariosScreen(QWidget):
         if self._vigia.mudou_desde_a_leitura():  # ex.: baixou da nuvem ou restaurou um backup
             self._carregar_vendedores()
 
+    def recarregar_se_mudou(self) -> None:
+        """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele as listas
+        (vendedores, bancos e backups; os campos digitados ficam como estao)."""
+        if self._vigia.mudou_desde_a_leitura():
+            self._carregar_vendedores()
+            self._carregar_bancos()
+            self._carregar_backups()
+
     # -- aba "Usuários" ----------------------------------------------------------------
 
     def _construir_aba_usuarios(self) -> QWidget:

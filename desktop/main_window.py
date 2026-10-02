@@ -116,6 +116,9 @@ class MainWindow(QMainWindow):
 
         self._temporizador_do_indicador = QTimer(self)
         self._temporizador_do_indicador.timeout.connect(self._atualizar_indicador_de_sincronizacao)
+        # no mesmo tique: a tela aberta rele sozinha se a planilha mudou por fora (so compara data/tamanho
+        # do arquivo - barato; ver desktop/vigia_do_arquivo.py)
+        self._temporizador_do_indicador.timeout.connect(self._recarregar_pagina_aberta_se_mudou)
         self._temporizador_do_indicador.start(_INTERVALO_DO_INDICADOR_MS)
 
         # fila de repeticao (E9): reenvia sozinho o que falhou, sem esperar a proxima
@@ -385,6 +388,17 @@ class MainWindow(QMainWindow):
         self._menu.definir_selo(PAGINA_PROPOSTAS, quantidade, dica)
 
     # -- sincronizacao ---------------------------------------------------------------------
+
+    def _recarregar_pagina_aberta_se_mudou(self) -> None:
+        """Se a planilha mudou por fora da tela aberta (baixou da nuvem, restaurou backup, editou no Excel),
+        ela rele sozinha - cada tela decide o que e seguro reler (nunca atropela edicao). Nada acontece com a
+        janela escondida nem com uma caixa de dialogo aberta: um salvamento que esta perguntando algo no
+        meio (ex.: "encerrar as outras propostas?") nao pode ter a tela relida por baixo dele."""
+        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+            return
+        recarregar = getattr(self._paginas.currentWidget(), "recarregar_se_mudou", None)
+        if recarregar is not None:
+            recarregar()
 
     def _atualizar_indicador_de_sincronizacao(self) -> None:
         self._tratar_situacao_pendente()

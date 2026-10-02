@@ -239,6 +239,88 @@ def main() -> None:
             assert not ficha._modo_novo_cliente and ficha._painel_stack.currentIndex() == 0
             print("OK: cliente novo nao salvo + 'Sim': o rascunho sai e a ficha volta pra pagina vazia.")
 
+            # ------------------------------------------------------------------------------------
+            linha("8) A pagina ABERTA rele sozinha (tique de 2 s da janela) quando a planilha muda por fora")
+            import time
+
+            _ir(janela, PAGINA_FICHA)
+            tique = janela._recarregar_pagina_aberta_se_mudou
+            cpf_3 = fx.cpf_ficticio(500_000_003)
+            clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_3, "CLIENTE": "CHEGOU COM A TELA ABERTA", "TIPO": "Cliente", "VENDEDOR": "Vendedor Exemplo"})
+            fim = time.monotonic() + 5
+            while ficha._lista.linha_do_cpf(cpf_3) is None:  # o relogio DE VERDADE da janela (2 s)
+                assert time.monotonic() < fim, "o tique da janela nao releu a Ficha aberta"
+                QApplication.processEvents()
+                time.sleep(0.05)
+            print("OK: com a Ficha aberta, o cliente gravado por fora aparece sozinho em ate ~2 s (relogio da janela).")
+
+            cpf_4 = fx.cpf_ficticio(500_000_004)
+            clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_4, "CLIENTE": "COM UMA CAIXA ABERTA", "TIPO": "Cliente", "VENDEDOR": "Vendedor Exemplo"})
+            original_modal = QApplication.activeModalWidget
+            QApplication.activeModalWidget = staticmethod(lambda: janela)  # "uma caixa de dialogo aberta"
+            try:
+                tique()
+                assert ficha._lista.linha_do_cpf(cpf_4) is None, "com uma caixa de dialogo aberta, nao rele por baixo dela"
+            finally:
+                QApplication.activeModalWidget = original_modal
+            tique()
+            assert ficha._lista.linha_do_cpf(cpf_4) is not None
+            print("OK: com uma caixa de dialogo aberta nao rele; fechada, o proximo tique rele.")
+
+            cpf_5 = fx.cpf_ficticio(500_000_005)
+            clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_5, "CLIENTE": "COM A JANELA ESCONDIDA", "TIPO": "Cliente", "VENDEDOR": "Vendedor Exemplo"})
+            janela.hide()
+            tique()
+            assert ficha._lista.linha_do_cpf(cpf_5) is None, "janela escondida (troca de usuario): nao rele"
+            janela.show(); QApplication.processEvents()
+            tique()
+            assert ficha._lista.linha_do_cpf(cpf_5) is not None
+            print("OK: com a janela escondida nao rele.")
+
+            ficha._mostrar_cliente(cpf_novo)
+            ficha._aplicar_modo_edicao_cliente(leitura=False)
+            ficha._campo_nome.setText("EDITANDO COM O RELOGIO RODANDO")
+            _renomear_por_fora(cpf_novo, "MUDOU POR FORA DE NOVO")
+            tique()
+            assert ficha._campo_nome.text() == "EDITANDO COM O RELOGIO RODANDO" and not ficha._modo_leitura_cliente
+            ficha._cancelar_edicao_cliente()
+            print("OK: com a ficha em edicao, o tique nao atropela o que foi digitado.")
+
+            # a propria gravacao da tela nao pode parecer "mudanca por fora" 2 s depois
+            propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
+                                              "EQUIPAMENTO": "Equipamento Modelo X", "VALOR (R$)": 321})
+            ficha._depois_de_mudar_propostas()  # o que a Ficha faz depois de gravar uma proposta
+            assert not ficha._vigia.mudou_desde_a_leitura(), "depois da propria gravacao, a impressao ja esta em dia"
+            print("OK: depois de a Ficha gravar uma proposta, a impressao fica em dia (sem releitura 2 s depois).")
+
+            _ir(janela, PAGINA_PROPOSTAS)
+            antes = len(propostas._todas)
+            propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
+                                              "EQUIPAMENTO": "Equipamento Modelo Y", "VALOR (R$)": 111})
+            original = propostas._expansor.tem_alteracoes
+            propostas._expansor.tem_alteracoes = lambda: True
+            try:
+                tique()
+                assert len(propostas._todas) == antes, "card em edicao: o tique nao rele"
+            finally:
+                propostas._expansor.tem_alteracoes = original
+            tique()
+            assert len(propostas._todas) == antes + 1
+            print("OK: Todas as Propostas aberta rele sozinha; com um card em edicao, espera.")
+
+            _ir(janela, PAGINA_DASHBOARD)
+            antes = len(dashboard._propostas)
+            propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_APROVADO, "BANCO": "Banco Exemplo",
+                                              "EQUIPAMENTO": "Equipamento Modelo X", "VALOR (R$)": 222})
+            tique()
+            assert len(dashboard._propostas) == antes + 1
+            _ir(janela, PAGINA_ADMINISTRACAO)
+            vendedores_mod.adicionar_vendedor("Vendedora Com A Tela Aberta")
+            tique()
+            nomes = [adm._modelo_vendedores.data(adm._modelo_vendedores.index(i, 0)) for i in range(adm._modelo_vendedores.rowCount())]
+            assert "Vendedora Com A Tela Aberta" in nomes, nomes
+            print("OK: Dashboard e Administracao abertos tambem releem sozinhos.")
+
             msgs.exigir_sem_erros("trocando de pagina")
         linha("TUDO OK")
     finally:

@@ -23,6 +23,10 @@ _ALFABETO_SENHA = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
 SENHA_MINIMA = 8  # tamanho minimo pra senha do ADMIN escolhida a mao (a gerada pro vendedor ja nasce com 8)
 
 
+class ErroSenha(ValueError):
+    """A senha escolhida nao atende a regra (a mensagem diz qual) - nada foi gravado."""
+
+
 def gerar_senha_aleatoria(tamanho: int = 8) -> str:
     return "".join(secrets.choice(_ALFABETO_SENHA) for _ in range(tamanho))
 
@@ -69,6 +73,10 @@ def admin_configurado() -> bool:
 
 
 def definir_senha_admin(senha: str) -> None:
+    """Grava a senha do ADMIN (primeiro acesso ou troca). O tamanho minimo e conferido AQUI, e nao so
+    nas telas: antes o primeiro acesso aceitava 4 caracteres e a troca exigia 8."""
+    if len(senha) < SENHA_MINIMA:
+        raise ErroSenha(f"Use pelo menos {SENHA_MINIMA} caracteres.")
     hash_hex, salt_hex = hash_senha(senha)
     CAMINHO_CREDENCIAIS_ADMIN.parent.mkdir(parents=True, exist_ok=True)
     CAMINHO_CREDENCIAIS_ADMIN.write_text(

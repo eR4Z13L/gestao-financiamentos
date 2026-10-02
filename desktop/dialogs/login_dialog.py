@@ -84,14 +84,18 @@ class LoginDialog(QDialog):
     def _definir_senha_admin(self) -> None:
         senha = self._nova_senha.text()
         confirmar = self._confirmar_senha.text()
-        if len(senha) < 4:
-            QMessageBox.warning(self, "Senha muito curta", "Use pelo menos 4 caracteres.")
-            return
         if senha != confirmar:
             QMessageBox.warning(self, "Senhas diferentes", "As duas senhas digitadas não são iguais.")
             return
 
-        auth.definir_senha_admin(senha)
+        try:
+            auth.definir_senha_admin(senha)  # confere o tamanho minimo (o mesmo da troca de senha)
+        except auth.ErroSenha as exc:
+            QMessageBox.warning(self, "Senha muito curta", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio (ex.: sem permissao pra gravar a pasta)
+            QMessageBox.critical(self, "Não foi possível gravar a senha", f"{type(exc).__name__}: {exc}")
+            return
         self.sessao_criada = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario=USUARIO_ADMIN)
         self.accept()
 

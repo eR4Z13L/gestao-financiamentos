@@ -273,6 +273,11 @@ class DashboardScreen(QWidget):
         if self._desatualizado or self._vigia.mudou_desde_a_leitura():
             self._carregar_dados()
 
+    def recarregar_se_mudou(self) -> None:
+        """Chamado a cada tique da janela com esta tela aberta: planilha mudou por fora -> rele."""
+        if self._vigia.mudou_desde_a_leitura():
+            self._carregar_dados()
+
     def _carregar_dados(self, *_args) -> None:
         self._vigia.registrar_leitura()
         try:

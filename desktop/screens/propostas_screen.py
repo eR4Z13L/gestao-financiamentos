@@ -381,15 +381,19 @@ class PropostasScreen(QWidget):
 
     def showEvent(self, evento) -> None:
         super().showEvent(evento)
-        # o arquivo mudou desde a ultima leitura (outra tela gravou, baixou da nuvem, restaurou backup):
-        # rele tudo - menos com um card em edicao nao salva, que nunca e descartado sem perguntar (o botao
-        # Recarregar pergunta)
-        if self._vigia.mudou_desde_a_leitura() and not self._expansor.tem_alteracoes():
-            self._carregar_dados()
         # alguem pode ter cadastrado um vendedor em outra tela (Usuarios) desde a
         # ultima vez que esta tela apareceu
-        elif self._recarregar_vendedores_filtro():
+        if not self.recarregar_se_mudou() and self._recarregar_vendedores_filtro():
             self._aplicar_filtros(manter_pagina=True)
+
+    def recarregar_se_mudou(self) -> bool:
+        """Ao aparecer e a cada tique da janela com esta tela aberta: se a planilha mudou desde a ultima
+        leitura (outra tela gravou, baixou da nuvem, restaurou backup), rele tudo - menos com um card em
+        edicao nao salva, que nunca e descartado sem perguntar (o botao Recarregar pergunta). True se releu."""
+        if self._vigia.mudou_desde_a_leitura() and not self._expansor.tem_alteracoes():
+            self._carregar_dados()
+            return True
+        return False
 
     def _ao_mudar_periodo(self) -> None:
         """A data e digitada tecla a tecla: "1", "15/", "15/0"... nao filtram

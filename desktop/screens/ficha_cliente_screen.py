@@ -995,15 +995,28 @@ class FichaClienteScreen(QWidget):
         # alguem pode ter cadastrado um vendedor em outra tela (Usuarios) desde a
         # ultima vez que esta tela apareceu - e uma proposta pode ter mudado de
         # status em "Todas as Propostas": a bolinha "Em aberto" precisa refletir isso
+        if self._vigia.mudou_desde_a_leitura():
+            self._reler_lista_e_ficha()
+            return
         self._invalidar_em_aberto()
-        arquivo_mudou = self._vigia.mudou_desde_a_leitura()
-        vendedores_mudaram = self._recarregar_vendedores_filtro()
-        if arquivo_mudou or vendedores_mudaram:
+        if self._recarregar_vendedores_filtro():
             self._atualizar_lista()
-            if arquivo_mudou and self._ficha_pode_ser_relida():
-                self._recarregar_ficha_atual()
         else:
             self._atualizar_indicadores_em_aberto()
+
+    def recarregar_se_mudou(self) -> None:
+        """Chamado a cada tique da janela com esta tela aberta: se a planilha mudou por fora (baixou da
+        nuvem, restaurou backup, editou no Excel), rele sozinha - sem atropelar quem esta editando."""
+        if self._vigia.mudou_desde_a_leitura():
+            self._reler_lista_e_ficha()
+
+    def _reler_lista_e_ficha(self) -> None:
+        """Rele a lista (e o filtro de vendedores) e, se ninguem esta editando, a ficha aberta."""
+        self._invalidar_em_aberto()
+        self._recarregar_vendedores_filtro()
+        self._atualizar_lista()
+        if self._ficha_pode_ser_relida():
+            self._recarregar_ficha_atual()
 
     def _ao_recarregar(self, *_args) -> None:
         """Botao Recarregar: rele a lista e a ficha aberta. Com algo em edicao nao salvo (dados do cliente,
@@ -1022,11 +1035,7 @@ class FichaClienteScreen(QWidget):
             self._expansor.descartar()
             if cliente_em_edicao:
                 self._cancelar_edicao_cliente()  # cliente novo: volta pra pagina vazia; existente: volta pra leitura
-        self._invalidar_em_aberto()
-        self._recarregar_vendedores_filtro()
-        self._atualizar_lista()
-        if self._ficha_pode_ser_relida():
-            self._recarregar_ficha_atual()
+        self._reler_lista_e_ficha()
 
     def _ficha_pode_ser_relida(self) -> bool:
         """A ficha aberta so e relida do disco se ninguem esta editando nada nela: dados do cliente
@@ -1670,7 +1679,7 @@ class FichaClienteScreen(QWidget):
             return False
         if indice_da_proposta not in self._historico_atual.index:
             QMessageBox.warning(
-                self, "Proposta não encontrada", "A proposta de onde duplicar não foi encontrada (a lista pode ter mudado). Atualize o Dashboard."
+                self, "Proposta não encontrada", "A proposta de onde duplicar não foi encontrada (a lista pode ter mudado). Recarregue o Dashboard."
             )
             return False
         proposta = self._historico_atual.loc[indice_da_proposta].to_dict()
@@ -1682,7 +1691,9 @@ class FichaClienteScreen(QWidget):
         (historico) e repinta a bolinha "Em aberto" - ela pode ter aparecido ou sumido."""
         self._recarregar_ficha_atual(selecionar=selecionar)
         self._invalidar_em_aberto()
-        self._atualizar_indicadores_em_aberto()
+        # a lista tambem (mantem o cliente aberto): assim a "impressao" da planilha fica em dia e a propria
+        # gravacao desta tela nao parece, 2 s depois, uma mudanca feita por fora
+        self._atualizar_lista()
         self.dados_atualizados.emit()
 
     def tem_edicao_pendente(self) -> bool:
