@@ -343,6 +343,8 @@ class PropostaNaVenda:
     escolhida: bool
     dias_esperando: int | None  # so Em Análise / Pré-aprovado: dias desde o envio (ou a ultima troca de status)
     anterior: str | None = None  # para onde o "voltar" leva (None: nao ha para onde voltar)
+    carencia: int | None = None  # dias ate a 1a parcela
+    parcela: float | None = None
 
 
 @dataclass(frozen=True)
@@ -404,11 +406,13 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
                 dias = _dias_desde(ultimas.get(p["ID_PROPOSTA"], p["DATA"]), hoje)
             meses = _numero_ou_none(p["MESES"])
             anterior = (pilhas.get(p["ID_PROPOSTA"]) or [None])[-1]
+            carencia = _numero_ou_none(p["CARÊNCIA (DIAS)"])
             itens.append(PropostaNaVenda(
                 p["ID_PROPOSTA"], int(indice), p["BANCO"], p["STATUS"], _numero_ou_none(p["VALOR (R$)"]),
                 int(meses) if meses is not None else None, p["DATA"] if pd.notna(p["DATA"]) else None,
                 p["EQUIPAMENTO"], bool(p["ID_PROPOSTA"]) and p["ID_PROPOSTA"] == v["BANCO_ESCOLHIDO"], dias,
                 anterior if anterior in STATUS_DA_PROPOSTA else None,  # status de antes das vendas nao volta
+                int(carencia) if carencia is not None else None, _numero_ou_none(p["PARCELA (R$)"]),
             ))
         nome, vendedor = por_cpf.get(apenas_digitos(v["CPF"]), ("", ""))
         criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None

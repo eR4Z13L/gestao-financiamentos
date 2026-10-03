@@ -426,11 +426,11 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         assert d._modo_leitura and d._cpf == _cpf(0)
         assert (d._banco.currentText(), d._equipamento.currentText(), d._status.currentText()) == ("Smart", "Cadeira V", "Garantia Assinada")
         assert d._valor.value() == 50000 and d._meses.value() == 24 and d._observacoes.toPlainText() == "obs 50000"
-        assert len(d._botoes_copiar) == 7, "a mesma tela de leitura de sempre, com copiar em cada campo"
+        assert len(d._botoes_copiar) == 9, "a mesma tela de leitura de sempre, com copiar em cada campo"
         assert d._botao_editar.isHidden() is False and d._botao_duplicar.isHidden() is False, "ADMIN pode editar e duplicar"
         assert tela._indice_real_selecionado() == tela._modelo.indice_real(1), "o card aberto segue selecionado"
         print("OK: o duplo clique abre a leitura da proposta certa (valor, meses, equipamento, banco, observações) "
-              "com os 7 botões de copiar.")
+              "com os 9 botões de copiar.")
 
         # Enter no card selecionado tambem abre (o teclado e o "duplo clique")
         stubs.dialogos.clear()
@@ -510,7 +510,7 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
             assert len(stubs.dialogos) == 1, "vendedor abre o card na leitura (duplo clique)"
             dv = stubs.dialogos[0]
             assert dv._modo_leitura and dv._botao_editar.isHidden() and dv._botao_duplicar.isHidden(), "sem 'Editar' nem 'Duplicar' pro vendedor"
-            assert dv._banco.currentText() and dv._valor.value() > 0 and len(dv._botoes_copiar) == 7
+            assert dv._banco.currentText() and dv._valor.value() > 0 and len(dv._botoes_copiar) == 9
             tela_v.close()
         finally:
             propostas_mod._ler_da_fonte_ativa = fonte_original

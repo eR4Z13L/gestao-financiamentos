@@ -390,9 +390,14 @@ class CardDaVenda(QFrame):
             partes.append(f"{'parada ' + quanto if v.parada else quanto} em \"{v.status}\"")
         return " · ".join(partes) or "sem data"
 
-    def _linha_do_banco(self, proposta: vendas_mod.PropostaNaVenda) -> QHBoxLayout:
+    def _linha_do_banco(self, proposta: vendas_mod.PropostaNaVenda) -> QVBoxLayout:
+        """Duas linhas: em cima o banco, o status e os controles; embaixo, alinhadas ao nome do banco, as condicoes
+        (valor, meses, carencia, parcela) - numa linha so elas nao cabiam no card."""
+        bloco = QVBoxLayout()
+        bloco.setSpacing(0)
         linha = QHBoxLayout()
         linha.setSpacing(8)
+        bloco.addLayout(linha)
         itens = {"proposta": proposta, "anel": None, "voltar": None, "bolinhas": []}
 
         # o anel ocupa sempre o mesmo lugar (mesmo sem anel), pros nomes dos bancos ficarem alinhados
@@ -424,11 +429,20 @@ class CardDaVenda(QFrame):
             partes.append(formatar_reais(proposta.valor).replace(",00", ""))
         if proposta.meses:
             partes.append(f"{proposta.meses}x")
+        if proposta.carencia is not None:
+            partes.append(f"1ª em {proposta.carencia} dias")
+        if proposta.parcela is not None:
+            partes.append(f"parcela {formatar_reais(proposta.parcela)}")
         if proposta.equipamento and proposta.equipamento.strip().upper() != self.venda.equipamentos.strip().upper():
             partes.append(f"só {proposta.equipamento}")  # pedido separado, de parte da venda
         valores = QLabel(" · ".join(partes), self)
         valores.setProperty("role", "secundario")
-        linha.addWidget(valores, stretch=1)
+        valores.setWordWrap(True)
+        linha.addStretch(1)
+        condicoes = QHBoxLayout()
+        condicoes.addSpacing(AnelDoBanco.LADO + linha.spacing())
+        condicoes.addWidget(valores, stretch=1)
+        bloco.addLayout(condicoes)
         if proposta.dias_esperando is not None:
             espera = QLabel(_ha_quanto(proposta.dias_esperando), self)
             espera.setToolTip("Sem resposta do banco desde o envio (ou a última troca de status)")
@@ -455,8 +469,9 @@ class CardDaVenda(QFrame):
                 itens["bolinhas"].append(bolinha)
         caixa.addSpacing((len(RESPOSTAS_RAPIDAS) - len(itens["bolinhas"])) * (Bolinha.LADO + caixa.spacing()))
         linha.addLayout(caixa)
+        itens["condicoes"] = valores
         self.linhas_de_banco.append(itens)
-        return linha
+        return bloco
 
     def paintEvent(self, evento) -> None:
         super().paintEvent(evento)

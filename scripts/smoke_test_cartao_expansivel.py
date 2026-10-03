@@ -490,7 +490,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     assert (f._banco.currentText(), f._equipamento.currentText(), f._status.currentText()) == ("PORTOBANK", "MESA", "Em Análise")
     assert f._valor.value() == 20000 and f._meses.value() == 12 and f._observacoes.toPlainText() == "obs MESA"
     assert f._data.texto() == "05/03/2026"
-    assert len(f._botoes_copiar) == 7 and all(b.isVisible() for b in f._botoes_copiar), "copiar em cada campo"
+    assert len(f._botoes_copiar) == 9 and all(b.isVisible() for b in f._botoes_copiar), "copiar em cada campo"
     assert f._botao_editar.isVisible() and f._botao_duplicar.isVisible() and f._botao_recolher.isVisible()
     assert not f._botao_ok.isVisible() and not f._botao_cancelar.isVisible()
     assert lista.chave_expandida() == expansor.indice_aberto() and f.isVisible() and f.parentWidget() is lista.viewport()
@@ -508,7 +508,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
           "os cards de baixo descem e nenhum se sobrepõe.")
 
     # copiar funciona dentro do card
-    f._botoes_copiar[4].click()
+    f._botoes_copiar[6].click()  # o do banco (data, valor, meses, carencia, parcela, equipamento, banco...)
     assert QApplication.clipboard().text() == "PORTOBANK"
 
     # so um card por vez: expandir outro recolhe o anterior
@@ -694,7 +694,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     assert {**nova, "CPF": None, "ID_PROPOSTA": None, "ID_VENDA": None} == {
         "DATA": pd.Timestamp(date.today()), "CPF": None, "VALOR (R$)": 75000.0, "MESES": 36.0,
         "EQUIPAMENTO": "HAKON", "BANCO": "HUBCRED BV 2", "STATUS": "Em Análise", "OBSERVAÇÕES": "obs HAKON",
-        "ID_PROPOSTA": None, "ID_VENDA": None,
+        "ID_PROPOSTA": None, "ID_VENDA": None, "CARÊNCIA (DIAS)": None, "PARCELA (R$)": None,
     }, nova
     # a copia de uma proposta de antes das vendas (sem venda) nasce numa venda nova, com o proprio ID
     assert nova["ID_PROPOSTA"].startswith("P-") and nova["ID_VENDA"].startswith("V-"), nova
@@ -883,7 +883,7 @@ def testar_telas(app: QApplication) -> None:
 # 5) a grade compacta do formulario, o vendedor e o que foi removido
 
 def testar_grade_do_formulario(app: QApplication) -> None:
-    linha("3) Formulário em grade: campos lado a lado, só as Observações na largura toda")
+    linha("3) Formulário em grade: campos lado a lado (com carência e parcela), só as Observações na largura toda")
     f = FormularioProposta("52998224725", "ALFA CLIENTE", proposta={
         "DATA": pd.Timestamp(2026, 3, 1), "CPF": "52998224725", "VALOR (R$)": 75000.0, "MESES": 36.0, "EQUIPAMENTO": "HAKON",
         "BANCO": "SANTANDER", "STATUS": "Negado", "OBSERVAÇÕES": "obs"}, indice=0)
@@ -900,17 +900,21 @@ def testar_grade_do_formulario(app: QApplication) -> None:
     topo = lambda c: celula(c).mapTo(f, QPoint(0, 0)).y()  # noqa: E731
     esquerda = lambda c: celula(c).mapTo(f, QPoint(0, 0)).x()  # noqa: E731
     assert topo(f._data) == topo(f._meses) == topo(f._status), "Data, Meses e Status na mesma linha"
-    assert topo(f._valor) == topo(f._equipamento) == topo(f._banco), "Valor, Equipamento e Banco na mesma linha"
-    assert topo(f._data) < topo(f._valor) < topo(f._observacoes), "as linhas seguem a ordem"
-    assert esquerda(f._data) < esquerda(f._meses) < esquerda(f._status) and esquerda(f._valor) < esquerda(f._equipamento) < esquerda(f._banco)
+    assert topo(f._valor) == topo(f._carencia) == topo(f._parcela), "Valor, Carência e Parcela na mesma linha"
+    assert topo(f._equipamento) == topo(f._banco), "Equipamento e Banco na mesma linha"
+    assert topo(f._data) < topo(f._valor) < topo(f._equipamento) < topo(f._observacoes), "as linhas seguem a ordem"
+    assert esquerda(f._data) < esquerda(f._meses) < esquerda(f._status) and esquerda(f._valor) < esquerda(f._carencia) < esquerda(f._parcela)
+    assert esquerda(f._equipamento) < esquerda(f._banco)
     assert celula(f._observacoes).width() == f.width(), "as observações ocupam a largura toda"
-    for campo, maximo in ((f._data, 190), (f._meses, 120), (f._status, 250), (f._valor, 210), (f._banco, 260)):
+    for campo, maximo in ((f._data, 190), (f._meses, 120), (f._status, 250), (f._valor, 210), (f._carencia, 140),
+                          (f._parcela, 190), (f._banco, 260)):
         assert celula(campo).width() <= maximo, f"largura do campo: {celula(campo).width()} > {maximo} (so o que o conteudo pede)"
-    assert celula(f._equipamento).width() > celula(f._valor).width(), "o equipamento (nome longo) fica com o resto da largura"
-    assert f.sizeHint().height() <= 300, f"formulario compacto (menos alto): {f.sizeHint().height()} px"
+    assert celula(f._equipamento).width() > celula(f._banco).width(), "o equipamento (nome longo) fica com o resto da largura"
+    # 350: uma linha a mais desde a carencia e a parcela (02/10/2026); antes eram 300
+    assert f.sizeHint().height() <= 350, f"formulario compacto (menos alto): {f.sizeHint().height()} px"
     largura_minima = f.minimumSizeHint().width()
     assert largura_minima <= 460, f"a grade cabe numa tela estreita: precisa de {largura_minima} px"
-    print(f"OK: 3 linhas de campos (Data/Meses/Status, Valor/Equipamento/Banco, Observações inteira), cada um com a largura do "
+    print(f"OK: 4 linhas de campos (Data/Meses/Status, Valor/Carência/Parcela, Equipamento/Banco, Observações inteira), cada um com a largura do "
           f"conteúdo; formulário com {f.sizeHint().height()} px de altura e a grade pede no mínimo {largura_minima} px de largura.")
     f.close()
 
@@ -942,7 +946,7 @@ def testar_vendedor(app: QApplication) -> None:
                         via.duplo_clique_no_card("SANTANDER")
                         assert via.expansor.esta_expandido(), f"{via.nome}: o vendedor expande a proposta"
                         f = via.expansor.formulario()
-                        assert f._modo_leitura and f._banco.currentText() == "SANTANDER" and len(f._botoes_copiar) == 7
+                        assert f._modo_leitura and f._banco.currentText() == "SANTANDER" and len(f._botoes_copiar) == 9
                         assert f._botao_editar.isHidden() and f._botao_duplicar.isHidden(), f"{via.nome}: vendedor nunca edita nem duplica"
                         assert via.botao_nova.isHidden() and via.botao_excluir.isHidden()
                         f._salvar()  # mesmo por codigo: em leitura nao grava

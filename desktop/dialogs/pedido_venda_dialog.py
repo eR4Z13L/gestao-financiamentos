@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pandas as pd
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -123,6 +124,24 @@ class PedidoVendaDialog(QDialog):
         linha_valor.addWidget(self._meses, stretch=1)
         formulario.addRow("Valor solicitado *", linha_valor)
 
+        # as condicoes do banco (opcionais): em quantos dias vem a 1a parcela, e o valor dela
+        self._carencia = QComboBox()
+        self._carencia.setEditable(True)
+        self._carencia.addItems([str(dias) for dias in propostas_mod.CARENCIAS_COMUNS])
+        self._carencia.lineEdit().setValidator(QIntValidator(0, propostas_mod.CARENCIA_MAXIMA_DIAS, self))
+        self._carencia.setCurrentText("")
+        self._carencia.lineEdit().setPlaceholderText("dias")
+        self._parcela = QDoubleSpinBox()
+        self._parcela.setRange(0, 10_000_000)
+        self._parcela.setDecimals(2)
+        self._parcela.setPrefix("R$ ")
+        self._parcela.setGroupSeparatorShown(True)
+        linha_condicoes = QHBoxLayout()
+        linha_condicoes.addWidget(self._carencia, stretch=1)
+        linha_condicoes.addWidget(QLabel("Parcela"))
+        linha_condicoes.addWidget(self._parcela, stretch=2)
+        formulario.addRow("Carência (dias)", linha_condicoes)
+
         self._data = CampoData(permitir_futuro=True)
         self._data.definir_data(QDate.currentDate())
         formulario.addRow("Data do envio", self._data)
@@ -136,6 +155,8 @@ class PedidoVendaDialog(QDialog):
             ultima = venda.propostas[-1]
             self._valor.setValue(float(ultima.valor or 0))
             self._meses.setValue(int(ultima.meses or 0))
+            # a carencia costuma ser a mesma pedida a todos; a parcela, nao (cada banco calcula a sua)
+            self._carencia.setCurrentText(str(ultima.carencia) if ultima.carencia is not None else "")
 
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.botao_gravar = botoes.button(QDialogButtonBox.StandardButton.Ok)
@@ -216,6 +237,8 @@ class PedidoVendaDialog(QDialog):
             "DATA": pd.Timestamp(data.year(), data.month(), data.day()),
             "VALOR (R$)": self._valor.value() or "",
             "MESES": self._meses.value() or "",
+            "CARÊNCIA (DIAS)": self._carencia.currentText().strip(),
+            "PARCELA (R$)": self._parcela.value() or "",
             "BANCO": banco,
             "OBSERVAÇÕES": self._observacoes.toPlainText().strip(),
         }

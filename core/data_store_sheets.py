@@ -189,7 +189,7 @@ def ler_propostas() -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=bd.PROPOSTAS_COLUNAS)
     df = _com_colunas_esperadas(df, bd.PROPOSTAS_COLUNAS)
-    colunas_numericas = {"VALOR (R$)", "MESES"}
+    colunas_numericas = {"VALOR (R$)", "MESES", "CARÊNCIA (DIAS)", "PARCELA (R$)"}
     for col in bd.PROPOSTAS_COLUNAS:
         if col == "DATA":
             df[col] = _para_data(df[col])

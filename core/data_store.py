@@ -112,6 +112,8 @@ PROPOSTAS_COLUNAS_EDITAVEIS = [
     "OBSERVAÇÕES",
     "ID_PROPOSTA",
     "ID_VENDA",
+    "CARÊNCIA (DIAS)",
+    "PARCELA (R$)",
 ]
 
 # Ordem completa da aba, incluindo as colunas calculadas (VENDEDOR, CLIENTE,
@@ -135,6 +137,10 @@ PROPOSTAS_COLUNAS = [
     # Planilha de antes disso nao tem essas colunas - le em branco e ganha o cabecalho na 1a gravacao.
     "ID_PROPOSTA",
     "ID_VENDA",
+    # condicoes do banco (pedido de 02/10/2026): em quantos dias vem a 1a parcela, e o valor dela que o banco
+    # devolve na simulacao (depende dos juros de cada banco: o app nao calcula). Tambem no FIM, pelo mesmo motivo.
+    "CARÊNCIA (DIAS)",
+    "PARCELA (R$)",
 ]
 
 # Uma linha por venda (cliente + um ou mais equipamentos); as propostas dela apontam pra ela pelo ID_VENDA.
@@ -183,7 +189,7 @@ _COLUNAS_DE_DATA = {
 }
 _COLUNAS_DE_MOEDA = {
     ABA_EQUIPAMENTOS: {"VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"},
-    ABA_PROPOSTAS: {"VALOR (R$)"},
+    ABA_PROPOSTAS: {"VALOR (R$)", "PARCELA (R$)"},
 }
 
 # tudo que nao e data (CELULAR incluido: e sempre texto, nunca numero)
@@ -198,7 +204,7 @@ _COLUNAS_FORCADAS_A_TEXTO = {
 _EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
 _PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES", "ID_PROPOSTA", "ID_VENDA"]
-_PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES"]
+_PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES", "CARÊNCIA (DIAS)", "PARCELA (R$)"]
 _VENDEDORES_COLUNAS_TEXTO = ["NOME", "SENHA_HASH", "SALT", "ATIVO"]
 
 
@@ -645,8 +651,11 @@ def _escrever_linhas_propostas(ws, registros: list[dict]) -> None:
         ws.cell(row=i, column=11, value=registro.get("OBSERVAÇÕES"))
         ws.cell(row=i, column=12, value=_limpar_valor(registro.get("ID_PROPOSTA")))
         ws.cell(row=i, column=13, value=_limpar_valor(registro.get("ID_VENDA")))
-    # planilha de antes do vinculo com a venda: as 2 colunas novas ganham o cabecalho aqui
-    for j, coluna in ((12, "ID_PROPOSTA"), (13, "ID_VENDA")):
+        ws.cell(row=i, column=14, value=_limpar_valor(registro.get("CARÊNCIA (DIAS)")))
+        cell_parcela = ws.cell(row=i, column=15, value=_limpar_valor(registro.get("PARCELA (R$)")))
+        cell_parcela.number_format = '"R$ "#,##0.00'
+    # planilha de antes dessas colunas: as colunas novas ganham o cabecalho aqui
+    for j, coluna in ((12, "ID_PROPOSTA"), (13, "ID_VENDA"), (14, "CARÊNCIA (DIAS)"), (15, "PARCELA (R$)")):
         if _normalizar_texto(ws.cell(row=1, column=j).value) != coluna:
             ws.cell(row=1, column=j, value=coluna)
 

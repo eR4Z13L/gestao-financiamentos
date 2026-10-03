@@ -446,6 +446,10 @@ def _converter_valor(valor):
         return None
 
 
+CARENCIA_MAXIMA_DIAS = 365
+CARENCIAS_COMUNS = [30, 45, 60, 90]  # as que o formulario oferece pra escolher rapido (da pra digitar outra)
+
+
 def _validar_campos(campos: dict, *, valor_obrigatorio: bool = True) -> None:
     cpf = (campos.get("CPF") or "").strip()
     equipamento = (campos.get("EQUIPAMENTO") or "").strip()
@@ -475,11 +479,29 @@ def _validar_campos(campos: dict, *, valor_obrigatorio: bool = True) -> None:
     if not equipamento:
         raise ErroProposta("Equipamento é obrigatório.")
 
+    # as condicoes do banco sao opcionais (proposta antiga nao tem); preenchidas, tem que fazer sentido
+    carencia = campos.get("CARÊNCIA (DIAS)")
+    if not _vazio(carencia):
+        dias = _converter_valor(carencia)
+        if dias is None or dias != int(dias) or not 0 <= dias <= CARENCIA_MAXIMA_DIAS:
+            raise ErroProposta(f"Carência inválida: use um número inteiro de dias, de 0 a {CARENCIA_MAXIMA_DIAS}.")
+        campos["CARÊNCIA (DIAS)"] = int(dias)
+    parcela = campos.get("PARCELA (R$)")
+    if not _vazio(parcela):
+        valor_parcela = _converter_valor(parcela)
+        if valor_parcela is None or valor_parcela <= 0:
+            raise ErroProposta("Valor da parcela inválido: use um número maior que zero (ex: 2100 ou 2.100,00).")
+        campos["PARCELA (R$)"] = valor_parcela
+
+
+def _vazio(valor) -> bool:
+    return valor is None or valor == "" or (isinstance(valor, float) and pd.isna(valor))
+
 
 def dados_para_duplicar(proposta: Mapping, hoje: date | None = None) -> dict:
     """Ponto de partida de uma proposta NOVA a partir de uma existente - o caso
     comum e reenviar a mesma proposta a outro banco depois de uma negativa.
-    Leva cliente, equipamento, valor, meses e observacoes; a data e a de hoje, o
+    Leva cliente, equipamento, valor, meses, carencia e observacoes; a data e a de hoje, o
     banco fica em branco (quem duplica escolhe o novo) e o status volta a "Em
     Analise" (nunca herda Negado/Aprovado). Leva tambem a venda (ID_VENDA): gravar a copia manda o mesmo
     negocio a outro banco (core/vendas.py). Nao grava nada, e a original continua como estava."""
@@ -495,6 +517,9 @@ def dados_para_duplicar(proposta: Mapping, hoje: date | None = None) -> dict:
         "CPF": _texto(proposta.get("CPF")),
         "VALOR (R$)": _numero(proposta.get("VALOR (R$)")),
         "MESES": _numero(proposta.get("MESES")),
+        # a carencia costuma ser a mesma pedida a todos os bancos; a parcela, nao (cada banco calcula a sua)
+        "CARÊNCIA (DIAS)": _numero(proposta.get("CARÊNCIA (DIAS)")),
+        "PARCELA (R$)": None,
         "EQUIPAMENTO": _texto(proposta.get("EQUIPAMENTO")),
         "BANCO": "",
         "STATUS": STATUS_EM_ANALISE,

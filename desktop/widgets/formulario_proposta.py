@@ -10,7 +10,8 @@ Mesmo formulario serve pra tres casos:
   cliente pesquisavel na primeira linha.
 
 Os campos ficam numa grade compacta (Data, Meses e Status numa linha; Valor,
-Equipamento e Banco na outra; so as Observacoes ocupam a largura toda) - cada um
+Carencia e Parcela na outra; Equipamento e Banco na terceira; so as Observacoes ocupam
+a largura toda) - cada um
 com a largura que o conteudo pede, pro card expandido ser o menos alto possivel.
 
 Uma proposta existente abre primeiro em MODO LEITURA (campos travados - mesma
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 import pandas as pd
 from PySide6.QtCore import QDate, QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QIntValidator, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QComboBox,
@@ -154,6 +155,19 @@ class FormularioProposta(QWidget):
         self._valor.setGroupSeparatorShown(True)
         self._meses = QSpinBox()
         self._meses.setRange(0, 120)
+        # condicoes do banco: em quantos dias vem a 1a parcela (as comuns pra escolher, ou digitar outra) e o valor
+        # da parcela que o banco devolve; as duas opcionais (proposta antiga nao tem)
+        self._carencia = ComboTravavel()
+        self._carencia.setEditable(True)
+        self._carencia.addItems([str(dias) for dias in propostas_mod.CARENCIAS_COMUNS])
+        self._carencia.lineEdit().setValidator(QIntValidator(0, propostas_mod.CARENCIA_MAXIMA_DIAS, self))
+        self._carencia.lineEdit().setPlaceholderText("dias")
+        self._carencia.setMinimumContentsLength(4)
+        self._parcela = QDoubleSpinBox()
+        self._parcela.setRange(0, 10_000_000)
+        self._parcela.setDecimals(2)
+        self._parcela.setPrefix("R$ ")
+        self._parcela.setGroupSeparatorShown(True)
 
         self._equipamento = ComboTravavel()
         self._equipamento.setEditable(True)
@@ -186,7 +200,7 @@ class FormularioProposta(QWidget):
         self._observacoes = QPlainTextEdit()
         self._observacoes.setFixedHeight(_ALTURA_OBSERVACOES)
 
-        for campo in (self._valor, self._meses, self._equipamento, self._banco, self._status):
+        for campo in (self._valor, self._meses, self._carencia, self._parcela, self._equipamento, self._banco, self._status):
             campo.installEventFilter(self._roda)
 
         # -- a grade: cada campo com a largura que o conteudo pede (o que sobra fica vazio) ----------
@@ -196,6 +210,8 @@ class FormularioProposta(QWidget):
         # 0 = campo nao preenchido, entao nao ha o que copiar
         celula_valor = self._celula("Valor solicitado *", self._valor, lambda c: c.cleanText() if c.value() else "", maximo=210)
         celula_meses = self._celula("Meses", self._meses, lambda c: str(c.value()) if c.value() else "", maximo=120)
+        celula_carencia = self._celula("Carência (dias)", self._carencia, lambda c: c.currentText().strip(), maximo=140)
+        celula_parcela = self._celula("Parcela", self._parcela, lambda c: c.cleanText() if c.value() else "", maximo=190)
         celula_equipamento = self._celula("Equipamento *", self._equipamento, lambda c: c.currentText().strip())
         celula_banco = self._celula("Banco/financeira *", self._banco, lambda c: c.currentText().strip(), maximo=260)
         celula_status = self._celula("Status", self._status, lambda c: c.currentText().strip(), maximo=250)
@@ -203,7 +219,9 @@ class FormularioProposta(QWidget):
 
         for celulas in (
             ((celula_data, 3), (celula_meses, 2), (celula_status, 4)),
-            ((celula_valor, 3), (celula_equipamento, 6), (celula_banco, 4)),
+            # o valor com as condicoes do banco que mudam a parcela: em quantos dias vem a 1a e quanto ela fica
+            ((celula_valor, 3), (celula_carencia, 2), (celula_parcela, 3)),
+            ((celula_equipamento, 6), (celula_banco, 4)),
         ):
             linha = QHBoxLayout()
             linha.setSpacing(_ESPACO_ENTRE_CAMPOS)
@@ -220,7 +238,7 @@ class FormularioProposta(QWidget):
         # evita que as linhas "pulem" ao alternar entre leitura e edicao
         self._banco.ensurePolished()
         altura_caixa = self._banco.sizeHint().height()
-        for campo in (self._data.campo, self._valor, self._meses):
+        for campo in (self._data.campo, self._valor, self._meses, self._parcela):
             campo.setMinimumHeight(altura_caixa)
 
         # Editar/Duplicar/Recolher so em modo leitura; OK/Cancel so em modo edicao -
@@ -300,6 +318,11 @@ class FormularioProposta(QWidget):
         meses = proposta.get("MESES") if proposta else None
         self._meses.setValue(int(meses) if meses is not None and not pd.isna(meses) else 0)
 
+        carencia = proposta.get("CARÊNCIA (DIAS)") if proposta else None
+        self._carencia.setCurrentText(str(int(carencia)) if carencia is not None and not pd.isna(carencia) else "")
+        parcela = proposta.get("PARCELA (R$)") if proposta else None
+        self._parcela.setValue(float(parcela) if parcela is not None and not pd.isna(parcela) else 0)
+
         self._equipamento.setCurrentText(proposta.get("EQUIPAMENTO", "") if proposta else "")
         self._definir_banco(proposta.get("BANCO", "") if proposta else "")
         # o cursor fica no FIM do texto depois de preencher e um nome comprido mostraria so o final dele
@@ -332,6 +355,8 @@ class FormularioProposta(QWidget):
             self._data.texto(),
             self._valor.value(),
             self._meses.value(),
+            self._carencia.currentText().strip(),
+            self._parcela.value(),
             self._equipamento.currentText().strip(),
             self._banco.currentText().strip(),
             self._status.currentText().strip(),
@@ -345,7 +370,8 @@ class FormularioProposta(QWidget):
     def _campos_editaveis(self) -> tuple[QWidget, ...]:
         # o campo de cliente (so existe em proposta nova, que nunca abre em
         # modo leitura) fica de fora de proposito
-        return (self._data, self._valor, self._meses, self._equipamento, self._banco, self._status, self._observacoes)
+        return (self._data, self._valor, self._meses, self._carencia, self._parcela, self._equipamento, self._banco,
+                self._status, self._observacoes)
 
     # -- modo leitura x edicao ------------------------------------------------------
 
@@ -382,7 +408,7 @@ class FormularioProposta(QWidget):
         """Somente leitura (nao "desabilitado"): o campo mantem a mesma caixa da
         edicao e o texto continua selecionavel/copiavel, mas nada muda."""
         self._data.definir_somente_leitura(travar)
-        for campo in (self._valor, self._meses):
+        for campo in (self._valor, self._meses, self._parcela):
             campo.setReadOnly(travar)
             # setas de "sobe/desce" so fazem sentido editando
             campo.setButtonSymbols(
@@ -390,11 +416,11 @@ class FormularioProposta(QWidget):
             )
         self._observacoes.setReadOnly(travar)
         # o QSS (desktop/theme.py) so da caixa a estes tres quando travados
-        for campo in (self._valor, self._meses, self._observacoes):
+        for campo in (self._valor, self._meses, self._parcela, self._observacoes):
             campo.setProperty("travado", travar)
             campo.style().unpolish(campo)
             campo.style().polish(campo)
-        for combo in (self._equipamento, self._banco, self._status):
+        for combo in (self._equipamento, self._banco, self._status, self._carencia):
             combo.definir_travado(travar)
 
     def _habilitar_edicao(self) -> None:
@@ -523,6 +549,8 @@ class FormularioProposta(QWidget):
             "CPF": cpf,
             "VALOR (R$)": valor_informado,
             "MESES": self._meses.value() or "",
+            "CARÊNCIA (DIAS)": self._carencia.currentText().strip(),
+            "PARCELA (R$)": self._parcela.value() or "",
             "EQUIPAMENTO": self._equipamento.currentText().strip(),
             "BANCO": banco,
             "STATUS": status,

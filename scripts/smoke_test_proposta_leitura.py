@@ -140,10 +140,10 @@ def main() -> None:
         dialogo = _abrir(proposta, indice)
         assert _estado_leitura(dialogo)
         assert _todos_habilitados(dialogo), "campos ficam habilitados (com a caixa de sempre) - so nao editam"
-        assert len(dialogo._botoes_copiar) == len(dialogo._campos_editaveis()) == 7
+        assert len(dialogo._botoes_copiar) == len(dialogo._campos_editaveis()) == 9
         assert dialogo._botao_recolher.text() == "Recolher" and dialogo._botao_editar.text() == "Editar"
         assert dialogo._botao_duplicar.text() == "Mandar a outro banco"
-        print("OK: 7 campos somente leitura (habilitados), 7 botões de copiar, Editar + Mandar a outro banco + Recolher (sem OK/Cancel).")
+        print("OK: 9 campos somente leitura (habilitados, com carência e parcela), 9 botões de copiar, Editar + Mandar a outro banco + Recolher (sem OK/Cancel).")
 
         assert dialogo._data.texto() == proposta["DATA"].strftime("%d/%m/%Y")
         assert dialogo._equipamento.currentText() == proposta["EQUIPAMENTO"]
@@ -179,19 +179,20 @@ def main() -> None:
         clipboard = QApplication.clipboard()
         data = proposta["DATA"]
         digitos_valor = f"{float(proposta['VALOR (R$)']):.2f}".replace(".", "")
+        # a ordem dos botoes: data, valor, meses, carencia, parcela, equipamento, banco, status, observacoes
         esperados = {
             0: data.strftime("%d/%m/%Y"),
             2: str(int(proposta["MESES"])),
-            3: proposta["EQUIPAMENTO"],
-            4: proposta["BANCO"],
-            5: proposta["STATUS"],
+            5: proposta["EQUIPAMENTO"],
+            6: proposta["BANCO"],
+            7: proposta["STATUS"],
         }
         if proposta["OBSERVAÇÕES"]:
-            esperados[6] = proposta["OBSERVAÇÕES"].strip()
+            esperados[8] = proposta["OBSERVAÇÕES"].strip()
         for posicao, esperado in esperados.items():
             dialogo._botoes_copiar[posicao].click()
             assert clipboard.text() == esperado, f"campo {posicao}: copiou {clipboard.text()!r}, esperado {esperado!r}"
-        print(f"OK: data, meses, equipamento, banco, status{' e observações' if 6 in esperados else ''} copiados corretamente.")
+        print(f"OK: data, meses, equipamento, banco, status{' e observações' if 8 in esperados else ''} copiados corretamente.")
 
         dialogo._botoes_copiar[1].click()
         copiado = clipboard.text()
@@ -405,7 +406,8 @@ def main() -> None:
             dialogo._data.campo.setText(texto)
             dialogo._salvar()
             assert dialogo.eventos == [] and mensagens and mensagens[-1][0] == titulo_esperado, (texto, mensagens)
-        assert propostas_mod.listar_propostas().loc[indice].to_dict() == obs_gravada, "nada foi gravado com data ruim"
+        # linha_confere: campo vazio (NaN) conta como igual a vazio - um "==" de dicionario diria que NaN != NaN
+        assert propostas_mod.linha_confere(propostas_mod.listar_propostas().loc[indice].to_dict(), obs_gravada),             "nada foi gravado com data ruim"
         # data valida escolhida de uma vez: grava
         dialogo._data.campo.setText("")
         QTest.keyClicks(dialogo._data.campo, "10112025")
