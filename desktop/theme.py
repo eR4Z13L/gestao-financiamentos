@@ -298,6 +298,34 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
     QPushButton[role="botao_link"]:disabled {{
         color: {p['texto']};
     }}
+    /* caixinhas de marcar (ex.: os equipamentos que um pedido cobre): sem o fundo da janela (virava uma faixa escura
+       sobre o card) e com o quadradinho visivel nos dois temas - marcada, cheia na cor de destaque */
+    QCheckBox {{
+        background-color: transparent;
+        spacing: 8px;
+    }}
+    QCheckBox::indicator {{
+        width: 15px;
+        height: 15px;
+        border: 1px solid {p['texto_secundario']};
+        border-radius: 4px;
+        background-color: {p['bg_card']};
+    }}
+    QCheckBox::indicator:checked {{
+        border: 1px solid {p['destaque']};
+        background-color: {p['destaque']};
+    }}
+    QCheckBox::indicator:disabled {{
+        border: 1px solid {p['borda']};
+    }}
+    QCheckBox::indicator:checked:disabled {{
+        background-color: {p['texto_secundario']};
+        border: 1px solid {p['texto_secundario']};
+    }}
+    /* o link que apaga algo (ex.: "Excluir esta proposta..." no card da venda): na cor de erro */
+    QPushButton[role="botao_link"][perigo="true"] {{
+        color: {p['erro']};
+    }}
 
     /* a faixa "Filtro do dashboard: ..." no topo de Todas as Propostas */
     QFrame[role="chip_filtro"] {{

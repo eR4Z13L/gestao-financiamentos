@@ -34,6 +34,7 @@ class ComboTravavel(QComboBox):
             if not self._era_editavel:
                 self.setEditable(True)
             self.lineEdit().setReadOnly(True)
+            self.lineEdit().setCursorPosition(0)  # um nome comprido mostra o comeco, nao o fim
         else:
             if not self._era_editavel:
                 # setEditable(False) descarta o texto do lineEdit e volta a mostrar o

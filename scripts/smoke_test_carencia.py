@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import openpyxl
 import pandas as pd
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication
 
 import config
 
@@ -34,7 +34,6 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import vendas as v
-from desktop.dialogs.pedido_venda_dialog import PedidoVendaDialog
 from desktop.screens import vendas_screen as tela_mod
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 from desktop.widgets.formulario_proposta import FormularioProposta
@@ -119,6 +118,7 @@ def main() -> None:
             assert f._carencia.currentText() == "" and f._parcela.value() == 0, "proposta nova começa em branco"
             f._valor.setValue(50000)
             f._meses.setValue(36)
+            f._equipamento.addItem("Mesa Exemplo")  # como se ja estivesse no cadastro (a lista e fechada)
             f._equipamento.setCurrentText("Mesa Exemplo")
             f._banco.setCurrentText(b1)
             f._carencia.setCurrentText("120")  # um prazo fora da lista: digitado
@@ -140,19 +140,21 @@ def main() -> None:
             assert pd.isna(limpa[CARENCIA]) and pd.isna(limpa[PARCELA]), "apagar volta a ficar em branco"
             print("OK: 30/45/60/90 pra escolher ou digitar outro; grava, reabre preenchido e travado; apagar deixa em branco.")
 
-            linha("4) Mandar a outro banco: a carência vem junto, a parcela não")
+            linha("4) + Adicionar proposta (outro banco): a carência vem junto, a parcela não")
             dup = propostas_mod.dados_para_duplicar(bd.ler_propostas(caminho).loc[v.indice_da_proposta(id_p)].to_dict())
             assert dup[CARENCIA] == 45 and dup[PARCELA] is None
             tela = tela_mod.VendasScreen()
             resumo = next(r for r in v.listar_vendas() if r.id == id_venda)
-            d = PedidoVendaDialog(tela, venda=resumo)
-            assert d._carencia.currentText() == "45" and d._parcela.value() == 0
-            d._banco.setCurrentText(b2)
-            d._parcela.setValue(2050)
-            d._gravar()
-            assert d.result() == QDialog.DialogCode.Accepted
-            segunda = bd.ler_propostas(caminho).loc[v.indice_da_proposta(d.id_proposta)]
-            assert segunda[CARENCIA] == 45 and segunda[PARCELA] == 2050
+            tela.editar_proposta(resumo, None)  # o "+ Adicionar proposta" do card
+            f = next(c for c in tela.cards if c.venda.id == id_venda).formulario
+            assert f._carencia.currentText() == "45" and f._parcela.value() == 0
+            f._banco.setCurrentText(b2)
+            f._parcela.setValue(2050)
+            f._salvar()
+            QApplication.processEvents()
+            ids = [p.id for p in next(r for r in v.listar_vendas() if r.id == id_venda).propostas]
+            segunda = bd.ler_propostas(caminho).loc[v.indice_da_proposta(ids[-1])]
+            assert len(ids) == 2 and segunda[CARENCIA] == 45 and segunda[PARCELA] == 2050
             print("OK: o pedido ao 2º banco já vem com 45 dias; a parcela é a dele (cada banco calcula a sua).")
 
             linha("5) Card da venda: as condições embaixo do nome do banco")

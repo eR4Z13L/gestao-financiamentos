@@ -1,4 +1,4 @@
-"""Tela Cadastros - as listas de apoio do app (Bancos, Vendedores; depois Equipamentos), em cards, uma secao embaixo
+"""Tela Cadastros - as listas de apoio do app (Bancos, Equipamentos, Vendedores), em cards, uma secao embaixo
 da outra numa pagina que rola, com uma busca unica no topo que filtra todas. So o ADMIN acessa (nem aparece no menu
 pro VENDEDOR - ver desktop/main_window.py). Cada secao e a peca desktop/widgets/cadastro_em_cards.py.
 
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollAre
 
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.cadastro_bancos import CadastroBancos
+from desktop.widgets.cadastro_equipamentos import CadastroEquipamentos
 from desktop.widgets.cadastro_vendedores import CadastroVendedores
 
 
@@ -51,8 +52,9 @@ class CadastrosScreen(QWidget):
         corpo.setSpacing(16)
 
         self.bancos = CadastroBancos(dentro_de_pagina=True)
+        self.equipamentos = CadastroEquipamentos(dentro_de_pagina=True)
         self.vendedores = CadastroVendedores(dentro_de_pagina=True)
-        self.secoes = [self.bancos, self.vendedores]
+        self.secoes = [self.bancos, self.equipamentos, self.vendedores]
         for secao in self.secoes:
             secao.alterado.connect(self._ao_alterar)
             corpo.addWidget(secao)

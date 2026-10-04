@@ -580,8 +580,10 @@ class MainWindow(QMainWindow):
     # -- sair --------------------------------------------------------------------------------
 
     def tem_edicao_pendente(self) -> bool:
-        """Algum card de proposta (na Ficha ou em Todas as Propostas) com edicao nao salva."""
-        return self._tela_ficha.tem_edicao_pendente() or self._tela_propostas.tem_edicao_pendente()
+        """Algum formulario de proposta (na Ficha, em Todas as Propostas ou num card de venda) com edicao nao salva."""
+        vendas = getattr(self, "_tela_vendas", None)
+        return (self._tela_ficha.tem_edicao_pendente() or self._tela_propostas.tem_edicao_pendente()
+                or (vendas is not None and vendas.tem_edicao_pendente()))
 
     def _ao_clicar_sair(self) -> None:
         if not self._confirmar_descartar_edicoes("Sair mesmo assim e descartar as alterações?"):

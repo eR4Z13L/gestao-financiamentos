@@ -542,6 +542,7 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
 
         def _nova(dialogo: FormularioProposta) -> None:
             dialogo._valor.setValue(4321)
+            dialogo._equipamento.addItem("Equip Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._equipamento.setCurrentText("Equip Novo")
             dialogo._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Novo")

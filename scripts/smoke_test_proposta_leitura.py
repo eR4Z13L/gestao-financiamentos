@@ -41,6 +41,15 @@ def linha(titulo: str) -> None:
     print(f"\n{'=' * 60}\n{titulo}\n{'=' * 60}")
 
 
+def _mesmos_equipamentos(a: str, b: str) -> bool:
+    """Numa proposta de venda o equipamento sao caixinhas (na ordem da venda): compara QUAIS, sem ordem nem caixa."""
+    return sorted(n.strip().upper() for n in a.split("+")) == sorted(n.strip().upper() for n in b.split("+"))
+
+
+def _caixinhas(dialogo: FormularioProposta) -> bool:
+    return hasattr(dialogo._equipamento, "caixas")
+
+
 def _escolher_proposta_completa() -> tuple[int, dict]:
     """Uma proposta com TODOS os campos preenchidos - pra conferir cada Copiar."""
     todas = propostas_mod.listar_propostas()
@@ -85,7 +94,10 @@ def _travados(dialogo: FormularioProposta) -> bool:
         and dialogo._valor.isReadOnly()
         and dialogo._meses.isReadOnly()
         and dialogo._observacoes.isReadOnly()
-        and all(c.travado() and c.lineEdit().isReadOnly() for c in (dialogo._equipamento, dialogo._banco, dialogo._status))
+        and all(c.travado() and c.lineEdit().isReadOnly() for c in (dialogo._banco, dialogo._status))
+        # o equipamento: lista fechada (combo) ou, numa proposta de venda, as caixinhas (travadas = desabilitadas)
+        and dialogo._equipamento.travado()
+        and (not hasattr(dialogo._equipamento, "lineEdit") or dialogo._equipamento.lineEdit().isReadOnly())
     )
 
 
@@ -146,12 +158,13 @@ def main() -> None:
         print("OK: 9 campos somente leitura (habilitados, com carência e parcela), 9 botões de copiar, Editar + Mandar a outro banco + Recolher (sem OK/Cancel).")
 
         assert dialogo._data.texto() == proposta["DATA"].strftime("%d/%m/%Y")
-        assert dialogo._equipamento.currentText() == proposta["EQUIPAMENTO"]
+        assert _mesmos_equipamentos(dialogo._equipamento.currentText(), proposta["EQUIPAMENTO"])
         assert dialogo._banco.currentText() == proposta["BANCO"]
         assert dialogo._status.currentText() == proposta["STATUS"]
         assert dialogo._observacoes.toPlainText() == proposta["OBSERVAÇÕES"]
-        assert dialogo._equipamento.lineEdit().cursorPosition() == 0, \
-            "um nome comprido tem que mostrar o COMECO no campo, nao so o final"
+        if not _caixinhas(dialogo):
+            assert dialogo._equipamento.lineEdit().cursorPosition() == 0, \
+                "um nome comprido tem que mostrar o COMECO no campo, nao so o final"
         print("OK: campos mostram os valores da proposta (o começo do texto, se for comprido).")
 
         dialogo._observacoes.selectAll()
@@ -167,7 +180,12 @@ def main() -> None:
         data_antes = dialogo._data.texto()
         QTest.keyClicks(dialogo._data.campo, "99")
         assert dialogo._data.texto() == data_antes, "digitar num campo de data travado nao muda nada"
-        for combo in (dialogo._equipamento, dialogo._banco, dialogo._status):
+        if _caixinhas(dialogo):  # proposta de venda: as caixinhas travadas nao mudam com clique
+            antes = dialogo._equipamento.currentText()
+            QTest.mouseClick(dialogo._equipamento.caixas[0], Qt.MouseButton.LeftButton)
+            assert dialogo._equipamento.currentText() == antes and not dialogo._equipamento.caixas[0].isEnabled()
+        combos = (dialogo._banco, dialogo._status) if _caixinhas(dialogo) else (dialogo._equipamento, dialogo._banco, dialogo._status)
+        for combo in combos:
             texto_antes = combo.currentText()
             combo.showPopup()
             assert not combo.view().isVisible(), "lista de opcoes nao deve abrir num combo travado"
@@ -191,6 +209,9 @@ def main() -> None:
             esperados[8] = proposta["OBSERVAÇÕES"].strip()
         for posicao, esperado in esperados.items():
             dialogo._botoes_copiar[posicao].click()
+            if posicao == 5 and _caixinhas(dialogo):  # copia o que a tela mostra: os marcados, na ordem da venda
+                assert _mesmos_equipamentos(clipboard.text(), esperado), f"equipamento: copiou {clipboard.text()!r}"
+                continue
             assert clipboard.text() == esperado, f"campo {posicao}: copiou {clipboard.text()!r}, esperado {esperado!r}"
         print(f"OK: data, meses, equipamento, banco, status{' e observações' if 8 in esperados else ''} copiados corretamente.")
 
@@ -253,7 +274,11 @@ def main() -> None:
         assert not any([dialogo._valor.isReadOnly(), dialogo._meses.isReadOnly(), dialogo._observacoes.isReadOnly()])
         assert not any(c.travado() for c in (dialogo._equipamento, dialogo._banco, dialogo._status))
         assert not dialogo._status.isEditable(), "Status volta a ser lista fechada (so opcoes oficiais)"
-        assert dialogo._equipamento.isEditable() and not dialogo._banco.isEditable(), "Banco e lista fechada (o cadastro)"
+        assert not dialogo._banco.isEditable(), "Banco e lista fechada (o cadastro)"
+        if _caixinhas(dialogo):
+            assert all(c.isEnabled() for c in dialogo._equipamento.caixas), "editando, as caixinhas destravam"
+        else:
+            assert not dialogo._equipamento.isEditable(), "Equipamento tambem e lista fechada (o cadastro)"
         assert dialogo._status.currentText() == proposta["STATUS"], "trocar de modo nao pode mudar o status"
         assert not any(b.isVisible() for b in dialogo._botoes_copiar), "Copiar some ao editar"
         assert dialogo._botao_ok.isVisible() and dialogo._botao_cancelar.isVisible()
@@ -289,7 +314,7 @@ def main() -> None:
         assert dialogo._observacoes.toPlainText() == original["OBSERVAÇÕES"], "observacoes deveria ser restaurada"
         assert abs(dialogo._valor.value() - float(original["VALOR (R$)"])) < 0.01, "valor deveria ser restaurado"
         assert dialogo._meses.value() == int(original["MESES"])
-        assert dialogo._equipamento.currentText() == original["EQUIPAMENTO"]
+        assert _mesmos_equipamentos(dialogo._equipamento.currentText(), original["EQUIPAMENTO"])
         assert dialogo._banco.currentText() == original["BANCO"]
         assert dialogo._status.currentText() == original["STATUS"]
         assert dialogo._data.texto() == original["DATA"].strftime("%d/%m/%Y"), "a data digitada tambem e descartada"

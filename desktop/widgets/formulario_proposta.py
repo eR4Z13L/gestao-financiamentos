@@ -34,6 +34,7 @@ from PySide6.QtCore import QDate, QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QIntValidator, QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
+    QCheckBox,
     QComboBox,
     QCompleter,
     QDoubleSpinBox,
@@ -57,6 +58,7 @@ from core import vendas as vendas_mod
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
 from desktop.widgets.combo_travavel import ComboTravavel
+from desktop.widgets.perguntas_da_venda import perguntar_se_perdida
 
 _CARACTERES_MINIMOS_DO_COMBO = 8  # o combo encolhe ate isso; sem isto o mais largo dos nomes de equipamento decide
 _ESPACO_ENTRE_CAMPOS = 12
@@ -77,6 +79,52 @@ class _IgnoraRodaSemFoco(QObject):
             evento.ignore()  # sem aceitar, o evento sobe pro pai e a lista rola
             return True
         return False
+
+
+class _CaixasDeEquipamento(QWidget):
+    """Os equipamentos de uma proposta que esta numa venda: uma caixinha por equipamento da venda (decidido com o
+    usuario em 03/10/2026) - desmarca o que este banco nao financia. Responde como o combo (currentText /
+    setCurrentText / definir_travado) pra o resto do formulario nao precisar saber qual dos dois e."""
+
+    def __init__(self, equipamentos_da_venda: list[str], parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setProperty("role", "transparente")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(2)
+        self.caixas: list[QCheckBox] = []
+        for nome in equipamentos_da_venda:
+            self._nova_caixa(nome)
+
+    def _nova_caixa(self, nome: str) -> QCheckBox:
+        caixa = QCheckBox(nome, self)
+        caixa.setChecked(True)
+        self._layout.addWidget(caixa)
+        self.caixas.append(caixa)
+        return caixa
+
+    def currentText(self) -> str:
+        return equipamentos_mod.SEPARADOR.join(c.text() for c in self.caixas if c.isChecked())
+
+    def setCurrentText(self, texto: str) -> None:
+        """Marca so os citados em `texto`; vazio (proposta nova) marca todos - por padrao o pedido cobre a venda
+        toda. Um nome que nao e da venda (proposta de antes) vira mais uma caixinha, marcada."""
+        nomes = equipamentos_mod.nomes_do_texto(texto)
+        chaves = {n.upper() for n in nomes}
+        for caixa in self.caixas:
+            caixa.setChecked(not nomes or caixa.text().upper() in chaves)
+        conhecidos = {c.text().upper() for c in self.caixas}
+        for nome in nomes:
+            if nome.upper() not in conhecidos:
+                self._nova_caixa(nome).setChecked(True)
+
+    def definir_travado(self, travar: bool) -> None:
+        self._travado = travar
+        for caixa in self.caixas:
+            caixa.setEnabled(not travar)
+
+    def travado(self) -> bool:
+        return getattr(self, "_travado", False)
 
 
 class FormularioProposta(QWidget):
@@ -100,10 +148,15 @@ class FormularioProposta(QWidget):
         indice: int | None = None,
         base: dict | None = None,
         parent: QWidget | None = None,
+        *,
+        so_edicao: bool = False,
     ):
         """`base`: valores iniciais de uma proposta NOVA (ver
-        propostas_mod.dados_para_duplicar); ignorado se `proposta` existe."""
+        propostas_mod.dados_para_duplicar); ignorado se `proposta` existe. `so_edicao`: dentro do card da venda
+        aberto - abre direto editando (a leitura e a propria linha do banco no card) e Cancel fecha o formulario
+        (avisa `cancelada`) em vez de voltar pra leitura."""
         super().__init__(parent)
+        self._so_edicao = so_edicao
         self._cpf = cpf
         self._indice = indice
         self._nome_cliente = nome_cliente
@@ -169,14 +222,19 @@ class FormularioProposta(QWidget):
         self._parcela.setPrefix("R$ ")
         self._parcela.setGroupSeparatorShown(True)
 
-        self._equipamento = ComboTravavel()
-        self._equipamento.setEditable(True)
-        _combo_flexivel(self._equipamento)
+        # o equipamento sempre vem do cadastro (Cadastros > Equipamentos), nunca digitado: numa venda, as caixinhas com
+        # os equipamentos dela; fora de uma venda, a lista fechada (como a do banco)
+        equipamentos_da_venda = self._equipamentos_da_venda((origem or {}).get("ID_VENDA"))
+        if equipamentos_da_venda:
+            self._equipamento = _CaixasDeEquipamento(equipamentos_da_venda)
+        else:
+            self._equipamento = ComboTravavel()
+            _combo_flexivel(self._equipamento)
         # a lista de sugestoes so serve pra digitar/escolher (edicao). Vendedor
         # nunca edita e pode estar numa maquina sem o .xlsx local (le do Google
         # Sheets), onde ler as sugestoes falharia - abre a leitura sem elas.
-        if not sessao_mod.eh_vendedor():
-            self._equipamento.addItems(equipamentos_mod.listar_nomes_equipamento())
+        if not sessao_mod.eh_vendedor() and not equipamentos_da_venda:
+            self._equipamento.addItems(equipamentos_mod.nomes_ativos())
 
         # lista FECHADA: os bancos ativos do cadastro (Administracao > Cadastros) + "Todos"
         self._banco = ComboTravavel()
@@ -187,7 +245,10 @@ class FormularioProposta(QWidget):
         self._status = ComboTravavel()
         _combo_flexivel(self._status)
         # proposta nova so nasce com uma resposta de banco; o andamento do negocio fica na venda (core/vendas.py)
-        opcoes_status = list(propostas_mod.STATUS_OPCOES if self._existente else vendas_mod.STATUS_DA_PROPOSTA)
+        # proposta numa venda: so as 4 respostas do banco (o andamento do negocio fica na venda); as de antes das vendas
+        # ainda tem a lista antiga ate a limpeza dos status antigos
+        na_venda = bool((proposta or {}).get("ID_PROPOSTA")) or not self._existente
+        opcoes_status = list(vendas_mod.STATUS_DA_PROPOSTA if na_venda else propostas_mod.STATUS_OPCOES)
         status_atual = (origem.get("STATUS") if origem else "") or ""
         if status_atual and status_atual not in opcoes_status:
             # dados antigos tem status em CAIXA ALTA ("APROVADO", "NEGADO")
@@ -212,7 +273,8 @@ class FormularioProposta(QWidget):
         celula_meses = self._celula("Meses", self._meses, lambda c: str(c.value()) if c.value() else "", maximo=120)
         celula_carencia = self._celula("Carência (dias)", self._carencia, lambda c: c.currentText().strip(), maximo=140)
         celula_parcela = self._celula("Parcela", self._parcela, lambda c: c.cleanText() if c.value() else "", maximo=190)
-        celula_equipamento = self._celula("Equipamento *", self._equipamento, lambda c: c.currentText().strip())
+        celula_equipamento = self._celula("Equipamentos que este pedido cobre *" if equipamentos_da_venda else "Equipamento *",
+                                          self._equipamento, lambda c: c.currentText().strip(), alinhar_topo=True)
         celula_banco = self._celula("Banco/financeira *", self._banco, lambda c: c.currentText().strip(), maximo=260)
         celula_status = self._celula("Status", self._status, lambda c: c.currentText().strip(), maximo=250)
         celula_obs = self._celula("Observações", self._observacoes, lambda c: c.toPlainText().strip(), alinhar_topo=True)
@@ -255,7 +317,7 @@ class FormularioProposta(QWidget):
             linha_botoes.addWidget(botao)
         raiz.addLayout(linha_botoes)
 
-        self._aplicar_modo(leitura=self._existente)
+        self._aplicar_modo(leitura=self._existente and not so_edicao)
 
     # -- construcao ---------------------------------------------------------------
 
@@ -323,10 +385,8 @@ class FormularioProposta(QWidget):
         parcela = proposta.get("PARCELA (R$)") if proposta else None
         self._parcela.setValue(float(parcela) if parcela is not None and not pd.isna(parcela) else 0)
 
-        self._equipamento.setCurrentText(proposta.get("EQUIPAMENTO", "") if proposta else "")
+        self._definir_equipamento(proposta.get("EQUIPAMENTO", "") if proposta else "")
         self._definir_banco(proposta.get("BANCO", "") if proposta else "")
-        # o cursor fica no FIM do texto depois de preencher e um nome comprido mostraria so o final dele
-        self._equipamento.lineEdit().setCursorPosition(0)
 
         status_atual = (proposta.get("STATUS") if proposta else "") or ""
         if status_atual:
@@ -334,6 +394,31 @@ class FormularioProposta(QWidget):
 
         self._observacoes.setPlainText(proposta.get("OBSERVAÇÕES", "") if proposta else "")
         self._estado_inicial = self._estado_atual()
+
+    @staticmethod
+    def _equipamentos_da_venda(id_venda) -> list[str]:
+        """Os equipamentos da venda da proposta ([] fora de uma venda, ou se a venda nao existe mais)."""
+        if not id_venda:
+            return []
+        vendas = bd.ler_vendas(propostas_mod.CAMINHO_XLSX)
+        da_venda = vendas.loc[vendas["ID_VENDA"] == id_venda, "EQUIPAMENTOS"]
+        return equipamentos_mod.nomes_do_texto(da_venda.iloc[0]) if len(da_venda) else []
+
+    def _definir_equipamento(self, texto) -> None:
+        """Seleciona o que a proposta cita. Na lista fechada, um nome fora do cadastro (desativado, ou de antes dele)
+        entra so para esta proposta - editar outra coisa nunca troca o equipamento sem a pessoa escolher."""
+        texto = texto.strip() if isinstance(texto, str) else ""
+        if isinstance(self._equipamento, _CaixasDeEquipamento):
+            self._equipamento.setCurrentText(texto)
+            return
+        if not texto:
+            self._equipamento.setCurrentIndex(-1)
+            return
+        indice = self._equipamento.findText(texto, Qt.MatchFlag.MatchFixedString | Qt.MatchFlag.MatchCaseSensitive)
+        if indice < 0:
+            self._equipamento.insertItem(0, texto)
+            indice = 0
+        self._equipamento.setCurrentIndex(indice)
 
     def _definir_banco(self, nome) -> None:
         """Seleciona o banco gravado na proposta, EXATAMENTE como esta. Um banco fora da lista (desativado,
@@ -385,7 +470,7 @@ class FormularioProposta(QWidget):
         # VENDEDOR nunca escreve nada (core/sessao.py) - nao faz sentido nem
         # oferecer estes botoes; a barreira de verdade continua sendo a do core/
         self._botao_editar.setVisible(leitura and sessao_mod.eh_admin())
-        self._botao_duplicar.setVisible(leitura and sessao_mod.eh_admin())
+        self._botao_duplicar.setVisible(leitura and sessao_mod.eh_admin() and not self._so_edicao)
         self._botao_recolher.setVisible(leitura)
         self._botao_ok.setVisible(not leitura)
         self._botao_cancelar.setVisible(not leitura)
@@ -431,7 +516,7 @@ class FormularioProposta(QWidget):
         """Cancel: descarta o que foi digitado e VOLTA pra leitura sem recolher
         o card. Numa proposta nova nao ha leitura pra onde voltar - avisa
         `cancelada` e quem hospeda decide (tirar o card, ou voltar pra proposta de origem)."""
-        if not self._existente:
+        if not self._existente or self._so_edicao:
             self.cancelada.emit()
             return
         self._preencher_campos(self._proposta_original)
@@ -518,6 +603,10 @@ class FormularioProposta(QWidget):
             QMessageBox.warning(self, "Data em branco", "Informe a data da proposta (dd/mm/aaaa).")
             return
 
+        if isinstance(self._equipamento, _CaixasDeEquipamento) and not self._equipamento.currentText():
+            # sem nenhuma marcada, o pedido viraria "a venda toda" (o padrao de um pedido sem equipamento)
+            QMessageBox.warning(self, "Nenhum equipamento marcado", "Marque pelo menos um equipamento que este pedido cobre.")
+            return
         banco = self._banco.currentText().strip()
         status = self._status.currentText().strip()
         if not self._existente and not banco:
@@ -556,6 +645,7 @@ class FormularioProposta(QWidget):
             "STATUS": status,
             "OBSERVAÇÕES": self._observacoes.toPlainText().strip(),
         }
+        todas_negadas = False
         try:
             if self._indice is None:
                 if self._id_venda:
@@ -563,6 +653,13 @@ class FormularioProposta(QWidget):
                 else:
                     # "Laser X + Cadeira Y" no equipamento: uma venda com os dois, e esta proposta cobrindo ambos
                     _, id_proposta = vendas_mod.criar_venda(cpf, campos["EQUIPAMENTO"].split("+"), campos)
+                self.indice_gravado = vendas_mod.indice_da_proposta(id_proposta)
+            elif (self._proposta_original or {}).get("ID_PROPOSTA"):
+                # numa venda: pelo mesmo caminho da tela Vendas (troca de status com as regras e no historico);
+                # pelo ID, entao a posicao que a tela tinha nao importa
+                id_proposta = self._proposta_original["ID_PROPOSTA"]
+                sem_cpf = {coluna: valor for coluna, valor in campos.items() if coluna != "CPF"}
+                todas_negadas = vendas_mod.editar_proposta(id_proposta, sem_cpf, esperado=self._proposta_original)
                 self.indice_gravado = vendas_mod.indice_da_proposta(id_proposta)
             else:
                 # `esperado`: se a linha desse indice ja nao for a proposta que abrimos (outra tela
@@ -582,6 +679,8 @@ class FormularioProposta(QWidget):
             QMessageBox.critical(self, "Erro inesperado ao salvar", str(exc))
             return
 
+        if todas_negadas:  # a ultima resposta negou: a venda esta Perdida? (pergunta; nunca decide sozinho)
+            perguntar_se_perdida(self, self._proposta_original["ID_VENDA"], self._nome_cliente or cpf)
         status_anterior = (self._proposta_original or {}).get("STATUS") or ""
         if propostas_mod.eh_efetivado(status) and not propostas_mod.eh_efetivado(status_anterior):
             # o status ACABOU de virar Efetivado (nao ja estava): pode haver outras

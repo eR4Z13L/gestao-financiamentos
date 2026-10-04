@@ -844,6 +844,7 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
             "com o card 'Nova proposta', o historico aparece (mesmo sem propostas)"
         n = expansor.formulario()
         n._valor.setValue(4321)
+        n._equipamento.addItem("Equip Novo")  # como se ja estivesse no cadastro (a lista e fechada)
         n._equipamento.setCurrentText("Equip Novo")
         n._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
         n._banco.setCurrentText("Banco Novo")

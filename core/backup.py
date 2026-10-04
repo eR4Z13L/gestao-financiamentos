@@ -52,6 +52,7 @@ MOTIVO_PRE_MESCLAGEM = "pre-mesclagem"  # antes do antigo "Mesclar grafias de ba
 MOTIVO_PRE_NUVEM = "pre-nuvem"  # antes de "Baixar da nuvem" trocar os dados locais pelos da nuvem
 MOTIVO_COPIA_DA_NUVEM = "copia-da-nuvem"  # o que a nuvem tinha, guardado antes de o envio sobrescreve-la
 MOTIVO_PRE_VENDAS = "pre-vendas"  # antes de juntar as propostas antigas em vendas (core/migracao_vendas.py)
+MOTIVO_PRE_EQUIPAMENTOS = "pre-equipamentos"  # antes de trazer os nomes das propostas para o cadastro (core/equipamentos.py)
 
 _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # só reconhece arquivos que ESTE módulo gerou (motivo + timestamp no formato exato, com um
@@ -62,7 +63,7 @@ _FORMATO_TIMESTAMP = "%Y%m%d-%H%M%S"
 # .dat (extensao atual do arquivo real) quanto .xlsx (extensao antiga, de backups feitos antes
 # da troca - ver config.py) - assim nenhum backup ja existente some da listagem.
 _PADRAO_NOME = re.compile(
-    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem|pre-nuvem|copia-da-nuvem|pre-vendas)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
+    r"^.+\.(?P<motivo>auto|manual|pre-restauracao|pre-mesclagem|pre-nuvem|copia-da-nuvem|pre-vendas|pre-equipamentos)-(?P<quando>\d{8}-\d{6})(?:-\d+)?\.(?:dat|xlsx)$"
 )
 
 

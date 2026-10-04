@@ -122,37 +122,59 @@ def main() -> None:
         assert trocas[trocas["ID"] == id_p1]["DE"].iloc[-1] == propostas_mod.STATUS_EM_ANALISE
         print("OK: só Em Análise/Pré-aprovado/Aprovado/Negado; a última negada sugere Perdida (sem marcar sozinho); histórico com de→para.")
 
-        linha("5) Status da venda: banco escolhido, efetivada, desfechos, voltar atrás")
-        _recusa("Escolha qual banco", v.mudar_status_venda, id_venda, v.VENDA_BANCO_ESCOLHIDO)
-        _recusa("que aprovou", v.mudar_status_venda, id_venda, v.VENDA_BANCO_ESCOLHIDO, proposta_escolhida=id_p2)
-        _recusa("Escolha o banco antes", v.mudar_status_venda, id_venda, v.VENDA_EFETIVADA)
-        v.mudar_status_proposta(id_p2, propostas_mod.STATUS_APROVADO)
-        outra_venda, outra_p = v.criar_venda(fx.CPF_JOAO, ["Mesa Exemplo"], _pedido("Banco Exemplo"))
-        v.mudar_status_proposta(outra_p, propostas_mod.STATUS_APROVADO)
-        _recusa("outra venda", v.mudar_status_venda, id_venda, v.VENDA_BANCO_ESCOLHIDO, proposta_escolhida=outra_p)
-        v.mudar_status_venda(id_venda, v.VENDA_BANCO_ESCOLHIDO, proposta_escolhida=id_p2)
-        assert bd.ler_vendas(caminho).set_index("ID_VENDA").loc[id_venda, "BANCO_ESCOLHIDO"] == id_p2
-        _recusa("banco escolhido", v.mudar_status_proposta, id_p2, propostas_mod.STATUS_NEGADO)
-        v.mudar_status_venda(id_venda, v.VENDA_GARANTIA)  # a ordem nota/garantia é livre
-        v.mudar_status_venda(id_venda, v.VENDA_NOTA_FISCAL)
-        v.mudar_status_venda(id_venda, v.VENDA_EFETIVADA)
-        _recusa("já está", v.mandar_a_outro_banco, id_venda, _pedido("Banco Exemplo"))
-        print("OK: só escolhe banco que aprovou e da própria venda; efetivada só com banco; nota e garantia em qualquer ordem.")
+        linha("5) Bancos fechados (vários na venda), Efetivado por banco, venda calculada, desfechos e reabrir")
+        _recusa("que aprovou", v.fechar_proposta, id_p1)  # negada
+        v.mudar_status_proposta(id_p2, propostas_mod.STATUS_APROVADO)  # cobre a venda toda
+        v.mudar_status_proposta(id_p3, propostas_mod.STATUS_APROVADO)  # só o laser
+        _recusa("marcado como fechado pode ser efetivado", v.efetivar_proposta, id_p2)
+        v.fechar_proposta(id_p2)
+        venda_ = lambda: bd.ler_vendas(caminho).set_index("ID_VENDA").loc[id_venda]  # noqa: E731
+        assert venda_()["STATUS"] == v.VENDA_EM_ANDAMENTO and v.fechadas_da_venda(venda_()["BANCO_ESCOLHIDO"]) == [id_p2]
+        _recusa("já está coberto", v.fechar_proposta, id_p3)  # o laser já está no pedido do id_p2
+        _recusa("Desmarque o anel", v.mudar_status_proposta, id_p2, propostas_mod.STATUS_NEGADO)
+        v.desfazer_fechamento(id_p2)
+        assert venda_()["STATUS"] == v.VENDA_AGUARDANDO and venda_()["BANCO_ESCOLHIDO"] == ""
+        id_p5 = v.mandar_a_outro_banco(id_venda, _pedido("Banco Quinto", EQUIPAMENTO="Cadeira Exemplo"))
+        v.mudar_status_proposta(id_p5, propostas_mod.STATUS_APROVADO)
+        v.fechar_proposta(id_p5)  # a cadeira por um banco...
+        v.fechar_proposta(id_p3)  # ...e o laser por outro
+        assert v.fechadas_da_venda(venda_()["BANCO_ESCOLHIDO"]) == [id_p5, id_p3]
+        assert v.efetivar_proposta(id_p5) == v.VENDA_EM_ANDAMENTO, "falta o outro banco"
+        _recusa("já está Efetivado", v.desfazer_fechamento, id_p5)
+        assert v.efetivar_proposta(id_p3) == v.VENDA_EFETIVADA, "os dois fechados efetivados: a venda está Efetivada"
+        hist = bd.ler_historico(caminho)
+        assert list(hist[hist["ID"] == id_venda]["PARA"]) == [
+            v.VENDA_AGUARDANDO, v.VENDA_EM_ANDAMENTO, v.VENDA_AGUARDANDO, v.VENDA_EM_ANDAMENTO, v.VENDA_EFETIVADA]
+        assert set(hist[hist["TIPO"] == v.TIPO_FECHAMENTO]["ID"]) == {id_p2, id_p5, id_p3}
+        v.voltar_proposta(id_p3)
+        assert venda_()["STATUS"] == v.VENDA_EM_ANDAMENTO, "voltar um banco reabre o andamento"
+        assert v.efetivar_proposta(id_p3) == v.VENDA_EFETIVADA
+        id_p6 = v.mandar_a_outro_banco(id_venda, _pedido("Banco Sexto"))  # Efetivada ainda aceita outro pedido
+        assert venda_()["STATUS"] == v.VENDA_EFETIVADA, "pedido novo (não fechado) não muda a venda"
+        v.excluir_proposta(id_p6)
+        print("OK: só banco aprovado fecha; vários fechados sem repetir equipamento; cada um efetiva sozinho; a venda é "
+              "calculada (Aguardando → Em andamento → Efetivada) e tudo vai pro histórico.")
 
-        _recusa("só vale para", v.mudar_status_venda, outra_venda, v.VENDA_BANCO_ESCOLHIDO, proposta_escolhida=outra_p, motivo="Desistiu")
+        outra_venda, outra_p = v.criar_venda(fx.CPF_JOAO, ["Mesa Exemplo"], _pedido("Banco Exemplo"))
+        _recusa("vem dos bancos", v.mudar_status_venda, outra_venda, v.VENDA_EFETIVADA)
         _recusa("Motivo inválido", v.mudar_status_venda, outra_venda, v.VENDA_PERDIDA, motivo="Porque sim")
-        v.mudar_status_venda(outra_venda, v.VENDA_BANCO_ESCOLHIDO, proposta_escolhida=outra_p)
         v.mudar_status_venda(outra_venda, v.VENDA_NAO_EFETIVADA, motivo="Comprou à vista")
         assert bd.ler_vendas(caminho).set_index("ID_VENDA").loc[outra_venda, "MOTIVO"] == "Comprou à vista"
-        v.mudar_status_venda(outra_venda, v.VENDA_AGUARDANDO)  # desfazer
-        reaberta = bd.ler_vendas(caminho).set_index("ID_VENDA").loc[outra_venda]
-        assert reaberta["MOTIVO"] == "" and reaberta["BANCO_ESCOLHIDO"] == ""
+        _recusa("reabra a venda", v.mandar_a_outro_banco, outra_venda, _pedido("Banco Exemplo"))
+        v.mudar_status_proposta(outra_p, propostas_mod.STATUS_APROVADO)
+        _recusa("reabra a venda", v.fechar_proposta, outra_p)
+        assert v.reabrir_venda(outra_venda) == v.VENDA_AGUARDANDO
+        assert bd.ler_vendas(caminho).set_index("ID_VENDA").loc[outra_venda, "MOTIVO"] == ""
+        _recusa("não há o que reabrir", v.reabrir_venda, outra_venda)
         v.mudar_status_venda(outra_venda, v.VENDA_PERDIDA)  # motivo é opcional
-        print("OK: motivo só nos desfechos, da lista e opcional; voltar atrás limpa motivo e banco escolhido.")
-
-        assert v.proxima_etapa(v.VENDA_AGUARDANDO) == v.VENDA_BANCO_ESCOLHIDO and v.proxima_etapa(v.VENDA_GARANTIA) == v.VENDA_EFETIVADA
-        assert v.proxima_etapa(v.VENDA_EFETIVADA) is None and v.proxima_etapa(v.VENDA_PERDIDA) is None
-        print("OK: 'Avançar para…' sabe a próxima etapa (e não oferece nada depois do fim).")
+        assert v.voltar_venda(outra_venda) == v.VENDA_AGUARDANDO, "o ↩ da venda reabre"
+        # uma venda gravada com as etapas de antes do modelo B ("Nota fiscal"...) aparece com o status dos bancos
+        vendas_ = bd.ler_vendas(caminho)
+        vendas_.loc[vendas_["ID_VENDA"] == outra_venda, "STATUS"] = "Nota fiscal"
+        bd.escrever_vendas_e_propostas(caminho, vendas=vendas_)
+        assert next(r for r in v.listar_vendas() if r.id == outra_venda).status == v.VENDA_AGUARDANDO
+        print("OK: desfechos manuais com motivo opcional da lista; numa venda desistida/perdida nada fecha nem entra; "
+              "reabrir volta ao status calculado.")
 
         linha("6) Alertas de 7 dias")
         dez_dias = pd.Timestamp(date.today() - timedelta(days=10))
@@ -220,6 +242,56 @@ def main() -> None:
             for nome, funcao in leitores.items():
                 setattr(nuvem, nome, funcao)
         print("OK: nuvem de antes das vendas: baixa o resto e as vendas/histórico daqui ficam iguais.")
+
+        linha("8b) Venda sem proposta, editar a venda, editar e excluir uma proposta")
+        _recusa("cliente cadastrado", v.criar_venda, "000.000.000-00", ["Mesa"])
+        id_s, sem = v.criar_venda(fx.CPF_ANA, ["Mesa Exemplo"], observacoes="só a venda")
+        venda_s = bd.ler_vendas(caminho).set_index("ID_VENDA").loc[id_s]
+        assert sem is None and v.propostas_da_venda(id_s).empty and venda_s["STATUS"] == v.VENDA_AGUARDANDO
+        assert venda_s["DATA_CRIACAO"] == pd.Timestamp(date.today()) and venda_s["OBSERVAÇÕES"] == "só a venda"
+        v.editar_venda(id_s, ["Mesa Exemplo", " cadeira x "], "  outra obs ")
+        venda_s = bd.ler_vendas(caminho).set_index("ID_VENDA").loc[id_s]
+        assert venda_s["EQUIPAMENTOS"] == "Mesa Exemplo + cadeira x" and venda_s["OBSERVAÇÕES"] == "outra obs"
+        _recusa("pelo menos um equipamento", v.editar_venda, id_s, ["  "], "")
+        ps = v.mandar_a_outro_banco(id_s, _pedido("Banco Exemplo"))
+        hist_antes = len(bd.ler_historico(caminho))
+        assert v.editar_proposta(ps, {"VALOR (R$)": 61000, "MESES": 24}) is False
+        linha_ps = bd.ler_propostas(caminho).loc[v.indice_da_proposta(ps)]
+        assert linha_ps["VALOR (R$)"] == 61000 and linha_ps["MESES"] == 24
+        assert len(bd.ler_historico(caminho)) == hist_antes, "sem troca de status, nada no histórico"
+        modificado = os.path.getmtime(caminho)
+        assert v.editar_proposta(ps, {"VALOR (R$)": 61000}) is False and os.path.getmtime(caminho) == modificado, \
+            "nada mudou: não grava"
+        _recusa("Status de proposta inválido", v.editar_proposta, ps, {"STATUS": propostas_mod.STATUS_NF_ANEXADA})
+        _recusa("marcado como fechado pode ser efetivado", v.editar_proposta, ps, {"STATUS": propostas_mod.STATUS_EFETIVADO})
+        aberta = bd.ler_propostas(caminho).loc[v.indice_da_proposta(ps)].to_dict()  # como o formulario abriu
+        v.editar_proposta(ps, {"OBSERVAÇÕES": "outra tela mudou"})
+        try:
+            v.editar_proposta(ps, {"MESES": 12}, esperado=aberta)
+            raise AssertionError("a proposta mudou desde que foi aberta: deveria recusar")
+        except propostas_mod.ErroProposta as exc:
+            assert "alterada ou excluída" in str(exc)
+        try:
+            v.editar_proposta(ps, {"VALOR (R$)": -5})
+            raise AssertionError("valor negativo deveria ser recusado")
+        except propostas_mod.ErroProposta:
+            pass
+        assert v.editar_proposta(ps, {"STATUS": propostas_mod.STATUS_NEGADO}) is True, "a única negou: sugere Perdida"
+        hist = bd.ler_historico(caminho)
+        assert ((hist["ID"] == ps) & (hist["PARA"] == propostas_mod.STATUS_NEGADO)).any()
+        v.editar_proposta(ps, {"STATUS": propostas_mod.STATUS_APROVADO})
+        v.fechar_proposta(ps)
+        _recusa("Desmarque o anel", v.editar_proposta, ps, {"STATUS": propostas_mod.STATUS_NEGADO})
+        try:
+            v.excluir_proposta(ps)
+            raise AssertionError("um banco fechado não pode ser excluído")
+        except propostas_mod.ErroProposta as exc:
+            assert "fechado" in str(exc)
+        v.desfazer_fechamento(ps)
+        v.excluir_proposta(ps)
+        assert v.propostas_da_venda(id_s).empty
+        print("OK: venda sem proposta (cliente cadastrado); editar a venda; editar a proposta com as regras e o histórico, "
+              "sem gravar quando nada muda; excluir (menos um banco fechado).")
 
         linha("9) Só o Administrador grava")
         sessao_mod.encerrar()

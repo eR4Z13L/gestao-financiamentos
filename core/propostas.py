@@ -647,9 +647,10 @@ def remover_proposta(indice: int, esperado: Mapping | None = None) -> None:
     if esperado is not None and not linha_confere(df.loc[indice].to_dict(), esperado):
         raise ErroProposta(_MENSAGEM_PROPOSTA_MUDOU)
     id_proposta = df.loc[indice, "ID_PROPOSTA"]
-    if id_proposta and id_proposta in set(bd.ler_vendas(CAMINHO_XLSX)["BANCO_ESCOLHIDO"]):
-        # a venda ficaria apontando para um banco que nao existe mais
-        raise ErroProposta("Esta é a proposta do banco escolhido numa venda. Troque o banco escolhido antes de excluí-la.")
+    fechadas = {i.strip() for lista in bd.ler_vendas(CAMINHO_XLSX)["BANCO_ESCOLHIDO"] for i in str(lista).split(";")}
+    if id_proposta and id_proposta in fechadas:
+        # a venda ficaria contando com um banco que nao existe mais
+        raise ErroProposta("Este banco está marcado como fechado numa venda. Desmarque o anel antes de excluir a proposta.")
     bd.escrever_propostas(CAMINHO_XLSX, df.drop(index=indice).reset_index(drop=True))
 
 

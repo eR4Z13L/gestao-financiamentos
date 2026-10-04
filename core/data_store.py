@@ -84,6 +84,9 @@ EQUIPAMENTOS_COLUNAS = [
     "VALOR PARCELA (R$)",
     "VALOR LÍQUIDO/REFERÊNCIA (R$)",
     "OBSERVAÇÕES",
+    # o cadastro de equipamentos (core/equipamentos.py) e a lista fechada do campo Equipamento: "Não" tira da lista;
+    # em branco (planilha de antes da coluna) conta como ativo. No FIM da aba, como toda coluna nova.
+    "ATIVO",
 ]
 
 # Cadastro proprio de vendedores - existe pra nao depender de "quem ja foi
@@ -144,7 +147,7 @@ PROPOSTAS_COLUNAS = [
 ]
 
 # Uma linha por venda (cliente + um ou mais equipamentos); as propostas dela apontam pra ela pelo ID_VENDA.
-# EQUIPAMENTOS: os nomes separados por " + ". BANCO_ESCOLHIDO: o ID_PROPOSTA da proposta escolhida.
+# EQUIPAMENTOS: os nomes separados por " + ". BANCO_ESCOLHIDO: os ID_PROPOSTA dos bancos fechados, separados por ";".
 VENDAS_COLUNAS = ["ID_VENDA", "CPF", "EQUIPAMENTOS", "STATUS", "BANCO_ESCOLHIDO", "MOTIVO", "DATA_CRIACAO", "OBSERVAÇÕES"]
 
 # Uma linha por mudanca de status (de venda ou de proposta): e dela que saem os tempos de cada etapa.
@@ -201,7 +204,7 @@ _CLIENTES_COLUNAS_TEXTO = [c for c in CLIENTES_COLUNAS if c not in {"DATA CADAST
 _COLUNAS_FORCADAS_A_TEXTO = {
     ABA_CLIENTES: {"CEP", "NÚMERO"},
 }
-_EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES"]
+_EQUIPAMENTOS_COLUNAS_TEXTO = ["FORNECEDOR", "EQUIPAMENTO", "OBSERVAÇÕES", "ATIVO"]
 _EQUIPAMENTOS_COLUNAS_NUMERICAS = ["PARCELAS", "VALOR PARCELA (R$)", "VALOR LÍQUIDO/REFERÊNCIA (R$)"]
 _PROPOSTAS_COLUNAS_TEXTO = ["CPF", "EQUIPAMENTO", "BANCO", "STATUS", "OBSERVAÇÕES", "ID_PROPOSTA", "ID_VENDA"]
 _PROPOSTAS_COLUNAS_NUMERICAS = ["VALOR (R$)", "MESES", "CARÊNCIA (DIAS)", "PARCELA (R$)"]
@@ -706,9 +709,17 @@ def escrever_clientes(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     sheets_sync.sincronizar_em_background(ABA_CLIENTES, ler_clientes(caminho_xlsx))
 
 
+def _cabecalho_das_colunas_novas(ws, colunas: list[str]) -> None:
+    """Planilha de antes de uma coluna nova (no fim da aba): ela ganha o cabecalho na primeira gravacao."""
+    for j, coluna in enumerate(colunas, start=1):
+        if _normalizar_texto(ws.cell(row=1, column=j).value) != coluna:
+            ws.cell(row=1, column=j, value=coluna)
+
+
 def escrever_equipamentos(caminho_xlsx: Path, df: pd.DataFrame) -> None:
     with _carregar_planilha(caminho_xlsx) as wb:
         _escrever_linhas_simples(wb[ABA_EQUIPAMENTOS], ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS, df.to_dict("records"))
+        _cabecalho_das_colunas_novas(wb[ABA_EQUIPAMENTOS], EQUIPAMENTOS_COLUNAS)
         _salvar_planilha(wb, caminho_xlsx)
     sheets_sync.sincronizar_em_background(ABA_EQUIPAMENTOS, ler_equipamentos(caminho_xlsx))
 
@@ -808,6 +819,7 @@ def escrever_tudo(
         _escrever_linhas_simples(
             wb[ABA_EQUIPAMENTOS], ABA_EQUIPAMENTOS, EQUIPAMENTOS_COLUNAS, _registros_para_gravar(equipamentos)
         )
+        _cabecalho_das_colunas_novas(wb[ABA_EQUIPAMENTOS], EQUIPAMENTOS_COLUNAS)
         _escrever_linhas_simples(
             wb[ABA_VENDEDORES], ABA_VENDEDORES, VENDEDORES_COLUNAS, _registros_para_gravar(vendedores)
         )

@@ -31,8 +31,20 @@ from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core.validators import apenas_digitos
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
+
+
+# as telas criadas pelo teste ficam vivas ate o fim, como no app (onde cada tela existe a sessao toda). Largadas, viram
+# lixo com ciclos de referencia entre os widgets, e o coletor de lixo do Python, ao recolher, apagava pedacos do Qt fora
+# de ordem e derrubava o processo (access violation) num momento qualquer do teste seguinte.
+_TELAS_VIVAS: list = []
+
+
+def _manter_viva(tela):
+    _TELAS_VIVAS.append(tela)
+    return tela
 
 
 def linha(titulo: str) -> None:
@@ -42,7 +54,7 @@ def linha(titulo: str) -> None:
 def testar_dashboard_screen(app: QApplication) -> None:
     linha("1) DashboardScreen")
 
-    tela = DashboardScreen()
+    tela = _manter_viva(DashboardScreen())
     propostas = propostas_mod.listar_propostas()
     topo = dashboard_mod.indicadores_do_topo(propostas)
 
@@ -68,7 +80,7 @@ def testar_dashboard_screen(app: QApplication) -> None:
 def testar_ficha_cliente_screen(app: QApplication) -> None:
     linha("2) FichaClienteScreen")
 
-    tela = FichaClienteScreen()
+    tela = _manter_viva(FichaClienteScreen())
     todos_clientes = clientes_mod.listar_clientes()
 
     assert tela._lista.count() == len(todos_clientes)
@@ -104,7 +116,8 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
 
     assert tela._painel_stack.currentIndex() == 1
     assert tela._campo_nome.text() == cliente_com_proposta["CLIENTE"]
-    assert tela._campo_cpf.text() == cliente_com_proposta["CPF/CNPJ"]
+    # a ficha mostra o CPF formatado; o cadastro pode ter so os numeros: o que importa sao os digitos
+    assert apenas_digitos(tela._campo_cpf.text()) == apenas_digitos(cliente_com_proposta["CPF/CNPJ"])
     assert tela._campo_vendedor.currentText() == (cliente_com_proposta["VENDEDOR"] or "")
 
     # isVisible() so reflete a realidade quando a janela foi de fato mostrada
@@ -161,7 +174,7 @@ def testar_exclusao_cliente(app: QApplication) -> None:
     QMessageBox.question = staticmethod(_stub_question)
 
     try:
-        tela = FichaClienteScreen()
+        tela = _manter_viva(FichaClienteScreen())
         todos = clientes_mod.listar_clientes()
         propostas = propostas_mod.listar_propostas()
         cpfs_com_proposta = set(propostas["CPF"])
@@ -228,7 +241,7 @@ def testar_edicao_proposta(app: QApplication) -> None:
     QMessageBox.question = staticmethod(_stub_question)
 
     try:
-        tela = FichaClienteScreen()
+        tela = _manter_viva(FichaClienteScreen())
         propostas = propostas_mod.listar_propostas()  # 1 unica leitura do arquivo
 
         # pega um cliente cuja proposta MAIS RECENTE (linha 0 de
@@ -340,7 +353,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         if not historico.empty:
             propostas_mod.atualizar_proposta(historico.index[0], {"OBSERVAÇÕES": url_longa})
 
-        tela = FichaClienteScreen()
+        tela = _manter_viva(FichaClienteScreen())
         tela._selecionar_por_cpf(cpf)
 
         # e o teste que realmente importa: a URL inteira (em Rede Social E em

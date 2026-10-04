@@ -7,9 +7,11 @@ planejar() so propoe, sem gravar nada:
     com os dois, ou opcoes que o cliente estava considerando?);
   * o mesmo cliente + equipamento com propostas mais espacadas que DIAS_MESMA_VENDA (a mesma venda reenviada, ou
     uma compra nova?).
-aplicar() grava, com backup antes e numa gravacao so. O status de cada venda sai das propostas, sem chute: se alguma
-foi efetivada, a venda esta Efetivada (com aquele banco); se todas foram negadas, Perdida ("Todos os bancos negaram");
-senao, Aguardando bancos. O status das propostas nao muda (so ganham o ID e a venda).
+aplicar() grava, com backup antes e numa gravacao so. O status de cada venda sai das propostas, sem chute: as que
+passaram da aprovacao (Efetivado, Nota fiscal anexada, Garantia assinada) sao os bancos FECHADOS da venda, e o status
+e o calculado por eles (Efetivada se todos efetivaram, senao Em andamento); sem nenhum fechado, Não efetivada se o
+cliente desistiu, Perdida ("Todos os bancos negaram") se todos negaram, senao Aguardando bancos. O status das
+propostas nao muda (so ganham o ID e a venda).
 """
 
 from __future__ import annotations
@@ -187,17 +189,18 @@ def aplicar(plano: Plano, decisoes: dict[str, bool]) -> dict:
                 propostas.at[i, "ID_PROPOSTA"] = vendas_mod.novo_id("P")
             propostas.at[i, "ID_VENDA"] = id_venda
         etapas = propostas.loc[indices, "STATUS"].map(propostas_mod.etapa_status)
-        status, escolhido, motivo = vendas_mod.VENDA_AGUARDANDO, "", ""
-        for etapa, status_venda in ((propostas_mod.ETAPA_EFETIVADO, vendas_mod.VENDA_EFETIVADA),
-                                    (propostas_mod.ETAPA_GARANTIA_ASSINADA, vendas_mod.VENDA_GARANTIA),
-                                    (propostas_mod.ETAPA_NF_ANEXADA, vendas_mod.VENDA_NOTA_FISCAL),
-                                    (propostas_mod.ETAPA_NAO_EFETIVADO, vendas_mod.VENDA_NAO_EFETIVADA)):
-            if (etapas == etapa).any():
-                status, escolhido = status_venda, propostas.at[etapas[etapas == etapa].index[0], "ID_PROPOSTA"]
-                break
+        fechou = etapas.isin({propostas_mod.ETAPA_EFETIVADO, propostas_mod.ETAPA_GARANTIA_ASSINADA, propostas_mod.ETAPA_NF_ANEXADA})
+        fechadas = [propostas.at[i, "ID_PROPOSTA"] for i in etapas.index[fechou]]
+        escolhido, motivo = ";".join(fechadas), ""
+        if fechadas:
+            status = vendas_mod.status_calculado(
+                [vendas_mod.PROPOSTA_EFETIVADA if e == propostas_mod.ETAPA_EFETIVADO else e for e in etapas[fechou]])
+        elif (etapas == propostas_mod.ETAPA_NAO_EFETIVADO).any():
+            status = vendas_mod.VENDA_NAO_EFETIVADA
+        elif len(etapas) and (etapas == propostas_mod.ETAPA_NEGADO).all():
+            status, motivo = vendas_mod.VENDA_PERDIDA, "Todos os bancos negaram"
         else:
-            if len(etapas) and (etapas == propostas_mod.ETAPA_NEGADO).all():
-                status, motivo = vendas_mod.VENDA_PERDIDA, "Todos os bancos negaram"
+            status = vendas_mod.VENDA_AGUARDANDO
         equipamentos = []
         for grupo in sorted(grupos, key=lambda g: (g.primeira, g.equipamento)):
             if grupo.equipamento and grupo.equipamento.upper() not in {e.upper() for e in equipamentos}:

@@ -474,6 +474,7 @@ def testar_tela(app: QApplication, pasta: Path) -> None:
         def _nova(dialogo: FormularioProposta) -> None:
             dialogo._cliente_combo.setCurrentText(f"MARIA ANA — {_cpf(0)}")
             dialogo._valor.setValue(77777)
+            dialogo._equipamento.addItem("Equip Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._equipamento.setCurrentText("Equip Novo")
             dialogo._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Novo")

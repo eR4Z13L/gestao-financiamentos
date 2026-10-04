@@ -130,6 +130,7 @@ def testar_dialogo_cliente_avulso(app: QApplication) -> None:
             assert dialogo._cliente_combo is not None
             dialogo._cliente_combo.setCurrentText(rotulo)
             dialogo._valor.setValue(12345)
+            dialogo._equipamento.addItem("Equip Avulso Teste")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._equipamento.setCurrentText("Equip Avulso Teste")
             dialogo._banco.addItem("Banco Avulso Teste")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo._banco.setCurrentText("Banco Avulso Teste")
@@ -144,6 +145,7 @@ def testar_dialogo_cliente_avulso(app: QApplication) -> None:
             dialogo2 = FormularioProposta(cpf=None)
             gravou2 = _espiar_gravacao(dialogo2)
             dialogo2._valor.setValue(500)
+            dialogo2._equipamento.addItem("X")  # como se ja estivesse no cadastro (a lista e fechada)
             dialogo2._equipamento.setCurrentText("X")
             dialogo2._banco.setCurrentText("Y")
             dialogo2._salvar()
@@ -233,6 +235,7 @@ def testar_propostas_screen(app: QApplication) -> None:
             assert tela._expansor.eh_rascunho() and formulario._cliente_combo is not None
             formulario._cliente_combo.setCurrentText(rotulo)
             formulario._valor.setValue(9999)
+            formulario._equipamento.addItem("Equip Nova Tela")  # como se ja estivesse no cadastro (a lista e fechada)
             formulario._equipamento.setCurrentText("Equip Nova Tela")
             formulario._banco.addItem("Banco Nova Tela")  # como se ja estivesse no cadastro (a lista e fechada)
             formulario._banco.setCurrentText("Banco Nova Tela")

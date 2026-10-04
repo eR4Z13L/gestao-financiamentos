@@ -96,6 +96,7 @@ def main() -> None:
         gravou = _espiar_gravacao(dialogo)
         dialogo._valor.setValue(75000)
         dialogo._meses.setValue(36)
+        dialogo._equipamento.addItem("Equipamento Dialogo Teste")  # como se ja estivesse no cadastro (a lista e fechada)
         dialogo._equipamento.setCurrentText("Equipamento Dialogo Teste")
         dialogo._banco.addItem("Banco Dialogo Teste")  # como se ja estivesse no cadastro (a lista e fechada)
         dialogo._banco.setCurrentText("Banco Dialogo Teste")
