@@ -85,12 +85,12 @@ def _acoes(menu) -> dict[str, object]:
 
 
 def _nomes(tela) -> list[str]:
-    return [c.venda.cliente.split()[0] for c in tela.cards]
+    return [c.venda.cliente.split()[0] for c in tela.lista.cards]
 
 
 def _card(tela, cliente: str):
-    cards = [c for c in tela.cards if c.venda.cliente.split()[0] == cliente]
-    assert len(cards) == 1, (cliente, [c.venda.cliente for c in tela.cards])
+    cards = [c for c in tela.lista.cards if c.venda.cliente.split()[0] == cliente]
+    assert len(cards) == 1, (cliente, [c.venda.cliente for c in tela.lista.cards])
     return cards[0]
 
 
@@ -139,7 +139,7 @@ def main() -> None:
             _processar()
             sem_venda = len(bd.ler_propostas(caminho))
             assert not tela.aviso_sem_venda.isHidden() and f"{sem_venda} proposta(s)" in tela.texto_sem_venda.text()
-            assert tela.cards == [] and "Nenhuma venda ainda" in tela.vazio.text() and not tela.vazio.isHidden()
+            assert tela.lista.cards == [] and "Nenhuma venda ainda" in tela.lista.vazio.text() and not tela.lista.vazio.isHidden()
             print(f"OK: {sem_venda} propostas antigas aparecem no aviso (com o 'Juntar em vendas…'); nenhuma venda ainda.")
 
             linha("2) Nova venda: só cliente e equipamentos; o card nasce sem proposta")
@@ -193,7 +193,7 @@ def main() -> None:
             assert [l["proposta"].banco for l in card.linhas_de_banco] == [b1, b2]
             assert card.linhas_de_banco[1]["proposta"].equipamento == "Cadeira Exemplo"
             assert "só Cadeira Exemplo" in card.linhas_de_banco[1]["condicoes"].text()
-            assert tela.fechar_venda() and not _card(tela, "MARIA").aberto
+            assert tela.lista.fechar_venda() and not _card(tela, "MARIA").aberto
             print("OK: '+ Adicionar proposta' abre o formulário no card; o 2º banco parte de valor e meses do 1º; pedido de parte da venda.")
 
             linha("4) Banco sem resposta: bolinhas Aprovado/Negado (sem Pré-aprovado); a etiqueta abre os 4; ↩ volta")
@@ -205,7 +205,7 @@ def main() -> None:
             p1 = l1["proposta"]
             assert [b.destino for b in l1["bolinhas"]] == [propostas_mod.STATUS_APROVADO, propostas_mod.STATUS_NEGADO]
             assert l1["voltar"] is None
-            menu_p = _acoes(tela.controle.montar_menu_da_proposta(card.venda, p1))
+            menu_p = _acoes(tela.lista.controle.montar_menu_da_proposta(card.venda, p1))
             assert [t for t in menu_p if t in v.STATUS_DA_PROPOSTA] == v.STATUS_DA_PROPOSTA
             assert menu_p[propostas_mod.STATUS_EM_ANALISE].isChecked()
             menu_p[propostas_mod.STATUS_PRE_APROVADO].trigger()  # Pré-aprovado só pela lista
@@ -242,7 +242,7 @@ def main() -> None:
             l1, l2 = card.linhas_de_banco
             assert l1["anel"].fechado and not l2["anel"].fechado and card.bolinha is None, "a venda não tem bolinha"
             assert [b.destino for b in l1["bolinhas"]] == [card_mod.EFETIVAR], "banco fechado: a bolinha é o Efetivado"
-            menu_p = _acoes(tela.controle.montar_menu_da_proposta(card.venda, l1["proposta"]))
+            menu_p = _acoes(tela.lista.controle.montar_menu_da_proposta(card.venda, l1["proposta"]))
             assert not menu_p[propostas_mod.STATUS_NEGADO].isEnabled() and menu_p[propostas_mod.STATUS_APROVADO].isEnabled()
             assert card_mod.EFETIVAR in menu_p
             l2["anel"].click()  # a Cadeira já está no pedido do 1º banco
@@ -275,15 +275,15 @@ def main() -> None:
             assert "1 de 2 bancos efetivados" in _card(tela, "MARIA").andamento.text()
             linha_de(p_laser)["bolinhas"][0].click()
             assert _venda(id_maria)["STATUS"] == v.VENDA_EFETIVADA and "A venda está Efetivada" in tela.texto_aviso.text()
-            assert all(c.venda.id != id_maria for c in tela.cards), "efetivada sai de 'Em andamento'"
+            assert all(c.venda.id != id_maria for c in tela.lista.cards), "efetivada sai de 'Em andamento'"
             tela.filtro.setCurrentText(tela_mod.FILTRO_EFETIVADAS)
             card = _card(tela, "MARIA")
             assert linha_de(p_cadeira)["anel"].dica == "Fechado", "um banco Efetivado não se desmarca pelo ✓"
-            menu_v = _acoes(tela.controle.montar_menu_da_venda(card.venda))
+            menu_v = _acoes(tela.lista.controle.montar_menu_da_venda(card.venda))
             assert f"{v.VENDA_NAO_EFETIVADA}…" in menu_v and not any(t.startswith("Reabrir") for t in menu_v)
-            tela.abrir_venda(card.venda)
+            tela.lista.abrir_venda(card.venda)
             assert _card(tela, "MARIA").adicionar is not None, "Efetivada ainda aceita outro pedido"
-            tela.fechar_venda()
+            tela.lista.fechar_venda()
             linha_de(p_laser)["voltar"].click()  # ↩: o laser volta a Aprovado
             assert _venda(id_maria)["STATUS"] == v.VENDA_EM_ANDAMENTO
             v.efetivar_proposta(p_laser)
@@ -297,11 +297,11 @@ def main() -> None:
             tela.carregar()
             msgs.resposta_pergunta = QMessageBox.StandardButton.No
             card = _card(tela, "JOÃO")
-            _acoes(tela.controle.montar_menu_da_proposta(card.venda, card.linhas_de_banco[0]["proposta"]))[propostas_mod.STATUS_NEGADO].trigger()
+            _acoes(tela.lista.controle.montar_menu_da_proposta(card.venda, card.linhas_de_banco[0]["proposta"]))[propostas_mod.STATUS_NEGADO].trigger()
             assert "Todos os bancos" in msgs.ultima()[1] and _venda(id_joao)["STATUS"] == v.VENDA_AGUARDANDO
             msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
             card = _card(tela, "ANA")
-            _acoes(tela.controle.montar_menu_da_proposta(card.venda, card.linhas_de_banco[0]["proposta"]))[propostas_mod.STATUS_NEGADO].trigger()
+            _acoes(tela.lista.controle.montar_menu_da_proposta(card.venda, card.linhas_de_banco[0]["proposta"]))[propostas_mod.STATUS_NEGADO].trigger()
             venda = _venda(id_ana)
             assert venda["STATUS"] == v.VENDA_PERDIDA and venda["MOTIVO"] == "Todos os bancos negaram"
             print("OK: a última negativa pergunta 'Perdida?': Não deixa aguardando; Sim marca Perdida com o motivo.")
@@ -316,7 +316,7 @@ def main() -> None:
 
             card_mod.DesfechoDialog.exec = _escolhe_desistiu
             try:
-                _acoes(tela.controle.montar_menu_da_venda(card.venda))[f"{v.VENDA_NAO_EFETIVADA}…"].trigger()
+                _acoes(tela.lista.controle.montar_menu_da_venda(card.venda))[f"{v.VENDA_NAO_EFETIVADA}…"].trigger()
             finally:
                 card_mod.DesfechoDialog.exec = exec_original
             venda = _venda(id_joao)
@@ -328,7 +328,7 @@ def main() -> None:
 
             linha("9) Busca e contagem")
             tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
-            assert len(tela.cards) == 3 and tela.contador.text().startswith("3 venda(s)")
+            assert len(tela.lista.cards) == 3 and tela.contador.text().startswith("3 venda(s)")
             tela.busca.setText("joão")
             assert _nomes(tela) == ["JOÃO"]
             tela.busca.setText(fx.CPF_ANA.replace(".", "").replace("-", "")[:6])
@@ -345,14 +345,14 @@ def main() -> None:
                 id_parada, _ = v.criar_venda(fx.CPF_ANA, ["Cadeira Exemplo"], _pedido(b1))
                 tela.filtro.setCurrentText(tela_mod.FILTRO_PARADAS)
                 tela.carregar()
-                parados = [c for c in tela.cards if c.venda.id == id_parada]
+                parados = [c for c in tela.lista.cards if c.venda.id == id_parada]
                 assert len(parados) == 1 and parados[0].andamento.property("role") == "aviso"
                 assert "parada há 7 dias" in parados[0].andamento.text()
             finally:
                 v.listar_vendas = listar_original
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             tela.carregar()
-            assert all(c.andamento.property("role") == "secundario" for c in tela.cards), "hoje nada está parado"
+            assert all(c.andamento.property("role") == "secundario" for c in tela.lista.cards), "hoje nada está parado"
             print("OK: 7 dias sem mudar de etapa: o card avisa ('parada há 7 dias') e entra no filtro 'Paradas'.")
 
             linha("11) Equipamento só da lista; o formulário solto cria a venda; numa venda, as caixinhas dela")
@@ -416,7 +416,7 @@ def main() -> None:
             v.mudar_status_venda(id_rx, v.VENDA_PERDIDA, motivo="Desistiu")
             tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
             tela.carregar()
-            card = next(c for c in tela.cards if c.venda.id == id_rx)
+            card = next(c for c in tela.lista.cards if c.venda.id == id_rx)
             assert card.voltar.anterior == v.VENDA_EM_ANDAMENTO, "reabrir volta ao calculado pelos bancos"
             assert card.linhas_de_banco[0]["anel"].fechado and card.linhas_de_banco[0]["bolinhas"] == [], "perdida: nada avança"
             msgs.resposta_pergunta = QMessageBox.StandardButton.No
@@ -425,13 +425,13 @@ def main() -> None:
             msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
             card.voltar.click()
             assert _venda(id_rx)["STATUS"] == v.VENDA_EM_ANDAMENTO and _venda(id_rx)["MOTIVO"] == ""
-            assert next(c for c in tela.cards if c.venda.id == id_rx).voltar is None, "fora de um desfecho, a venda não tem ↩"
+            assert next(c for c in tela.lista.cards if c.venda.id == id_rx).voltar is None, "fora de um desfecho, a venda não tem ↩"
             # proposta com status de antes das vendas: depois de trocar, o ↩ não oferece voltar a ele
             id_ry, py_ = v.criar_venda(fx.CPF_ANA, ["Laser Exemplo"], _pedido(b2))
             propostas_mod.atualizar_proposta(v.indice_da_proposta(py_), {"STATUS": "Nota Fiscal Anexada"})
             v.mudar_status_proposta(py_, propostas_mod.STATUS_APROVADO)
             tela.carregar()
-            card = next(c for c in tela.cards if c.venda.id == id_ry)
+            card = next(c for c in tela.lista.cards if c.venda.id == id_ry)
             assert card.linhas_de_banco[0]["proposta"].status == propostas_mod.STATUS_APROVADO
             assert card.linhas_de_banco[0]["voltar"] is None, "não volta a um status de antes das vendas"
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
@@ -443,21 +443,33 @@ def main() -> None:
             tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
             tela.carregar()
             _processar()
-            assert tela._colunas >= 2, "a tela de teste cabe 2 colunas"
-            achar = lambda id_: next(c for c in tela.cards if c.venda.id == id_)  # noqa: E731
+            assert tela.lista._colunas >= 2, "a tela de teste cabe 2 colunas"
+            achar = lambda id_: next(c for c in tela.lista.cards if c.venda.id == id_)  # noqa: E731
             card = achar(id_x)
             assert card.linhas_de_banco[0]["lapis"] is None and card.abrir_ficha is None, "fechado: sem ✎ nem rodapé"
             QTest.mouseDClick(card, Qt.MouseButton.LeftButton, pos=card.rect().topLeft() + QPoint(30, 12))
             _processar()
             card = achar(id_x)
-            assert card.aberto and tela.aberta == id_x
-            _, _, _, colunas = tela._grade.getItemPosition(tela._grade.indexOf(card))
-            assert colunas == tela._colunas and card.width() >= tela._colunas * card_mod.LARGURA_CARD, "aberto: a linha toda"
+            assert card.aberto and tela.lista.aberta == id_x
+            _, _, _, colunas = tela.lista._grade.getItemPosition(tela.lista._grade.indexOf(card))
+            assert colunas == tela.lista._colunas + 1, "aberto: atravessa as colunas e a sobra da direita"
+            assert card.x() == 0 and card.geometry().right() >= tela.lista.width() - 1, "aberto: a linha toda, até a borda"
+            fechados = [c for c in tela.lista.cards if not c.aberto]
+            assert all(c.width() == card_mod.LARGURA_CARD for c in fechados), "os fechados não esticam"
+            xs = sorted({c.x() for c in fechados})
+            assert xs[:2] == [0, card_mod.LARGURA_CARD + 12], f"os fechados não se espalham com o aberto na lista: {xs}"
             assert all(l["lapis"] is not None for l in card.linhas_de_banco) and card.abrir_ficha is not None
             fichas = []
             tela.ficha_pedida.connect(fichas.append)
             card.abrir_ficha.click()
             assert fichas == [fx.CPF_MARIA], "'Abrir a ficha' só no card aberto"
+            tela.busca.setText("nenhuma venda tem isto")
+            _processar()
+            assert [c.venda.id for c in tela.lista.cards] == [id_x] and tela.lista.card_aberto() is not None, \
+                "o card aberto continua na lista mesmo fora da busca (não some no meio da edição)"
+            tela.busca.clear()
+            _processar()
+            card = achar(id_x)
             linha_x = card.linhas_de_banco[0]["widget"]
             QTest.mouseDClick(linha_x, Qt.MouseButton.LeftButton, pos=QPoint(60, 8))
             _processar()
@@ -483,9 +495,9 @@ def main() -> None:
             f = achar(id_x).formulario
             f._valor.setValue(12345)
             assert tela.tem_edicao_pendente()
-            outra = next(c for c in tela.cards if c.venda.id != id_x)
+            outra = next(c for c in tela.lista.cards if c.venda.id != id_x)
             msgs.resposta_pergunta = QMessageBox.StandardButton.No
-            assert tela.abrir_venda(outra.venda) is False and tela.aberta == id_x
+            assert tela.lista.abrir_venda(outra.venda) is False and tela.lista.aberta == id_x
             assert "não foram salvas" in msgs.ultima()[2] and achar(id_x).formulario._valor.value() == 12345
             v.editar_venda(outra.venda.id, outra.venda.equipamentos.split(" + "), "mudou por fora")  # outra tela gravou
             assert tela.recarregar_se_mudou() is False, "com algo digitado, o arquivo mudar por fora não relê a tela"
@@ -517,7 +529,7 @@ def main() -> None:
             assert venda["EQUIPAMENTOS"] == "Mesa Exemplo Nova" and venda["OBSERVAÇÕES"] == "cliente pediu urgência"
             card = achar(id_x)
             assert any("cliente pediu urgência" in w.text() for w in card.findChildren(type(tela.contador)))
-            assert tela.fechar_venda() and tela.aberta is None
+            assert tela.lista.fechar_venda() and tela.lista.aberta is None
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             print("OK: trocar de card com algo digitado pergunta (Não mantém); Cancel fecha o formulário; excluir confirma; "
                   "'Editar a venda' troca equipamentos e observações.")
@@ -534,12 +546,13 @@ def main() -> None:
             _processar()
             antes = barra.value()
             assert antes > 200, f"a lista precisa rolar pro teste valer ({antes})"
-            ultimo = next(c for c in reversed(tela.cards) if c.linhas_de_banco and c.linhas_de_banco[0]["bolinhas"])
+            ultimo = next(c for c in reversed(tela.lista.cards) if c.linhas_de_banco and c.linhas_de_banco[0]["bolinhas"])
             id_ultimo = ultimo.venda.id
             ultimo.linhas_de_banco[0]["bolinhas"][0].click()
             _processar()
             assert barra.value() == antes, f"a rolagem foi de {antes} para {barra.value()}"
-            card = next(c for c in tela.cards if c.venda.id == id_ultimo)
+            assert tela.rolagem.widget().minimumHeight() == 0, "a altura da lista fica solta de novo (senão não encolhe mais)"
+            card = next(c for c in tela.lista.cards if c.venda.id == id_ultimo)
             topo = card.mapTo(tela.rolagem.viewport(), card.rect().topLeft()).y()
             assert 0 <= topo < tela.rolagem.viewport().height(), "o card clicado continua na tela"
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)

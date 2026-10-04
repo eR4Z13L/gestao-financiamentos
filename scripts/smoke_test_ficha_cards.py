@@ -43,6 +43,7 @@ from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
 from core.formatting import formatar_equipamento_e_valor
 from core.validators import _digito_verificador_cpf, apenas_digitos
@@ -540,20 +541,22 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
         tela._selecionar_por_cpf(cpfs["gama"])
         _ciclos(app)
 
-        def _nova(dialogo: FormularioProposta) -> None:
-            dialogo._valor.setValue(4321)
-            dialogo._equipamento.addItem("Equip Novo")  # como se ja estivesse no cadastro (a lista e fechada)
-            dialogo._equipamento.setCurrentText("Equip Novo")
-            dialogo._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
-            dialogo._banco.setCurrentText("Banco Novo")
-            dialogo._status.setCurrentText("Em Análise")
-            dialogo._salvar()
-
-        stubs.acao_exec = _nova
-        tela._botao_nova_proposta.click()
-        stubs.acao_exec = None
+        # a proposta nova nasce numa venda: a venda (sem proposta ainda) e o "+ Adicionar proposta" do card dela
+        id_venda, _ = vendas_mod.criar_venda(cpfs["gama"], ["Equip Novo"])
+        tela._depois_de_gravar_venda()
+        _ciclos(app)
+        assert _em_aberto(tela)["GAMA SEM PROPOSTA"] is False, "venda sem proposta ainda nao acende"
+        tela.lista_vendas.editar_proposta(tela.lista_vendas.cards[0].venda, None)
+        _ciclos(app)
+        nova = tela.lista_vendas.card_aberto().formulario
+        nova._valor.setValue(4321)
+        nova._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
+        nova._banco.setCurrentText("Banco Novo")
+        nova._status.setCurrentText("Em Análise")
+        nova._salvar()
+        _ciclos(app)
         assert _em_aberto(tela)["GAMA SEM PROPOSTA"] is True
-        assert modelo.total() == 1 and modelo.item(0)["titulo"] == "Banco Novo"
+        assert [p.banco for p in tela.lista_vendas.cards[0].venda.propostas] == ["Banco Novo"] and modelo.total() == 0
         print("OK: efetivar a única proposta aberta apaga a bolinha; lançar uma nova acende - sem refazer a lista nem perder a seleção.")
 
         # erro ao ler as propostas: avisa (uma vez) e a lista segue funcionando sem a marca
@@ -724,7 +727,8 @@ def testar_vendedor(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arqu
         _ciclos(app)
         assert _nomes(tela) == ["ALFA CLIENTE", "GAMA SEM PROPOSTA"], "o vendedor só vê os próprios clientes"
         assert _em_aberto(tela) == {"ALFA CLIENTE": False, "GAMA SEM PROPOSTA": True}, "a marca é só das propostas dele: " + str(_em_aberto(tela))
-        assert tela._botao_novo_cliente.isHidden() and tela._botao_excluir_proposta.isHidden() and tela._botao_nova_proposta.isHidden()
+        assert tela._botao_novo_cliente.isHidden() and tela._botao_excluir_proposta.isHidden() and tela._botao_nova_venda.isHidden()
+        assert tela.lista_vendas.isHidden() and tela._titulo_vendas.isHidden(), "o vendedor não vê os cards de venda (são de edição)"
         tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
         assert tela._modelo_historico.total() == 2

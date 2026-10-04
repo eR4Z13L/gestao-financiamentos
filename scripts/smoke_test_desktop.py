@@ -29,8 +29,10 @@ config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra pla
 from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
+from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core.validators import apenas_digitos
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -125,12 +127,15 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     # setVisible()/hide() que o proprio codigo da tela chamou, entao e o que
     # da pra verificar sem abrir uma janela de verdade.
     historico_esperado = propostas_mod.historico_por_cpf(cpf_com_proposta)
-    assert tela._modelo_historico.rowCount() == len(historico_esperado)
-    assert tela._contentor_historico.isHidden() is False
-    assert tela._historico_vazio.isHidden() is True
+    vendas_esperadas = vendas_mod.vendas_do_cliente(cpf_com_proposta)
+    antigas = historico_esperado[~historico_esperado["ID_VENDA"].isin({v.id for v in vendas_esperadas})]
+    assert tela._modelo_historico.rowCount() == len(antigas)
+    assert [c.venda.id for c in tela.lista_vendas.cards] == [v.id for v in vendas_esperadas][:30]
+    assert tela._contentor_historico.isHidden() is antigas.empty
+    assert tela._historico_vazio.isHidden() is True  # (o aviso "nenhuma proposta" e so do vendedor)
     print(
-        f"Selecionar '{cliente_com_proposta['CLIENTE']}' preencheu a ficha e o historico "
-        f"({tela._modelo_historico.rowCount()} proposta(s), esperado {len(historico_esperado)})."
+        f"Selecionar '{cliente_com_proposta['CLIENTE']}' preencheu a ficha, as vendas ({len(vendas_esperadas)}) e as "
+        f"propostas de antes das vendas ({tela._modelo_historico.rowCount()}, esperado {len(antigas)})."
     )
 
     # agora um cliente sem nenhuma proposta, pra exercitar o estado vazio do historico
@@ -146,8 +151,8 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     )
     tela._lista.definir_linha_atual(indice_sem_proposta)
     assert tela._modelo_historico.rowCount() == 0
-    assert tela._contentor_historico.isHidden() is True
-    assert tela._historico_vazio.isHidden() is False
+    assert tela._contentor_historico.isHidden() is True and tela._titulo_historico.isHidden() is True
+    assert tela.lista_vendas.vazio.isHidden() is bool(vendas_mod.vendas_do_cliente(cliente_sem_proposta["CPF/CNPJ"]))
     print(f"Selecionar '{cliente_sem_proposta['CLIENTE']}' (sem propostas) mostrou o estado vazio corretamente.")
 
     print("\nOK: FichaClienteScreen busca/filtra/seleciona e exibe dados+histórico igual ao core.")
@@ -242,81 +247,54 @@ def testar_edicao_proposta(app: QApplication) -> None:
 
     try:
         tela = _manter_viva(FichaClienteScreen())
-        propostas = propostas_mod.listar_propostas()  # 1 unica leitura do arquivo
-
-        # pega um cliente cuja proposta MAIS RECENTE (linha 0 de
-        # historico_por_cpf - a mesma funcao/ordenacao que a tela e o
-        # dialogo usam de verdade) tem status, banco E valor preenchidos, E
-        # nao tem outra proposta do mesmo cliente com mesma data/valor - a
-        # planilha real tem algumas propostas com campos em branco ou que
-        # parecem duplicata (dado historico real, nao e bug), que sao um
-        # caso a parte (campo em branco ou duplicata dispara a confirmacao
-        # "salvar assim mesmo?" do dialogo, o que fugiria do "caminho feliz"
-        # que este teste quer exercitar). Usa historico_por_cpf() direto (em
-        # vez de agrupar/reordenar `propostas` na mao) porque sort_values usa
-        # quicksort (nao estavel) por padrao - reordenar um subconjunto ja
-        # ordenado pode desempatar datas iguais de um jeito diferente do que
-        # historico_por_cpf() faria, escolhendo uma linha "mais recente"
-        # diferente da que a tela de verdade vai selecionar.
-        cpf_alvo = None
-        for cpf_candidato in propostas["CPF"].unique():
-            historico_candidato = propostas_mod.historico_por_cpf(cpf_candidato)
-            mais_recente = historico_candidato.iloc[0]
-            if not (
-                mais_recente["STATUS"] != ""
-                and mais_recente["BANCO"] != ""
-                and not pd.isna(mais_recente["VALOR (R$)"])
-            ):
-                continue
-            outras = historico_candidato.iloc[1:]
-            duplicata = (
-                (outras["DATA"] == mais_recente["DATA"])
-                & ((outras["VALOR (R$)"] - mais_recente["VALOR (R$)"]).abs() < 0.01)
-            ).any()
-            if not duplicata:
-                cpf_alvo = cpf_candidato
-                break
-        assert cpf_alvo is not None, "nenhum cliente com proposta 'limpa' (sem campo em branco nem duplicata) encontrado"
-
-        historico_antes = propostas_mod.historico_por_cpf(cpf_alvo)
-        assert not historico_antes.empty
-
-        tela._selecionar_por_cpf(cpf_alvo)
-        assert tela._cpf_selecionado == cpf_alvo
-
-        # seleciona (1 clique) o primeiro card do historico
-        tela._lista_historico.setCurrentIndex(tela._modelo_historico.index(0))
-        indice_real = tela._modelo_historico.indice_real(0)
-        status_original = historico_antes.loc[indice_real, "STATUS"]
-
-        # o duplo clique no card EXPANDE o proprio card (nao trava esperando ninguem, ao
-        # contrario do popup que existia): o teste pega o formulario aberto e "clica OK"
-        # direto, chamando _salvar()
-        tela._expansor.alternar(0)
-        formulario = tela._expansor.formulario()
-        assert formulario._status.currentText() == status_original, (
-            f"card veio com status {formulario._status.currentText()!r}, esperado {status_original!r}"
+        # uma proposta de uma venda com status, banco e valor preenchidos e que nao e de banco fechado (fechado so
+        # aceita Aprovado/Efetivado) - editada pelo card da venda, que e onde a Ficha edita propostas agora
+        # (e sem outra do mesmo cliente com a mesma data e valor: isso dispara a pergunta "possivel duplicata", que
+        # foge do caminho feliz)
+        todas = propostas_mod.listar_propostas()
+        repetidas = todas.assign(_cpf=todas["CPF"].map(apenas_digitos)).duplicated(["_cpf", "DATA", "VALOR (R$)"], keep=False)
+        ids_repetidos = set(todas.loc[repetidas, "ID_PROPOSTA"])
+        alvo = next(
+            ((venda, p) for venda in vendas_mod.listar_vendas() for p in venda.propostas
+             if p.status in vendas_mod.STATUS_DA_PROPOSTA and p.banco and p.valor and not p.fechada
+             and venda.status not in vendas_mod.DESFECHOS_DA_VENDA and p.id not in ids_repetidos),
+            None,
         )
-        assert formulario._modo_leitura, "proposta existente deveria abrir em modo leitura"
-        formulario._habilitar_edicao()
-        formulario._status.setCurrentText(propostas_mod.STATUS_APROVADO)
+        assert alvo is not None, "nenhuma proposta de venda 'limpa' (status, banco e valor, banco nao fechado) encontrada"
+        venda, proposta = alvo
+        # nunca Negado: com todas negadas viria a pergunta "marcar como perdida?" (e o stub responde Sim)
+        novo_status = propostas_mod.STATUS_APROVADO if proposta.status != propostas_mod.STATUS_APROVADO else "Pré-aprovado"
+        antes = bd.ler_propostas(tmp_path)
+
+        tela._selecionar_por_cpf(venda.cpf)
+        assert apenas_digitos(tela._cpf_selecionado) == apenas_digitos(venda.cpf)
+        assert tela.lista_vendas.editar_proposta(next(c.venda for c in tela.lista_vendas.cards if c.venda.id == venda.id), proposta)
+        app.processEvents()
+        card = tela.lista_vendas.card_aberto()
+        formulario = card.formulario
+        assert card.venda.id == venda.id and formulario is not None
+        assert formulario._status.currentText() == proposta.status, (
+            f"o formulario veio com status {formulario._status.currentText()!r}, esperado {proposta.status!r}"
+        )
+        formulario._status.setCurrentText(novo_status)
         formulario._observacoes.setPlainText("editado no smoke test")
         formulario._salvar()
-        assert tela._expansor.formulario() is not formulario, "gravar recarrega o card (volta a leitura com o que foi gravado)"
-        tela._expansor.descartar()
+        for _ in range(4):
+            app.processEvents()
+        assert tela.lista_vendas.editando is None and not tela.tem_edicao_pendente(), "gravar fecha o formulario"
 
-        historico_depois = propostas_mod.historico_por_cpf(cpf_alvo)
-        linha_editada = historico_depois.loc[indice_real]
-        assert linha_editada["STATUS"] == propostas_mod.STATUS_APROVADO
-        assert linha_editada["OBSERVAÇÕES"] == "editado no smoke test"
-        # as outras propostas do mesmo cliente nao podem ter mudado
-        assert len(historico_depois) == len(historico_antes)
-        print(f"OK: proposta (posição real {indice_real} no arquivo) editada via tela -> STATUS={linha_editada['STATUS']}")
+        depois = bd.ler_propostas(tmp_path)
+        editada = depois[depois["ID_PROPOSTA"] == proposta.id].iloc[0]
+        assert editada["STATUS"] == novo_status and editada["OBSERVAÇÕES"] == "editado no smoke test"
+        outras_antes = antes[antes["ID_PROPOSTA"] != proposta.id].reset_index(drop=True)
+        outras_depois = depois[depois["ID_PROPOSTA"] != proposta.id].reset_index(drop=True)
+        pd.testing.assert_frame_equal(outras_antes, outras_depois)  # as outras propostas nao mudaram
+        print(f"OK: proposta {proposta.id} ({proposta.banco}) editada pelo card da venda na Ficha -> STATUS={editada['STATUS']}")
 
         if mensagens:
             raise AssertionError(f"nao deveria ter mostrado nenhuma mensagem de erro, mostrou: {mensagens}")
 
-        print("\nOK: edição de proposta existente funciona de ponta a ponta (seleção → card expandido → gravação).")
+        print("\nOK: edição de proposta existente funciona de ponta a ponta (ficha → card da venda → gravação).")
     finally:
         QMessageBox.warning = original_warning
         QMessageBox.critical = original_critical

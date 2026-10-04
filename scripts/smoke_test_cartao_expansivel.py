@@ -45,6 +45,7 @@ from core import data_store as bd
 from core import equipamentos as equipamentos_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
@@ -410,7 +411,8 @@ class _Via:
 class _Ficha(_Via):
     nome = "Ficha de Cliente"
     chave_do_banco = "titulo"
-    cards_depois_de_duplicar = 4  # ALFA tinha 3 propostas
+    cards_depois_de_duplicar = 4  # ALFA tinha 3 propostas (a copia aparece no card da venda nova)
+    excluir = ("HUBCRED BV", "R$ 31.000,00")  # uma antiga: a copia esta numa venda, e la se exclui pelo card
 
     def __init__(self, app, cpfs):
         super().__init__(app, cpfs)
@@ -419,11 +421,16 @@ class _Ficha(_Via):
         self.tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
         self.lista, self.modelo, self.expansor = self.tela._lista_historico, self.tela._modelo_historico, self.tela._expansor
-        self.botao_nova, self.botao_excluir = self.tela._botao_nova_proposta, self.tela._botao_excluir_proposta
+        # proposta nova so nasce numa venda: na ficha e pelo card da venda (o card "Nova proposta" so na outra tela)
+        self.botao_nova, self.botao_excluir = None, self.tela._botao_excluir_proposta
         self.titulo_do_rascunho = "Nova proposta — ALFA CLIENTE"
 
     def selecionado(self) -> int | None:
         return self.tela._indice_real_proposta_selecionada()
+
+    def bancos_dos_cards(self) -> list[str]:
+        """As de antes das vendas e as dos cards de venda (a copia de uma antiga nasce numa venda nova)."""
+        return super().bancos_dos_cards() + [p.banco for c in self.tela.lista_vendas.cards for p in c.venda.propostas]
 
     def recarregar(self) -> None:
         self.tela._recarregar_ficha_atual()
@@ -433,6 +440,7 @@ class _Todas(_Via):
     nome = "Todas as Propostas"
     chave_do_banco = "banco"
     cards_depois_de_duplicar = 5  # havia 4 propostas no total
+    excluir = ("HUBCRED BV 2", "R$ 75.000,00")  # a duplicata que acabou de ser criada
 
     def __init__(self, app, cpfs):
         super().__init__(app, cpfs)
@@ -699,48 +707,53 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     # a copia de uma proposta de antes das vendas (sem venda) nasce numa venda nova, com o proprio ID
     assert nova["ID_PROPOSTA"].startswith("P-") and nova["ID_VENDA"].startswith("V-"), nova
     assert depois[indice_santander]["BANCO"] == "SANTANDER" and depois[indice_santander]["STATUS"] == "Negado", "a original segue no historico"
-    assert via.selecionado() == len(depois) - 1, "o card da proposta nova fica selecionado"
+    if via.nome == "Ficha de Cliente":
+        assert [p.banco for p in via.tela.lista_vendas.cards[0].venda.propostas] == ["HUBCRED BV 2"], "a copia: no card da venda nova"
+    else:
+        assert via.selecionado() == len(depois) - 1, "o card da proposta nova fica selecionado"
     assert "HUBCRED BV 2" in via.bancos_dos_cards() and "SANTANDER" in via.bancos_dos_cards(), "os dois aparecem"
     assert len(via.bancos_dos_cards()) == via.cards_depois_de_duplicar, via.bancos_dos_cards()
     print("OK: salvar a duplicata cria uma proposta NOVA (banco escolhido, hoje, Em Análise), que aparece na lista e fica selecionada; "
           "a original e as outras ficam exatamente iguais.")
 
-    # ---- + Nova Proposta --------------------------------------------------------------------
-    stubs.limpar()
-    via.botao_nova.click()
-    n = expansor.formulario()
-    assert expansor.eh_rascunho() and modelo.eh_rascunho(0) and not n._existente and not n._modo_leitura
-    assert n._botao_ok.isVisible() and not n._botao_duplicar.isVisible()
-    assert (n._cliente_combo is not None) == (via.nome == "Todas as Propostas"), "avulsa (com campo de cliente) so em Todas as Propostas"
-    n._botao_cancelar.click()
-    assert not expansor.esta_expandido() and not modelo.tem_rascunho(), "Cancel numa proposta nova (sem leitura pra onde voltar) so a tira"
-    via.botao_nova.click()
-    QTest.keyClick(expansor.formulario(), Qt.Key.Key_Escape)
-    assert not expansor.esta_expandido()
-    # nova proposta com edicao no meio: outro '+ Nova Proposta' pergunta antes de recomecar
-    via.botao_nova.click()
-    expansor.formulario()._valor.setValue(123)
-    stubs.resposta = QMessageBox.StandardButton.No
-    stubs.limpar()
-    via.botao_nova.click()
-    assert stubs.titulos == ["Alterações não salvas"] and expansor.formulario()._valor.value() == 123, "'Não': segue no que estava digitando"
-    stubs.resposta = QMessageBox.StandardButton.Yes
-    expansor.formulario()._botao_cancelar.click()
-    print("OK: '+ Nova Proposta' abre o card 'Nova proposta' no topo; Cancel/Esc só o tiram; abrir outro com edição não salva pergunta.")
+    # ---- + Nova Proposta (so em Todas as Propostas: na ficha, proposta nova e pelo card da venda) ------
+    if via.botao_nova is not None:
+        stubs.limpar()
+        via.botao_nova.click()
+        n = expansor.formulario()
+        assert expansor.eh_rascunho() and modelo.eh_rascunho(0) and not n._existente and not n._modo_leitura
+        assert n._botao_ok.isVisible() and not n._botao_duplicar.isVisible()
+        assert n._cliente_combo is not None, "avulsa (com campo de cliente)"
+        n._botao_cancelar.click()
+        assert not expansor.esta_expandido() and not modelo.tem_rascunho(), "Cancel numa proposta nova (sem leitura pra onde voltar) so a tira"
+        via.botao_nova.click()
+        QTest.keyClick(expansor.formulario(), Qt.Key.Key_Escape)
+        assert not expansor.esta_expandido()
+        # nova proposta com edicao no meio: outro '+ Nova Proposta' pergunta antes de recomecar
+        via.botao_nova.click()
+        expansor.formulario()._valor.setValue(123)
+        stubs.resposta = QMessageBox.StandardButton.No
+        stubs.limpar()
+        via.botao_nova.click()
+        assert stubs.titulos == ["Alterações não salvas"] and expansor.formulario()._valor.value() == 123, "'Não': segue no que estava digitando"
+        stubs.resposta = QMessageBox.StandardButton.Yes
+        expansor.formulario()._botao_cancelar.click()
+        print("OK: '+ Nova Proposta' abre o card 'Nova proposta' no topo; Cancel/Esc só o tiram; abrir outro com edição não salva pergunta.")
 
     # ---- Excluir ----------------------------------------------------------------------------
     linha(f"4c) {via.nome}: Excluir age sobre o card selecionado (mesma confirmação nas duas telas)")
     stubs.limpar()
     total = len(_linhas_editaveis(arquivo))
-    via.clicar_card("HUBCRED BV 2")  # a duplicata que acabou de ser criada (1 clique so seleciona)
+    banco_alvo, valor_alvo = via.excluir
+    via.clicar_card(banco_alvo)  # 1 clique so seleciona
     indice_excluido = via.selecionado()
     via.duplo_clique_no_card("PORTOBANK")  # ha outro card expandido: excluir recolhe tudo
-    via.clicar_card("HUBCRED BV 2")
+    via.clicar_card(banco_alvo)
     via.botao_excluir.click()
     assert stubs.titulos[-1] == "Excluir proposta", stubs.titulos
-    assert "Tem certeza que deseja excluir a proposta de 'ALFA CLIENTE' (HUBCRED BV 2, R$ 75.000,00)? Essa ação não pode ser desfeita." == stubs.textos[-1], stubs.textos[-1]
+    assert f"Tem certeza que deseja excluir a proposta de 'ALFA CLIENTE' ({banco_alvo}, {valor_alvo})? Essa ação não pode ser desfeita." == stubs.textos[-1], stubs.textos[-1]
     assert len(_linhas_editaveis(arquivo)) == total - 1 and not expansor.esta_expandido()
-    assert "HUBCRED BV 2" not in via.bancos_dos_cards() and via.selecionado() is None, "excluida: some, e nenhum card fica selecionado"
+    assert banco_alvo not in via.bancos_dos_cards() and via.selecionado() is None, "excluida: some, e nenhum card fica selecionado"
     stubs.limpar()
     via.botao_excluir.click()
     assert "Clique em um card" in stubs.textos[-1] and len(_linhas_editaveis(arquivo)) == total - 1, "sem selecao: avisa em vez de excluir"
@@ -824,38 +837,27 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
         assert via.tela._campo_nome.text() == "BETA AVALISTA" and via.modelo.total() == 1 and not via.modelo.tem_rascunho()
         via.tela._selecionar_por_cpf(via.cpfs["alfa"])
         _ciclos(app)
-        # o card 'Nova proposta' e DO cliente: trocar de cliente o descarta (senao apareceria no historico do outro)
+        # o formulario aberto num card de venda tambem e DO cliente: trocar de cliente o descarta (avisando)
+        lista_vendas = via.tela.lista_vendas
+        lista_vendas.editar_proposta(lista_vendas.cards[0].venda, None)
+        _ciclos(app)
+        lista_vendas.card_aberto().formulario._valor.setValue(999)
         stubs.limpar()
-        via.botao_nova.click()
-        expansor.formulario()._valor.setValue(999)
         via.tela._selecionar_por_cpf(via.cpfs["beta"])
         _ciclos(app)
-        assert not expansor.esta_expandido() and not via.modelo.tem_rascunho() and via.modelo.total() == 1, \
-            "o card 'Nova proposta' era da ALFA: nao pode aparecer no historico da BETA"
         assert stubs.titulos == ["Alterações descartadas"], stubs.titulos
-        via.tela._selecionar_por_cpf(via.cpfs["alfa"])
-        _ciclos(app)
-        # cliente SEM propostas: o card 'Nova proposta' aparece mesmo assim (o historico nao pode ficar escondido)
+        assert lista_vendas.editando is None and lista_vendas.card_aberto() is None and not via.tela.tem_edicao_pendente()
+        # cliente SEM propostas: nada de "propostas de antes das vendas" (nem titulo nem aviso), so "nenhuma venda"
         via.tela._selecionar_por_cpf(via.cpfs["gama"])
         _ciclos(app)
-        assert via.modelo.total() == 0 and via.tela._contentor_historico.isHidden() and not via.tela._historico_vazio.isHidden()
-        via.botao_nova.click()
-        assert expansor.eh_rascunho() and not via.tela._contentor_historico.isHidden() and via.tela._historico_vazio.isHidden(), \
-            "com o card 'Nova proposta', o historico aparece (mesmo sem propostas)"
-        n = expansor.formulario()
-        n._valor.setValue(4321)
-        n._equipamento.addItem("Equip Novo")  # como se ja estivesse no cadastro (a lista e fechada)
-        n._equipamento.setCurrentText("Equip Novo")
-        n._banco.addItem("Banco Novo")  # como se ja estivesse no cadastro (a lista e fechada)
-        n._banco.setCurrentText("Banco Novo")
-        n._botao_ok.click()
-        assert via.modelo.total() == 1 and via.modelo.item(0)["titulo"] == "Banco Novo" and not expansor.esta_expandido()
-        assert via.tela._contentor_historico.isVisible() and via.tela._historico_vazio.isHidden()
+        assert via.modelo.total() == 0 and via.tela._contentor_historico.isHidden() and via.tela._titulo_historico.isHidden()
+        assert via.tela._historico_vazio.isHidden() and not lista_vendas.vazio.isHidden()
         via.tela._selecionar_por_cpf(via.cpfs["alfa"])
         _ciclos(app)
     print("OK: filtro que tira a proposta expandida da lista (ou outro cliente) descarta o card e avisa se havia edição; "
           "se ela continua na lista, o card continua expandido." if via.nome == "Todas as Propostas" else
-          "OK: trocar de cliente descarta o card expandido (avisando se havia edição); um cliente sem propostas mostra o card 'Nova proposta'.")
+          "OK: trocar de cliente descarta o card expandido e o formulário do card de venda (avisando se havia edição); "
+          "um cliente sem propostas mostra só 'nenhuma venda'.")
     assert not [t for t in stubs.titulos if t.startswith("Erro")], stubs.titulos
 
 
@@ -949,7 +951,9 @@ def testar_vendedor(app: QApplication) -> None:
                         f = via.expansor.formulario()
                         assert f._modo_leitura and f._banco.currentText() == "SANTANDER" and len(f._botoes_copiar) == 9
                         assert f._botao_editar.isHidden() and f._botao_duplicar.isHidden(), f"{via.nome}: vendedor nunca edita nem duplica"
-                        assert via.botao_nova.isHidden() and via.botao_excluir.isHidden()
+                        assert (via.botao_nova is None or via.botao_nova.isHidden()) and via.botao_excluir.isHidden()
+                        if via.nome == "Ficha de Cliente":
+                            assert via.tela._botao_nova_venda.isHidden() and via.tela.lista_vendas.isHidden()
                         f._salvar()  # mesmo por codigo: em leitura nao grava
                         f.duplicacao_pedida.emit()  # nem com o sinal emitido por fora: o expansor recusa (2a trava)
                         assert via.expansor.formulario() is f and f._modo_leitura and not via.modelo.tem_rascunho()

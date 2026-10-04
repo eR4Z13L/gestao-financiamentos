@@ -566,6 +566,12 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     return resultado
 
 
+def vendas_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]:
+    """As vendas de um cliente (a mais recente primeiro): a Ficha de Cliente."""
+    alvo = apenas_digitos(cpf)
+    return [v for v in listar_vendas(hoje) if apenas_digitos(v.cpf) == alvo]
+
+
 def contar_propostas_sem_venda() -> int:
     """Propostas que nao estao em nenhuma venda (as de antes das vendas, ainda nao juntadas)."""
     propostas = bd.ler_propostas(_caminho())
@@ -581,8 +587,3 @@ def indice_da_proposta(id_proposta: str) -> int:
 def propostas_da_venda(id_venda: str) -> pd.DataFrame:
     propostas = bd.ler_propostas(_caminho())
     return propostas[propostas["ID_VENDA"] == id_venda].copy()
-
-
-def vendas_do_cliente(cpf: str) -> pd.DataFrame:
-    vendas = bd.ler_vendas(_caminho())
-    return vendas[vendas["CPF"].map(apenas_digitos) == apenas_digitos(cpf)].copy()

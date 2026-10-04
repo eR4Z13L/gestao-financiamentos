@@ -44,6 +44,7 @@ from core import data_store_sheets as leitura_sheets
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
+from core import vendas as vendas_mod
 from desktop import main as main_mod
 from desktop import settings as settings_mod
 from desktop.main_window import (
@@ -543,16 +544,19 @@ def testar_sair(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
 
     # e o mesmo na Ficha de Cliente
     janela.ir_para(PAGINA_FICHA)
-    janela._tela_ficha._selecionar_por_cpf(fx.CPF_MARIA)
-    janela._tela_ficha._abrir_nova_proposta()
-    janela._tela_ficha._expansor.formulario()._observacoes.setPlainText("outro rascunho")
+    ficha = janela._tela_ficha
+    id_venda, _ = vendas_mod.criar_venda(fx.CPF_MARIA, ["Mesa Exemplo"])
+    ficha._selecionar_por_cpf(fx.CPF_MARIA)
+    ficha._depois_de_gravar_venda()
+    ficha.lista_vendas.editar_proposta(next(c.venda for c in ficha.lista_vendas.cards if c.venda.id == id_venda), None)
+    ficha.lista_vendas.card_aberto().formulario._observacoes.setPlainText("outro rascunho")
     assert janela.tem_edicao_pendente()
     msgs.limpar()
     msgs.resposta_pergunta = QMessageBox.StandardButton.No
     janela._botao_sair.click()
     assert saidas == [1, 1] and msgs.ultima()[0] == "question"
-    print("OK: o mesmo vale para edicao nao salva na Ficha de Cliente.")
-    janela._tela_ficha._expansor.descartar()
+    print("OK: o mesmo vale para edicao nao salva na Ficha de Cliente (no formulario do card de venda).")
+    ficha.lista_vendas.descartar()
     msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
 
     # rascunho aberto mas SEM nada digitado nao conta como edicao pendente
@@ -904,9 +908,14 @@ def testar_fundo_dos_rotulos_e_tooltip(amb: Ambiente, msgs: Mensagens, tema: str
         if r.property("role") in ("campo_rotulo", "campo_valor") and r.isVisibleTo(ficha)
     ]
     assert len(de_campo) >= 8, f"a Ficha deveria ter vários rótulos de campo visíveis, achei {len(de_campo)}"
-    com_fundo = [r.text() for r in de_campo if not transparente(r)]
+    # menos os de propriedade "caixa" (e-mail, data de cadastro): esses tem a MESMA caixa do campo de edicao, de
+    # proposito, pra nao mudar de formato entre leitura e edicao (desktop/theme.py, campo_valor[caixa="true"])
+    em_caixa = [r for r in de_campo if r.property("caixa")]
+    com_fundo = [r.text() for r in de_campo if r not in em_caixa and not transparente(r)]
     assert not com_fundo, f"rótulos de campo da Ficha com fundo próprio (deveriam ser texto puro): {com_fundo}"
-    print(f"OK: os {len(de_campo)} rótulos de campo da Ficha são texto puro, sem caixa/campo por trás.")
+    assert len(em_caixa) >= 2 and not any(transparente(r) for r in em_caixa), "e-mail e cadastro: na caixa do campo"
+    print(f"OK: os {len(de_campo) - len(em_caixa)} rótulos de campo da Ficha são texto puro; os {len(em_caixa)} de "
+          "valor em caixa (e-mail, cadastro) têm a caixa do campo.")
 
     # o tooltip e um QLabel por baixo dos panos: tem que continuar opaco (e legivel)
     QToolTip.showText(QPoint(300, 300), "texto de teste do tooltip", janela)

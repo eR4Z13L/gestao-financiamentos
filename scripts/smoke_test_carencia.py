@@ -145,8 +145,8 @@ def main() -> None:
             assert dup[CARENCIA] == 45 and dup[PARCELA] is None
             tela = tela_mod.VendasScreen()
             resumo = next(r for r in v.listar_vendas() if r.id == id_venda)
-            tela.editar_proposta(resumo, None)  # o "+ Adicionar proposta" do card
-            f = next(c for c in tela.cards if c.venda.id == id_venda).formulario
+            tela.lista.editar_proposta(resumo, None)  # o "+ Adicionar proposta" do card
+            f = next(c for c in tela.lista.cards if c.venda.id == id_venda).formulario
             assert f._carencia.currentText() == "45" and f._parcela.value() == 0
             f._banco.setCurrentText(b2)
             f._parcela.setValue(2050)
@@ -159,7 +159,7 @@ def main() -> None:
 
             linha("5) Card da venda: as condições embaixo do nome do banco")
             tela.carregar()
-            card = next(c for c in tela.cards if c.venda.id == id_venda)
+            card = next(c for c in tela.lista.cards if c.venda.id == id_venda)
             textos = [l["condicoes"].text() for l in card.linhas_de_banco]
             assert textos == ["R$ 80.000 · 48x · 1ª em 45 dias · parcela R$ 2.100,50",
                               "R$ 80.000 · 48x · 1ª em 45 dias · parcela R$ 2.050,00"], textos
