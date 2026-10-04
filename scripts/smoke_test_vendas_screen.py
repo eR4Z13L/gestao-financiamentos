@@ -103,6 +103,32 @@ def _resumo(id_venda: str) -> v.ResumoDaVenda:
     return next(r for r in v.listar_vendas() if r.id == id_venda)
 
 
+def _colunas_que_encaixam(tela, conferir_distribuicao: bool = True) -> None:
+    """As colunas dividem a largura toda (8 px entre elas, nada sobrando na lateral); cada uma empilha os seus cards
+    com 8 px entre eles (sem buraco embaixo de um card curto); e, com todos fechados, cada card foi para a coluna
+    que estava mais curta."""
+    lista = tela.lista
+    xs = sorted({c.x() for c in lista.cards})
+    assert len(xs) == lista._colunas, (xs, lista._colunas)
+    largura_da = {}
+    for c in lista.cards:
+        largura_da.setdefault(c.x(), set()).add(c.width())
+    assert all(len(l) == 1 for l in largura_da.values()), f"cada coluna, uma largura: {largura_da}"
+    larguras = [largura_da[x].pop() for x in xs]
+    assert max(larguras) - min(larguras) <= 1, f"as colunas dividem a largura por igual (±1 px): {larguras}"
+    assert all(xs[i + 1] - (xs[i] + larguras[i]) == 8 for i in range(len(xs) - 1)), f"8 px entre as colunas: {xs} / {larguras}"
+    assert xs[0] == 0 and xs[-1] + larguras[-1] == lista.width(), "as colunas vão de uma borda à outra"
+    for x in xs:
+        pilha = sorted((c for c in lista.cards if c.x() == x), key=lambda c: c.y())
+        assert pilha[0].y() == 0 and all(b.y() == a.y() + a.height() + 8 for a, b in zip(pilha, pilha[1:])), \
+            f"coluna em x={x}: cards empilhados com 8 px, sem buraco"
+    if conferir_distribuicao:
+        fundos = dict.fromkeys(xs, 0)
+        for c in lista.cards:  # na ordem da lista (a mais recente primeiro)
+            assert fundos[c.x()] <= min(fundos.values()) + 4, f"{c.venda.cliente}: foi para a coluna mais curta"
+            fundos[c.x()] = c.y() + c.height() + 8
+
+
 def _pedido(banco: str, valor: float = 50000) -> dict:
     return {"BANCO": banco, "VALOR (R$)": valor, "MESES": 36}
 
@@ -437,27 +463,26 @@ def main() -> None:
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             print("OK: o ↩ da venda só existe num desfecho e reabre (perguntando); nunca volta a um status de antes das vendas.")
 
-            linha("14) Card aberto: dois cliques abre, na linha toda; editar no formulário; um aberto por vez")
+            linha("14) Colunas que encaixam; o card abre para baixo na própria coluna; editar no formulário; um aberto por vez")
             id_x, px = v.criar_venda(fx.CPF_MARIA, ["Mesa Exemplo"], _pedido(b1))
             px2 = v.mandar_a_outro_banco(id_x, _pedido(b2))
             tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
             tela.carregar()
             _processar()
-            assert tela.lista._colunas >= 2, "a tela de teste cabe 2 colunas"
+            assert tela.lista._colunas == 2, f"a tela de teste cabe 2 colunas ({tela.lista._colunas})"
             achar = lambda id_: next(c for c in tela.lista.cards if c.venda.id == id_)  # noqa: E731
+            _colunas_que_encaixam(tela)
+            lugar_antes = {c.venda.id: c.x() for c in tela.lista.cards}
             card = achar(id_x)
+            largura_fechado, altura_fechado = card.width(), card.height()
             assert card.linhas_de_banco[0]["lapis"] is None and card.abrir_ficha is None, "fechado: sem ✎ nem rodapé"
             QTest.mouseDClick(card, Qt.MouseButton.LeftButton, pos=card.rect().topLeft() + QPoint(30, 12))
             _processar()
             card = achar(id_x)
             assert card.aberto and tela.lista.aberta == id_x
-            _, _, _, colunas = tela.lista._grade.getItemPosition(tela.lista._grade.indexOf(card))
-            assert colunas == tela.lista._colunas + 1, "aberto: atravessa as colunas e a sobra da direita"
-            assert card.x() == 0 and card.geometry().right() >= tela.lista.width() - 1, "aberto: a linha toda, até a borda"
-            fechados = [c for c in tela.lista.cards if not c.aberto]
-            assert all(c.width() == card_mod.LARGURA_CARD for c in fechados), "os fechados não esticam"
-            xs = sorted({c.x() for c in fechados})
-            assert xs[:2] == [0, card_mod.LARGURA_CARD + 12], f"os fechados não se espalham com o aberto na lista: {xs}"
+            assert card.width() == largura_fechado and card.height() > altura_fechado, "aberto: mesma largura, cresce para baixo"
+            assert {c.venda.id: c.x() for c in tela.lista.cards} == lugar_antes, "abrir não tira ninguém da coluna"
+            _colunas_que_encaixam(tela, conferir_distribuicao=False)
             assert all(l["lapis"] is not None for l in card.linhas_de_banco) and card.abrir_ficha is not None
             fichas = []
             tela.ficha_pedida.connect(fichas.append)
@@ -467,6 +492,9 @@ def main() -> None:
             _processar()
             assert [c.venda.id for c in tela.lista.cards] == [id_x] and tela.lista.card_aberto() is not None, \
                 "o card aberto continua na lista mesmo fora da busca (não some no meio da edição)"
+            sozinho = achar(id_x).width()
+            assert abs(sozinho - (tela.lista.width() - 8) / 2) <= 8, \
+                f"sozinho na lista, o card continua do tamanho de uma coluna (não da linha toda): {sozinho} / {tela.lista.width()}"
             tela.busca.clear()
             _processar()
             card = achar(id_x)
@@ -475,6 +503,19 @@ def main() -> None:
             _processar()
             card = achar(id_x)
             assert card.editando == px and card.formulario is not None and card.botao_excluir is not None
+            assert card.width() == largura_fechado and {c.venda.id: c.x() for c in tela.lista.cards} == lugar_antes, \
+                "com o formulário aberto (o card bem mais alto), ninguém troca de coluna"
+            # mesmo se, ao remontar (gravou algo, releu), um card do topo medir bem mais alto, ninguém troca de coluna
+            primeiro = tela.lista.cards[0].venda.id
+            altura_de_verdade = card_mod.CardDaVenda.heightForWidth
+            card_mod.CardDaVenda.heightForWidth = lambda c, w: 3000 if c.venda.id == primeiro else altura_de_verdade(c, w)
+            try:
+                tela.carregar()
+                _processar()
+                assert {c.venda.id: c.x() for c in tela.lista.cards} == lugar_antes, "remontar não redistribui as colunas"
+            finally:
+                card_mod.CardDaVenda.heightForWidth = altura_de_verdade
+            card = achar(id_x)
             f = card.formulario
             assert not f._modo_leitura and [f._status.itemText(i) for i in range(f._status.count())] == v.STATUS_DA_PROPOSTA
             f._valor.setValue(90000)
@@ -557,6 +598,28 @@ def main() -> None:
             assert 0 <= topo < tela.rolagem.viewport().height(), "o card clicado continua na tela"
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             print(f"OK: clicar na bolinha de uma venda lá embaixo mantém a rolagem ({antes}) e o card à vista.")
+
+            linha("16b) As colunas acompanham a janela (quantas couberem sem espremer o card)")
+            # uma venda de texto bem comprido: o card dela não pode alargar a coluna (nem empurrar a janela)
+            comprido = " + ".join(f"Equipamento de Demonstração Bem Comprido Número {n}" for n in range(1, 7))
+            v.criar_venda(fx.CPF_ANA, [comprido], _pedido(b1))
+            tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
+            tela.carregar()
+            _processar()
+            for largura_janela, esperadas in ((1700, 3), (1100, 2), (760, 1), (1700, 3)):
+                tela.resize(largura_janela, 760)
+                for _ in range(3):
+                    _processar()
+                assert tela.lista._colunas == esperadas, (largura_janela, tela.lista._colunas, esperadas)
+                visivel = tela.rolagem.viewport().width()
+                assert max(c.geometry().right() for c in tela.lista.cards) < visivel, \
+                    f"{largura_janela}: nenhum card cortado na borda ({visivel})"
+                assert min(c.width() for c in tela.lista.cards) >= card_mod.LARGURA_CARD, "nenhum card espremido"
+                _colunas_que_encaixam(tela)
+            tela.resize(1100, 760)
+            _processar()
+            tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
+            print("OK: 3 colunas numa janela larga, 2 na média, 1 na estreita (e de volta a 3), sem cortar nem espremer.")
 
             linha("17) Nenhuma janela solta piscou")
             _processar()

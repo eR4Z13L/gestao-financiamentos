@@ -1,7 +1,8 @@
 """A lista de cards de venda, a mesma na tela Vendas e na Ficha de Cliente (e, depois, na visao por banco).
 
-Cuida dos cards (lado a lado, quantos couberem), de qual esta ABERTO (um por vez, na linha toda), do formulario da
-proposta dentro dele e de nunca descartar algo digitado sem perguntar. Quem mostra a lista decide QUAIS vendas
+Cuida dos cards - em colunas que dividem a largura (quantas couberem sem espremer o card; na Ficha, uma so), cada
+uma empilhando os seus, sem buraco embaixo de um card curto -, de qual esta ABERTO (um por vez: ele so cresce para
+baixo, na propria coluna), do formulario da proposta dentro dele e de nunca descartar algo digitado sem perguntar. Quem mostra a lista decide QUAIS vendas
 aparecem (busca, filtros, o cliente da ficha) e rele depois de gravar: a lista avisa pelo sinal `gravou`.
 """
 
@@ -10,11 +11,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -29,7 +29,7 @@ from core import vendas as vendas_mod
 from desktop.dialogs.venda_dialog import VendaDialog
 from desktop.widgets.card_da_venda import LARGURA_CARD, NOVA, CardDaVenda, ControleDasVendas, proposta_por_id
 
-ESPACO = 12
+ESPACO = 8
 TAMANHO_PAGINA = 30
 SEGUNDOS_DO_AVISO = 8
 
@@ -80,13 +80,20 @@ class ListaDeVendas(QWidget):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
     ficha_pedida = Signal(str)  # cpf
 
-    def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True):
+    def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
+                 uma_coluna: bool = False):
         """`rolagem`: quem rola a lista (a da tela) - a posicao e mantida ao refazer os cards. `com_ficha`: o
-        "Abrir a ficha" do card aberto (na propria ficha nao faz sentido)."""
+        "Abrir a ficha" do card aberto (na propria ficha nao faz sentido). `uma_coluna`: todo card na largura toda
+        (a Ficha)."""
         super().__init__(parent)
         self.setProperty("role", "transparente")
         self._rolagem = rolagem
         self._com_ficha = com_ficha
+        self._uma_coluna = uma_coluna
+        # em que coluna esta cada venda: so muda com outra lista (busca, filtro, venda nova) ou outro numero de
+        # colunas - abrir, fechar ou gravar num card nao tira ninguem do lugar
+        self._coluna_da_venda: dict[str, int] = {}
+        self._distribuidas: list[str] = []
         self._vendas: list[vendas_mod.ResumoDaVenda] = []
         self._limite = TAMANHO_PAGINA
         self._colunas = 1
@@ -99,9 +106,11 @@ class ListaDeVendas(QWidget):
 
         coluna = QVBoxLayout(self)
         coluna.setContentsMargins(0, 0, 0, 0)
-        self._grade = QGridLayout()
-        self._grade.setSpacing(ESPACO)
-        coluna.addLayout(self._grade)
+        self._linha_das_colunas = QHBoxLayout()
+        self._linha_das_colunas.setSpacing(ESPACO)
+        coluna.addLayout(self._linha_das_colunas)
+        self._pilhas: list[QVBoxLayout] = []  # uma por coluna
+        rolagem.viewport().installEventFilter(self)  # quantas colunas cabem (ver _largura_disponivel)
         self.vazio = QLabel("", self)
         self.vazio.setProperty("role", "secundario")
         self.vazio.setWordWrap(True)
@@ -167,33 +176,63 @@ class ListaDeVendas(QWidget):
         self._rolagem.widget().setMinimumHeight(0)
 
     def _posicionar(self) -> None:
-        """Cards fechados lado a lado; o aberto numa linha so dele, na largura toda."""
-        while self._grade.count():
-            self._grade.takeAt(0)
-        # o aberto atravessa tambem uma coluna vazia a direita, que fica com a sobra da largura: ele vai ate a borda
-        # (mesmo sem nenhum fechado na lista), e os fechados, de largura fixa, nao se espalham
-        linha = coluna = 0
+        """Cada card na sua coluna, empilhados na ordem da lista. Venda que ainda nao tem coluna vai para a mais curta
+        - pela altura dos cards como estao agora."""
+        while len(self._pilhas) < self._colunas:
+            pilha = QVBoxLayout()
+            pilha.setSpacing(ESPACO)
+            self._linha_das_colunas.addLayout(pilha, 1)
+            self._pilhas.append(pilha)
+        while len(self._pilhas) > self._colunas:
+            pilha = self._pilhas.pop()
+            while pilha.count():
+                pilha.takeAt(0)
+            self._linha_das_colunas.removeItem(pilha)
+            pilha.deleteLater()
+        ids = [c.venda.id for c in self.cards]
+        if ids[: len(self._distribuidas)] != self._distribuidas:  # outra lista, nao so mais uma pagina
+            self._coluna_da_venda, self._distribuidas = {}, []
+        largura = max(LARGURA_CARD, (self._largura_disponivel() - (self._colunas - 1) * ESPACO) // self._colunas)
+        alturas = [0] * self._colunas
         for card in self.cards:
-            if card.aberto:
-                if coluna:
-                    linha, coluna = linha + 1, 0
-                self._grade.addWidget(card, linha, 0, 1, self._colunas + 1)
-                linha += 1
-                continue
-            self._grade.addWidget(card, linha, coluna, Qt.AlignmentFlag.AlignTop)
-            coluna += 1
-            if coluna == self._colunas:
-                linha, coluna = linha + 1, 0
+            coluna = self._coluna_da_venda.get(card.venda.id)
+            if coluna is None:
+                coluna = alturas.index(min(alturas))
+                self._coluna_da_venda[card.venda.id] = coluna
+            card.ensurePolished()
+            altura = card.heightForWidth(largura)
+            alturas[coluna] += (altura if altura > 0 else card.sizeHint().height()) + ESPACO
+        self._distribuidas = ids
+        for pilha in self._pilhas:
+            while pilha.count():
+                pilha.takeAt(0)
+        for card in self.cards:
+            self._pilhas[self._coluna_da_venda[card.venda.id]].addWidget(card)
+        for pilha in self._pilhas:
+            pilha.addStretch()  # o conteudo curto fica no topo da coluna
 
-    def resizeEvent(self, evento) -> None:
-        super().resizeEvent(evento)
-        # sem a barra de rolagem a vista, conta com ela: aparecer ou sumir nao muda as colunas (nao fica pulando)
+    def _largura_disponivel(self) -> int:
+        """A largura que a lista tem para os cards, pela area visivel de quem rola (e nao pela largura da propria
+        lista: com colunas demais, os cards seguram a lista larga e ela nunca "veria" a janela encolher). A lista
+        fica direto no layout do que rola - as margens dele saem da conta."""
+        margens = self._rolagem.widget().layout().contentsMargins()
         barra = self._rolagem.verticalScrollBar()
-        largura = self.width() - (0 if barra.isVisible() else barra.sizeHint().width())
-        colunas = max(1, (largura + ESPACO) // (LARGURA_CARD + ESPACO))
+        # sem a barra de rolagem a vista, conta com ela: aparecer ou sumir nao muda as colunas (nao fica pulando)
+        sem_barra = 0 if barra.isVisible() else barra.sizeHint().width()
+        return self._rolagem.viewport().width() - margens.left() - margens.right() - sem_barra
+
+    def _ajustar_colunas(self) -> None:
+        largura = self._largura_disponivel()
+        colunas = 1 if self._uma_coluna else max(1, (largura + ESPACO) // (LARGURA_CARD + ESPACO))
         if colunas != self._colunas:
             self._colunas = colunas
+            self._coluna_da_venda, self._distribuidas = {}, []
             self._posicionar()
+
+    def eventFilter(self, objeto, evento) -> bool:
+        if objeto is self._rolagem.viewport() and evento.type() == QEvent.Type.Resize:
+            self._ajustar_colunas()
+        return super().eventFilter(objeto, evento)
 
     def _carregar_mais(self) -> None:
         self._limite += TAMANHO_PAGINA

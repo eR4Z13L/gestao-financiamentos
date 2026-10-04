@@ -1,8 +1,9 @@
 """Tela Vendas: um card por venda (cliente + equipamentos), com uma linha por banco para onde ela foi mandada.
 
-Os cards sao a peca de desktop/widgets/lista_de_vendas.py (a mesma da Ficha de Cliente e da visao por banco):
-fechados, servem pra ver e trocar status; um por vez fica ABERTO (dois cliques, ou a setinha do canto), ocupando a
-linha toda, pra editar as propostas ali dentro. Esta tela cuida de QUAIS vendas aparecem (busca e filtros).
+Os cards sao a peca de desktop/widgets/lista_de_vendas.py (a mesma da Ficha de Cliente e da visao por banco), em
+colunas que encaixam: fechados, servem pra ver e trocar status; um por vez fica ABERTO (dois cliques, ou a setinha do
+canto), crescendo para baixo na propria coluna, pra editar as propostas ali dentro. Esta tela cuida de QUAIS vendas
+aparecem (busca e filtros).
 
 "+ Nova venda" cria so a venda (cliente, equipamentos); os bancos entram depois pelo "+ Adicionar proposta" do card.
 Propostas de antes das vendas, ainda nao juntadas, aparecem num aviso com o "Juntar em vendas...".

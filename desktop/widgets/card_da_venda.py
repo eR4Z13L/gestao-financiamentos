@@ -53,7 +53,9 @@ from desktop.widgets.icones_linha import icone_de_linha
 from desktop.widgets.lista_cartoes import chave_cor_status
 from desktop.widgets.perguntas_da_venda import perguntar_se_perdida
 
-LARGURA_CARD = 500  # fechado; aberto, o card ocupa a linha toda (o formulario precisa de espaco)
+# o mais estreito que o card fica sem espremer as informacoes (e o formulario da proposta, aberto); a largura de
+# verdade e a da coluna onde a lista o pos - mesma aberto ou fechado
+LARGURA_CARD = 500
 _FAIXA = 5
 _RAIO = 10
 NOVA = "nova"  # o que o card mostra no formulario quando e uma proposta nova (as demais: o ID_PROPOSTA)
@@ -297,10 +299,7 @@ class CardDaVenda(QFrame):
         self.botao_excluir: QPushButton | None = None
         self.setProperty("role", "card")
         self.setProperty("aberto", aberto)
-        if aberto:
-            self.setMinimumWidth(LARGURA_CARD)
-        else:
-            self.setFixedWidth(LARGURA_CARD)
+        self.setMinimumWidth(LARGURA_CARD)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(_FAIXA + 14, 10, 12, 6)
         self._layout.setSpacing(4)
@@ -547,11 +546,6 @@ class CardDaVenda(QFrame):
         contorno.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), _RAIO, _RAIO)
         pintor.setClipPath(contorno)
         pintor.fillRect(QRectF(0, 0, _FAIXA, self.height()), QColor(cor))
-        if self.aberto:  # aberto: o contorno na cor de destaque (e o card que esta sendo editado)
-            pintor.setClipping(False)
-            pintor.setPen(QPen(QColor(PALETAS[tema]["destaque"]), 1.5))
-            pintor.setBrush(Qt.BrushStyle.NoBrush)
-            pintor.drawRoundedRect(QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75), _RAIO, _RAIO)
 
 
 class DesfechoDialog(QDialog):

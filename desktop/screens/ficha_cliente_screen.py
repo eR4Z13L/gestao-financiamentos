@@ -763,7 +763,7 @@ class FichaClienteScreen(QWidget):
         self._titulo_vendas = QLabel("Vendas do cliente")
         self._titulo_vendas.setProperty("role", "subtitulo")
         layout.addWidget(self._titulo_vendas)
-        self.lista_vendas = ListaDeVendas(self._rolagem_ficha, conteudo, com_ficha=False)
+        self.lista_vendas = ListaDeVendas(self._rolagem_ficha, conteudo, com_ficha=False, uma_coluna=True)
         self.lista_vendas.gravou.connect(self._depois_de_gravar_venda)
         layout.addWidget(self.lista_vendas)
 

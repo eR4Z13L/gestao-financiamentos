@@ -40,6 +40,7 @@ from core.validators import apenas_digitos
 from desktop.dialogs.venda_dialog import VendaDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen, _resumo_com_vendas
 from desktop.theme import TEMA_ESCURO, build_stylesheet
+from desktop.widgets import card_da_venda as card_mod
 from desktop.widgets.card_da_venda import NOVA
 from desktop.widgets.lista_de_vendas import FaixaDeAviso
 
@@ -162,9 +163,20 @@ def main() -> None:
             _processar()
             aberto = tela.lista_vendas.card_aberto()
             assert aberto.venda.id == id_a and aberto.abrir_ficha is not None and aberto.abrir_ficha.isHidden()
-            assert aberto.x() == 0 and aberto.geometry().right() >= tela.lista_vendas.width() - 1, "na largura toda"
+            largura_toda = tela.lista_vendas.width()
+            assert all(c.x() == 0 and c.width() == largura_toda for c in tela.lista_vendas.cards), \
+                "uma coluna só: todo card (aberto ou fechado) na largura toda"
+            fechado = next(c for c in tela.lista_vendas.cards if not c.aberto)
+            borda = lambda c: c.grab().toImage().pixelColor(c.width() // 2, 0).name()  # noqa: E731
+            assert borda(aberto) == borda(fechado), "o aberto tem a mesma borda do fechado (sem o contorno azul)"
+            tela.resize(1900, 800)  # caberiam 2 colunas: a ficha continua com uma
+            _processar()
+            assert tela.lista_vendas.width() >= 2 * card_mod.LARGURA_CARD + 8
+            assert all(c.x() == 0 and c.width() == tela.lista_vendas.width() for c in tela.lista_vendas.cards)
+            tela.resize(1250, 800)
+            _processar()
             assert tela.lista_vendas.fechar_venda() and tela.lista_vendas.card_aberto() is None
-            print("OK: o card abre na largura toda da ficha, sem o 'Abrir a ficha'.")
+            print("OK: na ficha, uma coluna só, todo card na largura toda; aberto, sem o 'Abrir a ficha' e sem borda azul.")
 
             linha("4) Gravar numa venda relê as vendas sem mexer nos dados do cliente que estão sendo editados")
             sinais: list[int] = []
