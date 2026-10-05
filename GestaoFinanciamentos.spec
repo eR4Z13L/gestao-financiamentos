@@ -5,7 +5,8 @@ a = Analysis(
     ['desktop/main.py'],
     pathex=['.'],
     binaries=[],
-    datas=[],
+    # o icone tambem e lido em tempo de execucao, para a janela (desktop/icone_do_app.py)
+    datas=[('desktop/assets/icone_app.ico', 'desktop/assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

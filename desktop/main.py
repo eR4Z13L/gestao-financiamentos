@@ -19,6 +19,7 @@ from core import sessao as sessao_mod
 from desktop import primeira_abertura
 from desktop import settings as settings_mod
 from desktop.dialogs.login_dialog import LoginDialog
+from desktop.icone_do_app import aplicar_icone_do_app
 from desktop.main_window import MainWindow
 from desktop.theme import build_stylesheet
 
@@ -95,6 +96,7 @@ class ControladorDaJanela:
 
 def main() -> None:
     app = QApplication(sys.argv)
+    aplicar_icone_do_app(app)
     # settings_mod ja garante organizationName/applicationName antes de ler
     app.setStyleSheet(build_stylesheet(settings_mod.obter_tema()))
 
