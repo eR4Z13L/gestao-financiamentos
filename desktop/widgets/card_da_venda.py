@@ -355,6 +355,7 @@ class CardDaVenda(QFrame):
         divisor.setFrameShape(QFrame.Shape.HLine)
         self._layout.addSpacing(4)
         self._layout.addWidget(divisor)
+        self._divisor = divisor  # acima dele, o "topo" do card: dois cliques ali fecham o card aberto
 
         self.linhas_de_banco: list[dict] = []  # por banco: proposta, widget, pilula, bolinhas, anel, voltar, lapis
         self.adicionar_vazio: QPushButton | None = None
@@ -405,6 +406,8 @@ class CardDaVenda(QFrame):
     def mouseDoubleClickEvent(self, evento) -> None:
         if not self.aberto:
             self.abrir_pedido.emit(self.venda)
+        elif evento.position().y() < self._divisor.y():  # no topo (cliente, status, andamento): fecha, como abriu
+            self.fechar_pedido.emit(self.venda)
         evento.accept()
 
     def _texto_andamento(self) -> str:

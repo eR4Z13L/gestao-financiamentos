@@ -18,7 +18,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PySide6.QtCore import QEvent, QObject
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
@@ -175,14 +177,33 @@ def main() -> None:
             assert all(c.x() == 0 and c.width() == tela.lista_vendas.width() for c in tela.lista_vendas.cards)
             tela.resize(1250, 800)
             _processar()
-            assert tela.lista_vendas.fechar_venda() and tela.lista_vendas.card_aberto() is None
-            print("OK: na ficha, uma coluna só, todo card na largura toda; aberto, sem o 'Abrir a ficha' e sem borda azul.")
+            # dois cliques ABAIXO do topo (onde ficam os bancos) não fecham; no topo (cliente, status), fecham
+            aberto = tela.lista_vendas.card_aberto()
+            QTest.mouseDClick(aberto, Qt.MouseButton.LeftButton, pos=QPoint(40, aberto._divisor.y() + 12))
+            _processar()
+            assert tela.lista_vendas.aberta == id_a, "dois cliques abaixo do topo não fecham o card"
+            aberto = tela.lista_vendas.card_aberto()
+            QTest.mouseDClick(aberto, Qt.MouseButton.LeftButton, pos=QPoint(40, 12))
+            _processar()
+            assert tela.lista_vendas.aberta is None and tela.lista_vendas.card_aberto() is None, "dois cliques no topo fecham"
+            print("OK: na ficha, uma coluna só, todo card na largura toda; aberto, sem o 'Abrir a ficha' e sem borda azul; "
+                  "dois cliques no topo do card aberto o fecham.")
 
             linha("4) Gravar numa venda relê as vendas sem mexer nos dados do cliente que estão sendo editados")
             sinais: list[int] = []
             tela.dados_atualizados.connect(lambda: sinais.append(1))
             tela._alternar_edicao_cliente()
             tela._campo_nome.setText("MARIA EDITANDO")
+            # a roda do mouse passando pelas caixas de escolha (selecionadas ou não) rola a ficha, não troca a opção
+            for combo in (tela._campo_tipo, tela._campo_vendedor, tela._campo_uf):
+                antes = combo.currentText()
+                for com_foco in (False, True):
+                    if com_foco:
+                        combo.setFocus()
+                    roda = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120), Qt.MouseButton.NoButton,
+                                       Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+                    QApplication.sendEvent(combo, roda)
+                    assert not roda.isAccepted() and combo.currentText() == antes, (combo.objectName(), com_foco)
             linha_a = next(l for l in _card(tela, id_a).linhas_de_banco if l["proposta"].id == pa)
             msgs.limpar()
             linha_a["bolinhas"][0].click()  # Em Análise -> Aprovado

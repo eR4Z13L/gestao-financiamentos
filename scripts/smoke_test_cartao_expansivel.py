@@ -586,14 +586,19 @@ def roteiro_da_tela(app: QApplication, via: _Via, stubs: _Stubs, arquivo: Path) 
     meses_antes = f._meses.value()
     roda = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, 120), Qt.MouseButton.NoButton,
                        Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
-    for campo in (f._meses, f._valor, f._banco, f._status):
-        roda.ignore()
-        QApplication.sendEvent(campo, roda)
-        assert not roda.isAccepted(), "a roda sobre um campo sem foco nao e consumida (sobe pra lista rolar)"
-    assert f._meses.value() == meses_antes
+    valores = lambda: (f._meses.value(), f._valor.value(), f._banco.currentText(), f._status.currentText(), f._carencia.currentText())  # noqa: E731
+    antes = valores()
+    for campo in (f._meses, f._valor, f._banco, f._status, f._carencia):
+        for com_foco in (False, True):  # nem com o campo selecionado (clicou nele e depois rolou a pagina por cima)
+            if com_foco:
+                campo.setFocus()
+            roda.ignore()
+            QApplication.sendEvent(campo, roda)
+            assert not roda.isAccepted(), f"a roda sobre um campo nao e consumida (sobe pra lista rolar); foco={com_foco}"
+    assert valores() == antes and f._meses.value() == meses_antes, "a roda não troca valor nenhum"
     f._botao_cancelar.click()
     f._botao_recolher.click()
-    print("OK: a roda do mouse sobre um campo/combo sem foco não muda o valor (o evento sobe, e a lista rola).")
+    print("OK: a roda do mouse sobre um campo/combo não muda o valor, com ou sem o campo selecionado (o evento sobe, e a lista rola).")
 
     # editar e gravar: recarrega, o card volta em leitura (ja com o que foi gravado) e segue selecionado
     via.duplo_clique_no_card("SANTANDER")

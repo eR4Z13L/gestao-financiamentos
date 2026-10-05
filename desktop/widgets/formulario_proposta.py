@@ -70,12 +70,13 @@ def _combo_flexivel(combo: QComboBox) -> None:
     combo.setMinimumContentsLength(_CARACTERES_MINIMOS_DO_COMBO)
 
 
-class _IgnoraRodaSemFoco(QObject):
-    """O formulario mora dentro de uma lista que rola: a roda do mouse sobre um combo ou um campo
-    de numero (sem foco nele) tem que ROLAR a lista, nao trocar o valor sem ninguem perceber."""
+class _IgnoraRoda(QObject):
+    """O formulario mora dentro de uma lista que rola: a roda do mouse sobre um combo ou um campo de numero tem que
+    ROLAR a lista, nunca trocar o valor - nem com o campo selecionado (pedido do usuario em 04/10: rolando a pagina com
+    o mouse passando por um campo clicado antes, o valor mudava sem ele perceber)."""
 
     def eventFilter(self, objeto, evento) -> bool:
-        if evento.type() == QEvent.Type.Wheel and not objeto.hasFocus():
+        if evento.type() == QEvent.Type.Wheel:
             evento.ignore()  # sem aceitar, o evento sobe pro pai e a lista rola
             return True
         return False
@@ -176,7 +177,7 @@ class FormularioProposta(QWidget):
 
         self.setProperty("role", "transparente")  # o card tem o fundo dele; o QSS global pintaria o da janela
         self.setProperty("formulario_proposta", True)  # (ver theme.py: fundo dos campos de numero e das observacoes)
-        self._roda = _IgnoraRodaSemFoco(self)
+        self._roda = _IgnoraRoda(self)
 
         raiz = QVBoxLayout(self)
         raiz.setContentsMargins(0, 0, 0, 0)

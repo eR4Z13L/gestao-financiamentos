@@ -57,10 +57,9 @@ class ComboTravavel(QComboBox):
             super().showPopup()
 
     def wheelEvent(self, evento: QWheelEvent) -> None:
-        if self._travado:
-            evento.ignore()
-            return
-        super().wheelEvent(evento)
+        # nem destravado: estes combos moram em fichas e cards que rolam, e a roda passando por cima trocava a opcao
+        # sem a pessoa perceber (pedido do usuario em 04/10) - o evento sobe e quem rola e a pagina
+        evento.ignore()
 
     def keyPressEvent(self, evento: QKeyEvent) -> None:
         if self._travado and evento.key() in _TECLAS_QUE_TROCAM_OPCAO:
