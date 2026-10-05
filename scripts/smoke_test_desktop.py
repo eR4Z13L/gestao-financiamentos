@@ -10,9 +10,11 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_desktop.py
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -23,6 +25,7 @@ import pandas as pd
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import CAMINHO_XLSX
+
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -42,6 +45,11 @@ from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 # lixo com ciclos de referencia entre os widgets, e o coletor de lixo do Python, ao recolher, apagava pedacos do Qt fora
 # de ordem e derrubava o processo (access violation) num momento qualquer do teste seguinte.
 _TELAS_VIVAS: list = []
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def _manter_viva(tela):
@@ -161,7 +169,7 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
 def testar_exclusao_cliente(app: QApplication) -> None:
     linha("3) Exclusão de cliente (copia temporaria)")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_exclusao.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_exclusao.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
@@ -217,7 +225,7 @@ def testar_exclusao_cliente(app: QApplication) -> None:
 def testar_edicao_proposta(app: QApplication) -> None:
     linha("4) Edição de proposta existente (cópia temporária)")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_edicao_proposta.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_edicao_proposta.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
@@ -308,7 +316,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
     # bug real reportado: uma URL longa sem espaço em Rede Social fazia o
     # tamanho MINIMO da ficha inteira (e por tabela, da janela) crescer bem
     # alem da tela, empurrando ate a barra lateral pra fora da area visivel
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_texto_longo.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_texto_longo.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path

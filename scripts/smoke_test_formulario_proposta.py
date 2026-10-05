@@ -10,9 +10,11 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_formulario_proposta.py
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +30,7 @@ import os
 os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
 from config import CAMINHO_XLSX
 
+
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import bancos as bancos_mod
@@ -36,6 +39,11 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from desktop.widgets.formulario_proposta import FormularioProposta
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -68,7 +76,7 @@ def main() -> None:
     QMessageBox.critical = staticmethod(_stub_mensagem)
     QMessageBox.information = staticmethod(_stub_mensagem)
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_formulario_proposta.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_formulario_proposta.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path

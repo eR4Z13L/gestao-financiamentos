@@ -14,7 +14,10 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_fase2.py
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -22,11 +25,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 
 from config import CAMINHO_XLSX
+
 from core import auth
 from core import data_store as bd
 from core import data_store_sheets as bd_sheets
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -147,7 +156,7 @@ def testar_login_vendedor_recusa_casos_invalidos() -> None:
 
 def main() -> None:
     testar_hash_senha()
-    testar_credencial_admin_em_copia_temporaria(CAMINHO_XLSX.parent / "_smoke_test_admin_senha.json")
+    testar_credencial_admin_em_copia_temporaria(PASTA_TEMPORARIA / "_smoke_test_admin_senha.json")
     testar_sessao_e_guard_de_escrita()
     testar_leitura_sheets_bate_com_local()
     testar_login_vendedor_recusa_casos_invalidos()

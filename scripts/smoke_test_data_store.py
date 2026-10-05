@@ -9,17 +9,25 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_data_store.py
 
 from __future__ import annotations
 
+import atexit
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import CAMINHO_XLSX
 
+
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import data_store as bd
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -60,7 +68,7 @@ def testar_leitura_real() -> None:
 def testar_escrita_em_copia() -> Path:
     linha("2) ESCRITA (round-trip) EM UMA COPIA TEMPORARIA")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_copy.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_copy.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
 
     clientes_antes = bd.ler_clientes(tmp_path)

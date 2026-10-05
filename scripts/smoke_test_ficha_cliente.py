@@ -11,9 +11,11 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cliente.py
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -32,6 +34,7 @@ import os
 # (planilha de teste, so pro desenvolvimento) nao pode valer aqui
 os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
 from config import CAMINHO_XLSX
+
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -53,6 +56,11 @@ from desktop.widgets.formatters import formatar_cep_parcial, formatar_data_parci
 
 CPF_SEPARADO = "529.982.247-25"
 CPF_REVISAR = "390.533.447-05"
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -955,7 +963,7 @@ def main() -> None:
     testar_mascaras()
     testar_campo_data(app)
 
-    tmp = CAMINHO_XLSX.parent / "_smoke_test_ficha_cliente.xlsx"
+    tmp = PASTA_TEMPORARIA / "_smoke_test_ficha_cliente.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp)
     clientes_mod.CAMINHO_XLSX = tmp
     propostas_mod.CAMINHO_XLSX = tmp
