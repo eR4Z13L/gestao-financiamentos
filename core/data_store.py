@@ -25,6 +25,7 @@ import gc
 import logging
 import os
 import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -277,6 +278,48 @@ def _carregar_planilha(caminho_xlsx: Path):
             gc.enable()
 
 
+# Leitura guardada na memoria: abrir o arquivo inteiro custa caro (o openpyxl le TODAS as abas) e as telas
+# leem as mesmas abas dezenas de vezes seguidas sem nada mudar. Fica so o workbook da versao atual do
+# arquivo; qualquer gravacao (do app, da sincronizacao ou de fora) muda a versao e a proxima leitura abre
+# de novo. O workbook guardado nunca sai deste modulo: so as leituras abaixo o usam, sem altera-lo.
+_leitura_lock = threading.Lock()
+_leitura_guardada: dict = {"versao": None, "wb": None, "linhas": {}}
+
+
+def _versao_do_arquivo(caminho_xlsx: Path) -> tuple:
+    """Muda a cada gravacao: a do app troca o arquivo inteiro (inode novo); a de fora muda data ou tamanho."""
+    info = os.stat(caminho_xlsx)  # arquivo inexistente: FileNotFoundError, como o open() de antes
+    return (os.path.normcase(os.path.abspath(caminho_xlsx)), info.st_mtime_ns, info.st_size, info.st_ino)
+
+
+def _linhas_lidas(
+    caminho_xlsx: Path, nome_aba: str, colunas: list[str], conferir_cabecalho: bool = False
+) -> list[tuple] | None:
+    """As linhas com dado da aba (como _linhas_da_aba), ou None se a aba nao existe."""
+    versao = _versao_do_arquivo(caminho_xlsx)
+    with _leitura_lock:
+        if _leitura_guardada["versao"] != versao:
+            with _carregar_planilha(caminho_xlsx) as wb:
+                pass  # o close() do openpyxl so fecha arquivos de modo read_only; as celulas ficam na memoria
+            _leitura_guardada.update(versao=versao, wb=wb, linhas={})
+        wb = _leitura_guardada["wb"]
+        if nome_aba not in wb.sheetnames:
+            return None
+        coletor_estava_ligado = gc.isenabled()
+        gc.disable()  # o mesmo cuidado de _carregar_planilha enquanto mexe no workbook
+        try:
+            ws = wb[nome_aba]
+            if conferir_cabecalho:
+                _conferir_cabecalho(ws, nome_aba, colunas, caminho_xlsx.name)
+            chave = (nome_aba, len(colunas))
+            if chave not in _leitura_guardada["linhas"]:
+                _leitura_guardada["linhas"][chave] = tuple(_linhas_da_aba(ws, len(colunas)))
+        finally:
+            if coletor_estava_ligado:
+                gc.enable()
+        return list(_leitura_guardada["linhas"][chave])
+
+
 def _esta_vazio(valor) -> bool:
     """None, "" ou NaN (celula vazia as vezes vira float('nan') em vez de None,
     dependendo de como o pandas infere o tipo da coluna)."""
@@ -353,11 +396,9 @@ def _conferir_cabecalho(ws, nome_aba: str, colunas: list[str], nome_arquivo: str
 def ler_aba(
     caminho_xlsx: Path, nome_aba: str, colunas: list[str], conferir_cabecalho: bool = False
 ) -> pd.DataFrame:
-    with _carregar_planilha(caminho_xlsx) as wb:
-        ws = wb[nome_aba]
-        if conferir_cabecalho:
-            _conferir_cabecalho(ws, nome_aba, colunas, caminho_xlsx.name)
-        linhas = list(_linhas_da_aba(ws, len(colunas)))
+    linhas = _linhas_lidas(caminho_xlsx, nome_aba, colunas, conferir_cabecalho)
+    if linhas is None:
+        raise KeyError(f"Worksheet {nome_aba} does not exist.")  # o mesmo erro do wb[nome_aba] do openpyxl
     return pd.DataFrame(linhas, columns=colunas)
 
 
@@ -470,10 +511,9 @@ def ler_bancos(caminho_xlsx: Path) -> pd.DataFrame:
 
 def _ler_aba_opcional(caminho_xlsx: Path, nome_aba: str, colunas: list[str]) -> pd.DataFrame:
     """Uma aba que planilhas antigas nao tem: sem ela, devolve a tabela vazia (ler nunca cria nada)."""
-    with _carregar_planilha(caminho_xlsx) as wb:
-        if nome_aba not in wb.sheetnames:
-            return pd.DataFrame(columns=colunas)
-        linhas = list(_linhas_da_aba(wb[nome_aba], len(colunas)))
+    linhas = _linhas_lidas(caminho_xlsx, nome_aba, colunas)
+    if linhas is None:
+        return pd.DataFrame(columns=colunas)
     return pd.DataFrame(linhas, columns=colunas)
 
 

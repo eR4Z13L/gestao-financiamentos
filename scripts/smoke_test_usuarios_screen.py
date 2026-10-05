@@ -7,6 +7,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_usuarios_screen.py
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import CAMINHO_XLSX
 
+
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 from core import acesso, auth, conta_google
@@ -31,6 +33,11 @@ from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from desktop.screens.usuarios_screen import UsuariosScreen
 from desktop.widgets.cadastro_vendedores import CadastroVendedores
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -62,8 +69,8 @@ def main() -> None:
     QMessageBox.information = staticmethod(_stub)
     QMessageBox.question = staticmethod(_stub_question)
 
-    tmp_xlsx = CAMINHO_XLSX.parent / "_smoke_test_usuarios.xlsx"
-    tmp_admin_senha = CAMINHO_XLSX.parent / "_smoke_test_usuarios_admin.json"
+    tmp_xlsx = PASTA_TEMPORARIA / "_smoke_test_usuarios.xlsx"
+    tmp_admin_senha = PASTA_TEMPORARIA / "_smoke_test_usuarios_admin.json"
     shutil.copy(CAMINHO_XLSX, tmp_xlsx)
     bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = tmp_xlsx
     caminho_original_admin = auth.CAMINHO_CREDENCIAIS_ADMIN

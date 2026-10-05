@@ -11,6 +11,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_propostas_screen.py
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import CAMINHO_XLSX
 
+
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 import fixture_ficticia as fx
@@ -38,6 +40,11 @@ from desktop.main_window import MainWindow
 from desktop.screens.propostas_screen import _FILTRO_TODOS, PropostasScreen
 from desktop.theme import TEMA_CLARO, TEMA_ESCURO
 from desktop.widgets.formulario_proposta import FormularioProposta
+
+# as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
+# esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
+PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
+atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
 def linha(titulo: str) -> None:
@@ -84,7 +91,7 @@ class _StubMensagens:
 def testar_remover_proposta_core() -> None:
     linha("1) core.propostas.remover_proposta")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_remover_proposta.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_remover_proposta.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
@@ -114,7 +121,7 @@ def testar_remover_proposta_core() -> None:
 def testar_dialogo_cliente_avulso(app: QApplication) -> None:
     linha("2) FormularioProposta em modo avulso (cpf=None)")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_dialogo_avulso.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_dialogo_avulso.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
@@ -160,7 +167,7 @@ def testar_dialogo_cliente_avulso(app: QApplication) -> None:
 def testar_propostas_screen(app: QApplication) -> None:
     linha("3) PropostasScreen - filtro, edição, exclusão e nova proposta")
 
-    tmp_path = CAMINHO_XLSX.parent / "_smoke_test_propostas_screen.xlsx"
+    tmp_path = PASTA_TEMPORARIA / "_smoke_test_propostas_screen.xlsx"
     shutil.copy(CAMINHO_XLSX, tmp_path)
     clientes_mod.CAMINHO_XLSX = tmp_path
     propostas_mod.CAMINHO_XLSX = tmp_path
