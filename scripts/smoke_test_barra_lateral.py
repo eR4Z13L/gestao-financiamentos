@@ -675,7 +675,14 @@ def testar_ultima_tela_e_geometria(amb: Ambiente, msgs: Mensagens, tema: str) ->
     janela = amb.nova_janela("admin", tema, mostrar=False)
     assert janela.size() == QSize(1200, 800), "sem geometria salva usa o tamanho padrao"
     minimo = janela.minimumSizeHint()  # o layout tem um tamanho minimo: usa-se um tamanho acima dele
-    alvo = QSize(minimo.width() + 40, minimo.height() + 60)
+    # restoreGeometry encolhe a janela que nao cabe na tela (a tela virtual do offscreen tem 800 px de
+    # altura), descontando uma barra de titulo que muda com o estilo: a altura de teste fica com folga
+    # abaixo da tela, senao a janela restaurada volta mais baixa e parece que a geometria nao foi lembrada
+    teto = janela.screen().availableGeometry().height() - 50
+    assert minimo.height() + 10 <= teto, (
+        f"a altura minima da janela ({minimo.height()} px) nao cabe na tela de teste "
+        f"({teto + 50} px): nao da pra conferir a altura restaurada")
+    alvo = QSize(minimo.width() + 40, min(minimo.height() + 60, teto))
     assert alvo.height() != 800, "o tamanho de teste tem que se distinguir do padrao"
     janela.resize(alvo)
     janela.show()
