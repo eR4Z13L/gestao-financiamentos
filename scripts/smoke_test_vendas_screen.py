@@ -515,6 +515,19 @@ def main() -> None:
                 assert {c.venda.id: c.x() for c in tela.lista.cards} == lugar_antes, "remontar não redistribui as colunas"
             finally:
                 card_mod.CardDaVenda.heightForWidth = altura_de_verdade
+            # o que foi digitado sobrevive a montagem: a busca, o filtro e reler (depois de gravar outro card)
+            digitado = achar(id_x).formulario
+            digitado._valor.setValue(12345)
+            for mudar in (lambda: tela.busca.setText("nenhuma venda tem isto"), tela.busca.clear,
+                          lambda: tela.filtro.setCurrentText(tela_mod.FILTRO_EFETIVADAS),
+                          lambda: tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS), tela.carregar):
+                mudar()
+                _processar()
+                card = achar(id_x)
+                assert card.formulario is digitado and card.editando == px, "o mesmo formulário volta ao card"
+                assert digitado._valor.value() == 12345 and digitado.isVisible(), "com o que já foi digitado, à vista"
+            assert tela.tem_edicao_pendente()
+            print("OK: com o formulário aberto, mudar a busca, o filtro ou reler não apaga o que foi digitado.")
             card = achar(id_x)
             f = card.formulario
             assert not f._modo_leitura and [f._status.itemText(i) for i in range(f._status.count())] == v.STATUS_DA_PROPOSTA

@@ -1,8 +1,8 @@
-"""A lista de cards de venda, a mesma na tela Vendas e na Ficha de Cliente (e, depois, na visao por banco).
+"""A lista de cards de venda, a mesma na tela Vendas e na Ficha de Cliente.
 
-Cuida dos cards - em colunas que dividem a largura (quantas couberem sem espremer o card; na Ficha, uma so), cada
-uma empilhando os seus, sem buraco embaixo de um card curto -, de qual esta ABERTO (um por vez: ele so cresce para
-baixo, na propria coluna), do formulario da proposta dentro dele e de nunca descartar algo digitado sem perguntar. Quem mostra a lista decide QUAIS vendas
+Os cards ficam em colunas que encaixam (desktop/widgets/colunas_que_encaixam.py, a mesma peca da lista de propostas);
+esta lista cuida de qual esta ABERTO (um por vez: ele so cresce para baixo, na propria coluna), do formulario da
+proposta dentro dele e de nunca descartar algo digitado sem perguntar. Quem mostra a lista decide QUAIS vendas
 aparecem (busca, filtros, o cliente da ficha) e rele depois de gravar: a lista avisa pelo sinal `gravou`.
 """
 
@@ -11,26 +11,15 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtWidgets import (
-    QDialog,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
 
 from core import sessao as sessao_mod
 from core import vendas as vendas_mod
 from desktop.dialogs.venda_dialog import VendaDialog
 from desktop.widgets.card_da_venda import LARGURA_CARD, NOVA, CardDaVenda, ControleDasVendas, proposta_por_id
+from desktop.widgets.colunas_que_encaixam import ListaEmColunas
 
-ESPACO = 8
-TAMANHO_PAGINA = 30
 SEGUNDOS_DO_AVISO = 8
 
 _FRASE_STATUS = {  # (singular, plural) nas contagens
@@ -76,48 +65,20 @@ class FaixaDeAviso(QFrame):
         self._relogio.start(SEGUNDOS_DO_AVISO * 1000)
 
 
-class ListaDeVendas(QWidget):
+class ListaDeVendas(ListaEmColunas):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
     ficha_pedida = Signal(str)  # cpf
 
     def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
                  uma_coluna: bool = False):
-        """`rolagem`: quem rola a lista (a da tela) - a posicao e mantida ao refazer os cards. `com_ficha`: o
-        "Abrir a ficha" do card aberto (na propria ficha nao faz sentido). `uma_coluna`: todo card na largura toda
-        (a Ficha)."""
-        super().__init__(parent)
-        self.setProperty("role", "transparente")
-        self._rolagem = rolagem
+        """`rolagem`: quem rola a lista (a da tela). `com_ficha`: o "Abrir a ficha" do card aberto (na propria ficha
+        nao faz sentido). `uma_coluna`: todo card na largura toda (a Ficha)."""
+        super().__init__(rolagem, parent, largura_card=LARGURA_CARD, uma_coluna=uma_coluna)
         self._com_ficha = com_ficha
-        self._uma_coluna = uma_coluna
-        # em que coluna esta cada venda: so muda com outra lista (busca, filtro, venda nova) ou outro numero de
-        # colunas - abrir, fechar ou gravar num card nao tira ninguem do lugar
-        self._coluna_da_venda: dict[str, int] = {}
-        self._distribuidas: list[str] = []
-        self._vendas: list[vendas_mod.ResumoDaVenda] = []
-        self._limite = TAMANHO_PAGINA
-        self._colunas = 1
-        self._montagens = 0  # so a devolucao da rolagem da montagem mais recente vale (ver _devolver_rolagem)
-        self.cards: list[CardDaVenda] = []
         self.aberta: str | None = None  # o ID_VENDA do card aberto
         self.editando: str | None = None  # no card aberto: o ID_PROPOSTA no formulario, NOVA, ou None
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre o formulario (ver abrir_venda)
         self.controle = ControleDasVendas(self, self.gravou.emit)
-
-        coluna = QVBoxLayout(self)
-        coluna.setContentsMargins(0, 0, 0, 0)
-        self._linha_das_colunas = QHBoxLayout()
-        self._linha_das_colunas.setSpacing(ESPACO)
-        coluna.addLayout(self._linha_das_colunas)
-        self._pilhas: list[QVBoxLayout] = []  # uma por coluna
-        rolagem.viewport().installEventFilter(self)  # quantas colunas cabem (ver _largura_disponivel)
-        self.vazio = QLabel("", self)
-        self.vazio.setProperty("role", "secundario")
-        self.vazio.setWordWrap(True)
-        coluna.addWidget(self.vazio)
-        self.botao_mais = QPushButton("Carregar mais", self)
-        self.botao_mais.clicked.connect(self._carregar_mais)
-        coluna.addWidget(self.botao_mais, alignment=Qt.AlignmentFlag.AlignLeft)
 
     # -- vendas -------------------------------------------------------------------------------------
 
@@ -125,118 +86,39 @@ class ListaDeVendas(QWidget):
                        voltar_ao_inicio: bool = False) -> None:
         """As vendas a mostrar, na ordem. `voltar_ao_inicio`: outra lista (busca, filtro, outro cliente) - volta
         a primeira pagina e nao devolve a rolagem; senao (releu depois de gravar) tudo fica onde estava."""
-        self._vendas = list(vendas)
-        if self.aberta not in {v.id for v in self._vendas}:
+        if self.aberta not in {v.id for v in vendas}:
             self.aberta, self.editando = None, None
-        self.vazio.setText(texto_vazio)
-        self._montar(voltar_ao_inicio)
+        self._definir_itens(vendas, texto_vazio, voltar_ao_inicio)
 
-    def total(self) -> int:
-        return len(self._vendas)
+    def _chave(self, venda: vendas_mod.ResumoDaVenda) -> str:
+        return venda.id
 
-    def _montar(self, voltar_ao_inicio: bool = False) -> None:
-        self._montagens += 1
-        if voltar_ao_inicio:
-            self._limite = TAMANHO_PAGINA
-        conteudo = self._rolagem.widget()
-        rolagem = self._rolagem.verticalScrollBar().value()
-        # a lista nao "encolhe" enquanto os cards sao trocados: sem isso a rolagem caia pro topo a cada gravacao (o
-        # card que a pessoa estava usando sumia de vista) - a altura so e solta depois de devolver a posicao
-        conteudo.setMinimumHeight(0 if voltar_ao_inicio else conteudo.height())
-        for card in self.cards:
-            card.hide()  # some ja: o deleteLater so apaga no proximo ciclo
-            card.deleteLater()
-        self.cards = []
-        for venda in self._vendas[: self._limite]:
-            card = CardDaVenda(venda, self, aberto=venda.id == self.aberta)
-            self.controle.conectar(card)
-            card.abrir_pedido.connect(self.abrir_venda)
-            card.fechar_pedido.connect(lambda _v: self.fechar_venda())
-            card.proposta_pedida.connect(self.editar_proposta)
-            card.edicao_da_venda_pedida.connect(self.editar_venda)
-            card.ficha_pedida.connect(self.ficha_pedida)
-            if card.abrir_ficha is not None and not self._com_ficha:
-                card.abrir_ficha.hide()
-            if card.aberto and self.editando is not None:
-                self._por_formulario(card)
-            self.cards.append(card)
-        self.vazio.setVisible(not self._vendas and bool(self.vazio.text()))
-        self.botao_mais.setVisible(len(self._vendas) > self._limite)
-        self._posicionar()
-        if not voltar_ao_inicio:
-            numero = self._montagens
-            QTimer.singleShot(0, lambda: self._devolver_rolagem(rolagem, numero))
+    def _posicao_que_precisa_aparecer(self) -> int | None:
+        """O card aberto nunca fica alem da pagina carregada (o "Ver na venda →" de Todas as Propostas): ele aparece."""
+        return next((i for i, v in enumerate(self._itens) if v.id == self.aberta), None) if self.aberta else None
 
-    def _devolver_rolagem(self, valor: int, numero: int) -> None:
-        if numero != self._montagens:
-            # outra montagem veio antes de chegar a vez desta (ex.: fechou o formulario e logo abriu outro cliente,
-            # que comeca no topo): devolver a posicao velha empurraria a tela nova; quem cuida e a montagem nova
-            return
-        self._rolagem.verticalScrollBar().setValue(valor)
-        self._rolagem.widget().setMinimumHeight(0)
+    def _criar_card(self, venda: vendas_mod.ResumoDaVenda) -> CardDaVenda:
+        card = CardDaVenda(venda, self, aberto=venda.id == self.aberta)
+        self.controle.conectar(card)
+        card.abrir_pedido.connect(self.abrir_venda)
+        card.fechar_pedido.connect(lambda _v: self.fechar_venda())
+        card.proposta_pedida.connect(self.editar_proposta)
+        card.edicao_da_venda_pedida.connect(self.editar_venda)
+        card.ficha_pedida.connect(self.ficha_pedida)
+        if card.abrir_ficha is not None and not self._com_ficha:
+            card.abrir_ficha.hide()
+        if card.aberto and self.editando is not None:
+            self._por_formulario(card)
+        return card
 
-    def _posicionar(self) -> None:
-        """Cada card na sua coluna, empilhados na ordem da lista. Venda que ainda nao tem coluna vai para a mais curta
-        - pela altura dos cards como estao agora."""
-        while len(self._pilhas) < self._colunas:
-            pilha = QVBoxLayout()
-            pilha.setSpacing(ESPACO)
-            self._linha_das_colunas.addLayout(pilha, 1)
-            self._pilhas.append(pilha)
-        while len(self._pilhas) > self._colunas:
-            pilha = self._pilhas.pop()
-            while pilha.count():
-                pilha.takeAt(0)
-            self._linha_das_colunas.removeItem(pilha)
-            pilha.deleteLater()
-        ids = [c.venda.id for c in self.cards]
-        if ids[: len(self._distribuidas)] != self._distribuidas:  # outra lista, nao so mais uma pagina
-            self._coluna_da_venda, self._distribuidas = {}, []
-        largura = max(LARGURA_CARD, (self._largura_disponivel() - (self._colunas - 1) * ESPACO) // self._colunas)
-        alturas = [0] * self._colunas
-        for card in self.cards:
-            coluna = self._coluna_da_venda.get(card.venda.id)
-            if coluna is None:
-                coluna = alturas.index(min(alturas))
-                self._coluna_da_venda[card.venda.id] = coluna
-            card.ensurePolished()
-            altura = card.heightForWidth(largura)
-            alturas[coluna] += (altura if altura > 0 else card.sizeHint().height()) + ESPACO
-        self._distribuidas = ids
-        for pilha in self._pilhas:
-            while pilha.count():
-                pilha.takeAt(0)
-        for card in self.cards:
-            self._pilhas[self._coluna_da_venda[card.venda.id]].addWidget(card)
-        for pilha in self._pilhas:
-            pilha.addStretch()  # o conteudo curto fica no topo da coluna
+    def _formulario_aberto(self) -> tuple[str, QWidget] | None:
+        card = self.card_aberto()
+        if card is None or card.formulario is None or self.editando is None:
+            return None
+        return f"{card.venda.id}|{self.editando}", card.formulario
 
-    def _largura_disponivel(self) -> int:
-        """A largura que a lista tem para os cards, pela area visivel de quem rola (e nao pela largura da propria
-        lista: com colunas demais, os cards seguram a lista larga e ela nunca "veria" a janela encolher). A lista
-        fica direto no layout do que rola - as margens dele saem da conta."""
-        margens = self._rolagem.widget().layout().contentsMargins()
-        barra = self._rolagem.verticalScrollBar()
-        # sem a barra de rolagem a vista, conta com ela: aparecer ou sumir nao muda as colunas (nao fica pulando)
-        sem_barra = 0 if barra.isVisible() else barra.sizeHint().width()
-        return self._rolagem.viewport().width() - margens.left() - margens.right() - sem_barra
-
-    def _ajustar_colunas(self) -> None:
-        largura = self._largura_disponivel()
-        colunas = 1 if self._uma_coluna else max(1, (largura + ESPACO) // (LARGURA_CARD + ESPACO))
-        if colunas != self._colunas:
-            self._colunas = colunas
-            self._coluna_da_venda, self._distribuidas = {}, []
-            self._posicionar()
-
-    def eventFilter(self, objeto, evento) -> bool:
-        if objeto is self._rolagem.viewport() and evento.type() == QEvent.Type.Resize:
-            self._ajustar_colunas()
-        return super().eventFilter(objeto, evento)
-
-    def _carregar_mais(self) -> None:
-        self._limite += TAMANHO_PAGINA
-        self._montar()
+    def venda_por_id(self, id_venda: str) -> vendas_mod.ResumoDaVenda | None:
+        return next((v for v in self._itens if v.id == id_venda), None)
 
     # -- card aberto e formulario -------------------------------------------------------------------
 
@@ -288,9 +170,7 @@ class ListaDeVendas(QWidget):
         return True
 
     def rolar_ate_o_aberto(self) -> None:
-        card = self.card_aberto()
-        if card is not None:  # depois de devolver a rolagem (o _montar agenda antes)
-            QTimer.singleShot(0, lambda: self._rolagem.ensureWidgetVisible(card, 0, 40))
+        self.rolar_ate(self.card_aberto())
 
     def fechar_venda(self) -> bool:
         if not self.pode_descartar():
@@ -304,6 +184,12 @@ class ListaDeVendas(QWidget):
         return self.abrir_venda(venda, NOVA if proposta is None else proposta.id)
 
     def _por_formulario(self, card: CardDaVenda) -> None:
+        proposta = proposta_por_id(card.venda, self.editando)
+        ao_excluir = (lambda: self._excluir(card.venda, proposta)) if proposta is not None else None  # noqa: E731
+        guardado = self._formulario_guardado(f"{card.venda.id}|{self.editando}")
+        if guardado is not None:  # o mesmo da montagem anterior, com o que ja foi digitado
+            card.mostrar_formulario(self.editando, guardado, ao_excluir)
+            return
         try:
             formulario = self.controle.criar_formulario(card.venda, self.editando)
         except Exception as exc:  # nunca falhar em silencio (ex.: a proposta sumiu entre a leitura e o clique)
@@ -312,10 +198,6 @@ class ListaDeVendas(QWidget):
             return
         formulario.gravada.connect(self._ao_gravar_formulario)
         formulario.cancelada.connect(self._ao_cancelar_formulario)
-        ao_excluir = None
-        proposta = proposta_por_id(card.venda, self.editando)
-        if proposta is not None:
-            ao_excluir = lambda: self._excluir(card.venda, proposta)  # noqa: E731
         card.mostrar_formulario(self.editando, formulario, ao_excluir)
         QTimer.singleShot(0, formulario.dar_foco_inicial)
 

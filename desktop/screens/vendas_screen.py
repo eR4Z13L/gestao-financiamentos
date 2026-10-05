@@ -213,6 +213,26 @@ class VendasScreen(QWidget):
         self.lista.rolar_ate_o_aberto()
         return True
 
+    def mostrar_venda(self, id_venda: str, id_proposta: str | None = None) -> bool:
+        """Rele e deixa o card da venda `id_venda` aberto e a vista (o "Ver na venda →" de Todas as Propostas), com
+        `id_proposta` ja com o formulario dela aberto embaixo da linha do banco. A venda
+        aberta aparece mesmo fora da busca e do filtro. False (depois de avisar) se ela nao existe mais, ou se a pessoa
+        preferiu continuar editando outra."""
+        if not self.carregar():
+            return False
+        venda = self.lista.venda_por_id(id_venda) or next((v for v in self._vendas if v.id == id_venda), None)
+        if venda is None:
+            QMessageBox.warning(self, "Venda não encontrada", "Esta venda pode ter sido removida. Recarregue a lista.")
+            return False
+        # com `id_proposta`, ja com o formulario dela aberto, logo embaixo da linha do banco: da pra ver de qual veio
+        if id_proposta and not any(p.id == id_proposta for p in venda.propostas):
+            id_proposta = None  # (a proposta saiu da venda nesse meio-tempo: abre so a venda)
+        if not self.lista.abrir_venda(venda, id_proposta or None):
+            return False
+        self._mostrar()  # a aberta entra na lista mesmo que a busca ou o filtro a escondessem
+        self.lista.rolar_ate_o_aberto()
+        return True
+
     def _juntar_em_vendas(self) -> None:
         if organizar_vendas_dialog.organizar(self):
             self._depois_de_gravar()

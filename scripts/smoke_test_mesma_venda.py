@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_FONTDIR", r"C:\Windows\Fonts")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
-from PySide6.QtWidgets import QApplication, QDialog, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QScrollArea, QVBoxLayout, QWidget
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -35,11 +35,11 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf
-import desktop.widgets.expansor_proposta as expansor_mod
+import desktop.widgets.lista_de_propostas as lista_de_propostas_mod
+from core import vendas as vendas_mod
 from desktop.widgets.encerrar_propostas_da_venda import perguntar_e_encerrar
-from desktop.widgets.expansor_proposta import ExpansorDeProposta
 from desktop.widgets.formulario_proposta import FormularioProposta
-from desktop.widgets.lista_cartoes import ListaCartoes, ModeloCartoes
+from desktop.widgets.lista_de_propostas import ListaDePropostas
 
 
 def linha(titulo: str) -> None:
@@ -200,34 +200,38 @@ def testar_dialogo_perguntar_e_encerrar(arquivo: Path) -> None:
           "pré-marcada) encerra só quem estava em aberto, nunca a negada.")
 
 
-def testar_expansor_liga_o_sinal(arquivo: Path) -> None:
-    linha("5) ExpansorDeProposta liga 'efetivada_agora' ao diálogo, com os dados certos")
+def testar_lista_liga_o_sinal(arquivo: Path) -> None:
+    linha("5) A lista de propostas liga 'efetivada_agora' ao diálogo, com os dados certos")
     cpf = _cpf(4)
-    _cliente(cpf, "CLIENTE EXPANSOR")
+    _cliente(cpf, "CLIENTE LISTA")
     indice = propostas_mod.adicionar_proposta({"CPF": cpf, "VALOR (R$)": 1000, "EQUIPAMENTO": "EQ EXP", "BANCO": "Banco A", "STATUS": "Aprovado"})
 
-    lista = ListaCartoes()
-    modelo = ModeloCartoes()
-    lista.setModel(modelo)
-    modelo.definir_itens([{"indice": indice, "cliente": "CLIENTE EXPANSOR", "status": "Aprovado", "data": "01/01/2026"}])
-
-    def _obter(i: int):
-        p = bd.ler_propostas(arquivo)
-        return (cpf, "CLIENTE EXPANSOR", p.loc[i].to_dict()) if i in p.index else None
+    conteudo = QWidget()
+    QVBoxLayout(conteudo)
+    rolagem = QScrollArea()
+    rolagem.setWidgetResizable(True)
+    rolagem.setWidget(conteudo)
+    propostas = propostas_mod.listar_propostas()
+    linha_da_proposta = lambda i: propostas.loc[i].to_dict() if i in propostas.index else None  # noqa: E731
+    lista = ListaDePropostas(rolagem, linha_da_proposta, conteudo, uma_coluna=True)
+    conteudo.layout().addWidget(lista)
+    itens = vendas_mod.propostas_na_lista(propostas)
+    lista.definir_propostas([itens[indice]])
 
     chamados = []
-    original = expansor_mod.perguntar_e_encerrar
-    expansor_mod.perguntar_e_encerrar = lambda *a: chamados.append(a)
+    original = lista_de_propostas_mod.perguntar_e_encerrar
+    lista_de_propostas_mod.perguntar_e_encerrar = lambda *a: chamados.append(a)
     try:
-        expansor = ExpansorDeProposta(lista, modelo, _obter, lambda i: None)
-        expansor._expandir_indice(indice)
-        expansor._formulario._habilitar_edicao()
-        expansor._formulario._status.setCurrentText("Efetivado")
-        expansor._formulario._salvar()
+        assert lista.abrir_proposta(itens[indice])
+        formulario = lista.card_aberto().formulario
+        formulario._status.setCurrentText("Efetivado")
+        formulario._salvar()
     finally:
-        expansor_mod.perguntar_e_encerrar = original
+        lista_de_propostas_mod.perguntar_e_encerrar = original
     assert len(chamados) == 1 and chamados[0][1:] == (cpf, "EQ EXP", indice), chamados
-    print("OK: o Expansor chama o diálogo com (pai, cpf, equipamento, índice) certos, antes de recarregar a lista.")
+    assert chamados[0][0] is lista, "o pai do diálogo é a lista (que sobrevive à recarga), nunca o formulário"
+    rolagem.deleteLater()
+    print("OK: a lista chama o diálogo com (pai, cpf, equipamento, índice) certos, antes de recarregar.")
 
 
 def main() -> None:
@@ -246,7 +250,7 @@ def main() -> None:
         testar_mesma_venda(arquivo)
         testar_sinal_efetivada_agora(arquivo)
         testar_dialogo_perguntar_e_encerrar(arquivo)
-        testar_expansor_liga_o_sinal(arquivo)
+        testar_lista_liga_o_sinal(arquivo)
 
         linha("TUDO OK")
     finally:

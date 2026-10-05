@@ -124,15 +124,23 @@ class _ComDica(QPushButton):
 
 
 class Pilula(_ComDica):
-    """A etiqueta de status, nas cores da etapa: um clique abre a lista para escolher o status."""
+    """A etiqueta de status, nas cores da etapa: um clique abre a lista para escolher o status. `clicavel=False`: so
+    mostra o status (sem a setinha; quem mostra nao liga o clique)."""
 
-    def __init__(self, texto: str, cor: str, parent: QWidget | None = None):
-        super().__init__(f"{texto}: clique para escolher o status", parent)
+    def __init__(self, texto: str, cor: str, parent: QWidget | None = None, *, clicavel: bool = True):
+        super().__init__(f"{texto}: clique para escolher o status" if clicavel else texto, parent)
         self.cor = cor
+        self.clicavel = clicavel
         self.setText(texto)
+        if not clicavel:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def _realce(self) -> bool:
+        return self.clicavel and super()._realce()
 
     def _rotulo(self) -> str:
-        return f"{self.text()}  ▾"
+        return f"{self.text()}  ▾" if self.clicavel else self.text()
 
     def sizeHint(self) -> QSize:
         metricas = QFontMetrics(self.font())
@@ -269,6 +277,69 @@ def _botao_link(texto: str, parent: QWidget, ao_clicar) -> QPushButton:
     botao.setCursor(Qt.CursorShape.PointingHandCursor)
     botao.clicked.connect(ao_clicar)
     return botao
+
+
+# -- os controles de status de uma proposta: os mesmos no card da venda (cada banco) e no card da proposta -------------
+# Os cliques saem pelos sinais de `card` (os dois cards tem os mesmos: fechamento_pedido, fechamento_desfeito,
+# volta_da_proposta_pedida, lista_da_proposta_pedida, resposta_pedida, efetivacao_pedida), sempre com (venda, proposta).
+
+def por_anel(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda,
+             parent: QWidget) -> AnelDoBanco | None:
+    """O anel ao lado de um banco aprovado (marcar como fechado) ou o ✓ de um fechado. Sem anel, o lugar dele fica
+    vazio do mesmo tamanho: os nomes dos bancos ficam alinhados."""
+    aprovada = propostas_mod.etapa_status(proposta.status) == propostas_mod.ETAPA_APROVADO
+    aberta = venda.status not in vendas_mod.DESFECHOS_DA_VENDA
+    anel = None
+    if proposta.fechada:
+        desmarcavel = aberta and proposta.status != vendas_mod.PROPOSTA_EFETIVADA
+        anel = AnelDoBanco(True, "Fechado (clique para desmarcar)" if desmarcavel else "Fechado", parent)
+        if desmarcavel:
+            anel.clicked.connect(lambda: card.fechamento_desfeito.emit(venda, proposta))
+    elif aprovada and aberta:
+        anel = AnelDoBanco(False, "Marcar como fechado (o cliente fechou com este banco)", parent)
+        anel.clicked.connect(lambda: card.fechamento_pedido.emit(venda, proposta))
+    if anel is None:
+        linha.addSpacing(AnelDoBanco.LADO)
+    else:
+        linha.addWidget(anel)
+    return anel
+
+
+def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda | None,
+                            proposta: vendas_mod.PropostaNaVenda, parent: QWidget, itens: dict) -> None:
+    """A ↩, a etiqueta e as bolinhas de uma proposta, nessa ordem, em `linha`; os widgets vao para `itens` ("voltar",
+    "pilula", "bolinhas"). Sem `venda` (ou sem ID_PROPOSTA: as de antes das vendas, ou o VENDEDOR), so a etiqueta,
+    que so mostra - o status dessas muda pelo formulario (decidido em 05/10/2026)."""
+    acoes = venda is not None and bool(proposta.id)
+    itens.setdefault("voltar", None)
+    itens.setdefault("bolinhas", [])
+    if acoes and proposta.anterior:
+        voltar = BotaoVoltar(proposta.anterior, parent)
+        voltar.clicked.connect(lambda: card.volta_da_proposta_pedida.emit(venda, proposta))
+        linha.addWidget(voltar)
+        itens["voltar"] = voltar
+    pilula = Pilula(proposta.status or "Sem status", chave_cor_status(proposta.status), parent, clicavel=acoes)
+    if acoes:
+        pilula.clicked.connect(lambda: card.lista_da_proposta_pedida.emit(venda, proposta, pilula))
+    linha.addWidget(pilula)
+    itens["pilula"] = pilula
+    # as bolinhas tem lugar fixo (mesmo sem nenhuma): as etiquetas ficam alinhadas entre os bancos
+    caixa = QHBoxLayout()
+    caixa.setSpacing(2)
+    if acoes and propostas_mod.etapa_status(proposta.status) in ESPERANDO_RESPOSTA:
+        for destino in RESPOSTAS_RAPIDAS:
+            bolinha = Bolinha(destino, chave_cor_status(destino), parent)
+            bolinha.clicked.connect(lambda _=False, d=destino: card.resposta_pedida.emit(venda, proposta, d))
+            caixa.addWidget(bolinha)
+            itens["bolinhas"].append(bolinha)
+    elif (acoes and proposta.fechada and venda.status not in vendas_mod.DESFECHOS_DA_VENDA
+          and propostas_mod.etapa_status(proposta.status) == propostas_mod.ETAPA_APROVADO):
+        bolinha = Bolinha(EFETIVAR, chave_cor_status(vendas_mod.PROPOSTA_EFETIVADA), parent)
+        bolinha.clicked.connect(lambda: card.efetivacao_pedida.emit(venda, proposta))
+        caixa.addWidget(bolinha)
+        itens["bolinhas"].append(bolinha)
+    caixa.addSpacing((len(RESPOSTAS_RAPIDAS) - len(itens["bolinhas"])) * (Bolinha.LADO + caixa.spacing()))
+    linha.addLayout(caixa)
 
 
 class CardDaVenda(QFrame):
@@ -431,26 +502,8 @@ class CardDaVenda(QFrame):
         linha = QHBoxLayout()
         linha.setSpacing(8)
         bloco.addLayout(linha)
-        itens = {"proposta": proposta, "widget": widget, "anel": None, "voltar": None, "bolinhas": [], "lapis": None}
-
-        # o anel ocupa sempre o mesmo lugar (mesmo sem anel), pros nomes dos bancos ficarem alinhados
-        aprovada = propostas_mod.etapa_status(proposta.status) == propostas_mod.ETAPA_APROVADO
-        aberta = self.venda.status not in vendas_mod.DESFECHOS_DA_VENDA
-        efetivado = proposta.status == vendas_mod.PROPOSTA_EFETIVADA
-        if proposta.fechada:
-            desmarcavel = aberta and not efetivado
-            anel = AnelDoBanco(True, "Fechado (clique para desmarcar)" if desmarcavel else "Fechado", widget)
-            if desmarcavel:
-                anel.clicked.connect(lambda: self.fechamento_desfeito.emit(self.venda, proposta))
-            linha.addWidget(anel)
-            itens["anel"] = anel
-        elif aprovada and aberta:
-            anel = AnelDoBanco(False, "Marcar como fechado (o cliente fechou com este banco)", widget)
-            anel.clicked.connect(lambda: self.fechamento_pedido.emit(self.venda, proposta))
-            linha.addWidget(anel)
-            itens["anel"] = anel
-        else:
-            linha.addSpacing(AnelDoBanco.LADO)
+        itens = {"proposta": proposta, "widget": widget, "voltar": None, "bolinhas": [], "lapis": None}
+        itens["anel"] = por_anel(linha, self, self.venda, proposta, widget)
 
         banco = QLabel(proposta.banco or "Sem banco", widget)
         fonte = banco.font()
@@ -471,31 +524,7 @@ class CardDaVenda(QFrame):
             espera.setProperty("role", "aviso" if proposta.dias_esperando >= vendas_mod.DIAS_PARA_ALERTA else "secundario")
             linha.addWidget(espera)
 
-        if proposta.anterior:
-            voltar = BotaoVoltar(proposta.anterior, widget)
-            voltar.clicked.connect(lambda: self.volta_da_proposta_pedida.emit(self.venda, proposta))
-            linha.addWidget(voltar)
-            itens["voltar"] = voltar
-        pilula = Pilula(proposta.status or "Sem status", chave_cor_status(proposta.status), widget)
-        pilula.clicked.connect(lambda: self.lista_da_proposta_pedida.emit(self.venda, proposta, pilula))
-        linha.addWidget(pilula)
-        itens["pilula"] = pilula
-        # as bolinhas tem lugar fixo (mesmo sem nenhuma): as etiquetas ficam alinhadas entre os bancos
-        caixa = QHBoxLayout()
-        caixa.setSpacing(2)
-        if propostas_mod.etapa_status(proposta.status) in ESPERANDO_RESPOSTA:
-            for destino in RESPOSTAS_RAPIDAS:
-                bolinha = Bolinha(destino, chave_cor_status(destino), widget)
-                bolinha.clicked.connect(lambda _=False, d=destino: self.resposta_pedida.emit(self.venda, proposta, d))
-                caixa.addWidget(bolinha)
-                itens["bolinhas"].append(bolinha)
-        elif proposta.fechada and aprovada and aberta:
-            bolinha = Bolinha(EFETIVAR, chave_cor_status(vendas_mod.PROPOSTA_EFETIVADA), widget)
-            bolinha.clicked.connect(lambda: self.efetivacao_pedida.emit(self.venda, proposta))
-            caixa.addWidget(bolinha)
-            itens["bolinhas"].append(bolinha)
-        caixa.addSpacing((len(RESPOSTAS_RAPIDAS) - len(itens["bolinhas"])) * (Bolinha.LADO + caixa.spacing()))
-        linha.addLayout(caixa)
+        por_controles_de_status(linha, self, self.venda, proposta, widget, itens)
         if self.aberto:
             lapis = _BotaoIcone("lapis", f"Editar a proposta do {proposta.banco or 'banco'}", widget)
             lapis.clicked.connect(lambda: self.proposta_pedida.emit(self.venda, proposta))
@@ -520,6 +549,7 @@ class CardDaVenda(QFrame):
             corpo.addWidget(titulo)
         formulario.setParent(caixa)
         corpo.addWidget(formulario)
+        formulario.show()  # (um formulario guardado de outra montagem chega escondido)
         if ao_excluir is not None:
             excluir = _botao_link("Excluir esta proposta…", caixa, ao_excluir)
             excluir.setProperty("perigo", True)  # vermelho (ver theme.py)
@@ -589,6 +619,10 @@ class ControleDasVendas(QObject):
     def conectar(self, card: CardDaVenda) -> None:
         card.lista_da_venda_pedida.connect(self._lista_da_venda)
         card.volta_da_venda_pedida.connect(self.voltar_venda)
+        self.conectar_proposta(card)
+
+    def conectar_proposta(self, card) -> None:
+        """So os controles de status de uma proposta (o card da proposta tambem os tem; ver por_controles_de_status)."""
         card.lista_da_proposta_pedida.connect(self._lista_da_proposta)
         card.resposta_pedida.connect(self.mudar_proposta)
         card.volta_da_proposta_pedida.connect(self.voltar_proposta)

@@ -297,8 +297,10 @@ ORDENACAO_DATA_ANTIGA = "data_antiga"
 ORDENACAO_VALOR_MAIOR = "valor_maior"
 ORDENACAO_VALOR_MENOR = "valor_menor"
 ORDENACAO_TEMPO_PARADO = "tempo_parado"
-# (chave, rotulo) na ordem em que a tela deve listar
+ORDENACAO_ESPERANDO = "esperando_resposta"
+# (chave, rotulo) na ordem em que a tela deve listar (a primeira e a de Todas as Propostas ao abrir)
 ORDENACAO_OPCOES = [
+    (ORDENACAO_ESPERANDO, "Esperando resposta há mais tempo"),
     (ORDENACAO_DATA_RECENTE, "Data (mais recente primeiro)"),
     (ORDENACAO_DATA_ANTIGA, "Data (mais antiga primeiro)"),
     (ORDENACAO_VALOR_MAIOR, "Valor (maior primeiro)"),
@@ -307,11 +309,17 @@ ORDENACAO_OPCOES = [
 ]
 
 
-def ordenar(df: pd.DataFrame, ordenacao: str = ORDENACAO_DATA_RECENTE) -> pd.DataFrame:
+def ordenar(df: pd.DataFrame, ordenacao: str = ORDENACAO_DATA_RECENTE, *,
+            dias_esperando: Mapping[int, int | None] | pd.Series | None = None) -> pd.DataFrame:
     """Reordena `df` SEM mexer no indice (que e a posicao real da proposta no
     arquivo - ver listar_propostas). Em qualquer ordenacao, o que nao tem o dado
     (sem data, sem valor, sem TEMPO) vai pro fim, e o empate desempata pela
-    data mais recente (e, na mesma data, pela proposta cadastrada por ultimo)."""
+    data mais recente (e, na mesma data, pela proposta cadastrada por ultimo).
+
+    "Esperando resposta ha mais tempo": primeiro as que esperam a resposta do banco (Em Análise / Pré-aprovado), da
+    que espera ha mais dias para a que espera ha menos - `dias_esperando`, pelo indice, e o que
+    vendas.propostas_na_lista calcula pelo HISTÓRICO; sem o numero, no fim delas -, depois as demais, da mais
+    recente para a mais antiga."""
     if ordenacao not in {chave for chave, _ in ORDENACAO_OPCOES}:
         raise ValueError(f"Ordenação desconhecida: {ordenacao!r}")
 
@@ -323,6 +331,12 @@ def ordenar(df: pd.DataFrame, ordenacao: str = ORDENACAO_DATA_RECENTE) -> pd.Dat
         colunas, crescente = ["_DATA", "_POSICAO"], [not recente, not recente]
     elif ordenacao in (ORDENACAO_VALOR_MAIOR, ORDENACAO_VALOR_MENOR):
         colunas, crescente = ["VALOR (R$)", "_DATA", "_POSICAO"], [ordenacao == ORDENACAO_VALOR_MENOR, False, False]
+    elif ordenacao == ORDENACAO_ESPERANDO:
+        esperando = df["STATUS"].map(etapa_status).isin({ETAPA_EM_ANALISE, ETAPA_PRE_APROVADO}).astype(bool)
+        dias = pd.to_numeric(pd.Series(dias_esperando if dias_esperando is not None else {}, dtype=object)
+                             .reindex(df.index), errors="coerce")
+        auxiliar = auxiliar.assign(_GRUPO=(~esperando).astype(int), _DIAS=dias.where(esperando))
+        colunas, crescente = ["_GRUPO", "_DIAS", "_DATA", "_POSICAO"], [True, False, False, False]
     else:
         # tempo parado: primeiro quem tem dias em aberto (mais dias antes), depois
         # os "Encerrado", por ultimo os sem TEMPO
@@ -354,6 +368,7 @@ def filtrar_propostas(
     data_de: date | pd.Timestamp | None = None,
     data_ate: date | pd.Timestamp | None = None,
     ordenacao: str = ORDENACAO_DATA_RECENTE,
+    dias_esperando: Mapping[int, int | None] | pd.Series | None = None,
 ) -> pd.DataFrame:
     """Aplica em `df` (as propostas ja lidas) a busca livre + os filtros que
     vierem preenchidos, TODOS combinados (E), e devolve o resultado na
@@ -365,7 +380,8 @@ def filtrar_propostas(
     - data_de / data_ate: periodo da DATA da proposta, com as duas pontas
       INCLUIDAS; proposta sem data nunca entra num periodo.
     Filtro None (ou "") = sem filtro. O indice do resultado continua sendo a
-    posicao real da proposta no arquivo."""
+    posicao real da proposta no arquivo. `dias_esperando`: so para a ordem
+    "esperando resposta" (ver ordenar)."""
     mascara = pd.Series(True, index=df.index)
 
     termo = (termo or "").strip()
@@ -399,7 +415,7 @@ def filtrar_propostas(
         if data_ate is not None:
             mascara &= datas <= pd.Timestamp(data_ate).normalize()
 
-    return ordenar(df[mascara], ordenacao)
+    return ordenar(df[mascara], ordenacao, dias_esperando=dias_esperando)
 
 
 def _chave_alfabetica(texto: str) -> str:

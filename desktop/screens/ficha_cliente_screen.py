@@ -2,9 +2,9 @@
 
 Busca por nome/CPF + lista de clientes + a ficha do cliente selecionado: dados (editaveis ali mesmo), as VENDAS
 do cliente - os mesmos cards da tela Vendas (desktop/widgets/lista_de_vendas.py), com "+ Nova venda" ja com o
-cliente - e, se houver, as propostas de antes das vendas (ainda nao juntadas em nenhuma venda), no card
-expansivel de sempre (um clique seleciona, o duplo clique EXPANDE com os detalhes e a edicao). O VENDEDOR (so
-leitura) ve o historico de propostas inteiro, como antes. Um formulario aberto por vez na ficha.
+cliente - e, se houver, as propostas de antes das vendas (ainda nao juntadas em nenhuma venda), no mesmo card de
+proposta de Todas as Propostas (desktop/widgets/lista_de_propostas.py; dois cliques abrem o formulario). O VENDEDOR
+(so leitura) ve o historico de propostas inteiro, no mesmo card, sem acoes. Um formulario aberto por vez na ficha.
 O painel da ficha rola na vertical, e o endereco aparece retraido (uma linha por extenso) com a opcao de expandir
 nos campos individuais.
 """
@@ -15,7 +15,7 @@ import re
 from typing import Callable
 
 import pandas as pd
-from PySide6.QtCore import QDate, QModelIndex, QRect, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
@@ -42,9 +42,7 @@ from core import vendedores as vendedores_mod
 from core.formatting import (
     formatar_data,
     formatar_endereco,
-    formatar_equipamento_e_valor,
     formatar_reais,
-    formatar_tempo,
     iniciais_do_nome,
 )
 from core.endereco import UFS_VALIDAS
@@ -57,12 +55,10 @@ from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
 from desktop.widgets.combo_travavel import ComboTravavel
-from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
-from desktop.widgets.expansor_proposta import ExpansorDeProposta
 from desktop.widgets.formatters import conectar_mascara, formatar_cep_parcial, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 from desktop.widgets.identidade_usuario import _Avatar
-from desktop.widgets.lista_cartoes import ContentorDeListaAutomatica, ListaCartoes, ModeloCartoes, chave_cor_etapa
 from desktop.widgets.lista_clientes import ListaClientes, rotulo_do_tipo
+from desktop.widgets.lista_de_propostas import ListaDePropostas
 from desktop.widgets.lista_de_vendas import FaixaDeAviso, ListaDeVendas, resumo_por_status
 from desktop.widgets.quebra_texto import texto_quebravel
 from desktop.widgets.rotulo_uma_linha import RotuloUmaLinha
@@ -168,24 +164,6 @@ def _formatar_ultima_atividade(data) -> str:
     return "há 1 dia" if dias == 1 else f"há {dias} dias"
 
 
-def _montar_item_historico(indice: int, banco: str, equipamento: str, valor, status: str, data, tempo: str) -> dict:
-    """Um card do historico do cliente: o BANCO em destaque (o cliente ja esta
-    implicito na ficha), "Equipamento . Valor" na segunda linha, e a data, o
-    tempo e o status (com a mesma cor de "Todas as Propostas") como la."""
-    etapa = propostas_mod.etapa_status(status)
-    return {
-        "indice": indice,  # posicao real da proposta no arquivo
-        "titulo": banco,
-        "titulo_vazio": "(sem banco)",
-        "linha2": formatar_equipamento_e_valor(equipamento, valor),
-        "status": status,
-        "data": formatar_data(data),
-        "tempo": formatar_tempo(tempo),
-        "etapa": etapa,
-        "cor": chave_cor_etapa(etapa),
-    }
-
-
 class FichaClienteScreen(QWidget):
     # lancou, editou, duplicou ou excluiu uma proposta aqui: quem mostra algo derivado das
     # propostas (o selo da barra lateral) pode se atualizar
@@ -210,7 +188,6 @@ class FichaClienteScreen(QWidget):
         # vez seria lento; so se relê quando algo pode ter mudado (ver _invalidar_em_aberto)
         self._cpfs_em_aberto: set[str] = set()
         self._em_aberto_desatualizado = True
-        self._area_a_mostrar: QRect | None = None  # o que _rolar_ate pediu (ver _executar_rolagem)
         # ultimo periodo (de, ate, avisos) aplicado na lista - digitar uma data
         # dispara um evento por tecla, e so vale reler a lista quando o que
         # valeria mudou de fato (ex.: "15/0" -> "15/03/" nao muda nada)
@@ -259,15 +236,10 @@ class FichaClienteScreen(QWidget):
 
         layout_principal.addLayout(corpo, stretch=1)
 
-        # card expansivel (o mesmo de "Todas as Propostas"): ler, editar, lancar e duplicar proposta,
-        # ali mesmo no historico. Gravar recarrega a ficha e deixa selecionada a proposta gravada
-        self._expansor = ExpansorDeProposta(
-            self._lista_historico, self._modelo_historico, self._dados_da_proposta, self._recarregar_e_selecionar, self
-        )
-        self._lista_historico.acionado.connect(self._expandir_proposta_antiga)
-        # um formulario aberto por vez na ficha: o card expandido se guia pela posicao da proposta no arquivo, que
-        # muda quando uma proposta de venda e excluida
-        self.lista_vendas.antes_de_editar = self._expansor.liberar
+        # um formulario aberto por vez na ficha: o de um card de venda ou o de uma proposta de antes das vendas (que
+        # se guia pela posicao da proposta no arquivo, e ela muda quando uma proposta de venda e excluida)
+        self.lista_vendas.antes_de_editar = self.lista_antigas.liberar
+        self.lista_antigas.antes_de_editar = self.lista_vendas.liberar
 
         self._aplicar_restricoes_papel()
         self._recarregar_vendedores_filtro()
@@ -403,12 +375,11 @@ class FichaClienteScreen(QWidget):
         self._botao_novo_cliente.setVisible(False)
         self._botao_editar_cliente.setVisible(False)
         self._botao_menu_cliente.setVisible(False)  # o menu "..." so tem "Excluir cliente"
-        self._botao_excluir_proposta.setVisible(False)
         self._botao_nova_venda.setVisible(False)
         for parte in (self._titulo_vendas, self.lista_vendas, self._dica_antigas):
             parte.setVisible(False)
-        # o duplo clique num card do historico segue expandindo a proposta: pro VENDEDOR e a
-        # LEITURA (sem "Editar" nem "Duplicar"), e e por ela que ele ve meses/observacoes
+        # dois cliques num card do historico seguem abrindo a proposta: pro VENDEDOR, o formulario travado (sem
+        # editar), e e por ele que ele ve meses/observacoes
 
     # -- construcao dos widgets --------------------------------------------
 
@@ -781,28 +752,12 @@ class FichaClienteScreen(QWidget):
         self._historico_vazio.setProperty("role", "secundario")
         layout.addWidget(self._historico_vazio)
 
-        # cards, no mesmo estilo de "Todas as Propostas" (banco em destaque). Sem barra de rolagem
-        # propria: quem rola e o painel. Um clique so seleciona; o duplo clique (ou Enter) EXPANDE o
-        # card (ver _expansor), e o botao "Excluir Proposta Selecionada" age no card selecionado
-        self._modelo_historico = ModeloCartoes(self)
-        self._lista_historico = ListaCartoes(altura_automatica=True)
-        self._lista_historico.setModel(self._modelo_historico)
-        self._lista_historico.rolar_pedido.connect(self._rolar_ate)
-        # o historico aparece quando ha propostas OU o card "Nova proposta" (um cliente sem nenhuma
-        # ainda tambem precisa ver o card pra lancar a primeira)
-        for sinal in (self._modelo_historico.modelReset, self._modelo_historico.rowsInserted, self._modelo_historico.rowsRemoved):
-            sinal.connect(self._atualizar_visibilidade_do_historico)
-        # o contentor alinha o ultimo card com a borda do cartao de dados, la em cima
-        self._contentor_historico = ContentorDeListaAutomatica(self._lista_historico)
-        self._contentor_historico.setProperty("role", "transparente")
-        layout.addWidget(self._contentor_historico)
-        linha_excluir = QHBoxLayout()
-        self._botao_excluir_proposta = QPushButton("Excluir Proposta Selecionada")
-        self._botao_excluir_proposta.setProperty("role", "botao_perigo")
-        self._botao_excluir_proposta.clicked.connect(self._excluir_proposta_selecionada)
-        linha_excluir.addWidget(self._botao_excluir_proposta)
-        linha_excluir.addStretch()
-        layout.addLayout(linha_excluir)
+        # o mesmo card de proposta de Todas as Propostas, numa coluna so; sem barra de rolagem propria (quem rola e o
+        # painel). Excluir so de dentro do formulario do card aberto, com confirmacao
+        self.lista_antigas = ListaDePropostas(self._rolagem_ficha, self._linha_da_proposta, conteudo, com_ficha=False,
+                                              uma_coluna=True)
+        self.lista_antigas.gravou.connect(self._depois_de_gravar_venda)
+        layout.addWidget(self.lista_antigas)
         layout.addStretch(1)  # conteudo curto fica no topo, sem esticar o cartao
 
         # fixos embaixo (fora da rolagem), alinhados com o cartao
@@ -821,7 +776,6 @@ class FichaClienteScreen(QWidget):
         self._linha_botoes_ficha.addWidget(self._botao_nova_venda)
         layout_pagina.addLayout(self._linha_botoes_ficha)
         self._rolagem_ficha.verticalScrollBar().rangeChanged.connect(self._ajustar_margem_dos_botoes)
-        self._rolagem_ficha.verticalScrollBar().rangeChanged.connect(self._tentar_rolar)
 
         return pagina
 
@@ -1094,7 +1048,7 @@ class FichaClienteScreen(QWidget):
             )
             if resposta != QMessageBox.StandardButton.Yes:
                 return
-            self._expansor.descartar()
+            self.lista_antigas.descartar()
             self.lista_vendas.descartar()
             if cliente_em_edicao:
                 self._cancelar_edicao_cliente()  # cliente novo: volta pra pagina vazia; existente: volta pra leitura
@@ -1237,14 +1191,13 @@ class FichaClienteScreen(QWidget):
 
     def _preencher_ficha(
         self, cliente: dict, historico: pd.DataFrame, vendas: list[vendas_mod.ResumoDaVenda] | tuple = (),
-        mesmo_cliente: bool = False, selecionar: int | None = None,
+        mesmo_cliente: bool = False,
     ) -> None:
         """`mesmo_cliente`: recarregando a ficha JA aberta (depois de editar ou
-        lancar uma proposta) - o card de proposta selecionado, o card de venda aberto e a pagina carregada
-        do historico se mantem; abrindo outro cliente, tudo comeca limpo.
-        `selecionar`: a proposta (indice real) que fica selecionada e visivel (padrao: a que ja estava)."""
+        lancar uma proposta) - o card aberto (de venda ou de proposta) e a pagina carregada
+        se mantem; abrindo outro cliente, tudo comeca limpo."""
         self._preencher_cliente(cliente)
-        self._preencher_propostas(historico, vendas, mesmo_cliente=mesmo_cliente, selecionar=selecionar)
+        self._preencher_propostas(historico, vendas, mesmo_cliente=mesmo_cliente)
 
     def _preencher_cliente(self, cliente: dict) -> None:
         # toda releitura do disco (outro cliente, ou o mesmo depois de salvar) comeca
@@ -1337,7 +1290,7 @@ class FichaClienteScreen(QWidget):
 
     def _preencher_propostas(
         self, historico: pd.DataFrame, vendas: list[vendas_mod.ResumoDaVenda] | tuple, *,
-        mesmo_cliente: bool, selecionar: int | None = None,
+        mesmo_cliente: bool,
     ) -> None:
         """Resumo, vendas e propostas de antes das vendas (os dados do cliente nao mudam)."""
         # guarda os valores "crus" (Timestamp/float, indice = posicao real no
@@ -1359,28 +1312,15 @@ class FichaClienteScreen(QWidget):
             self.lista_vendas.definir_vendas(self._vendas_do_cliente, texto_vazio=vazio,
                                              voltar_ao_inicio=not mesmo_cliente)
 
-        if antigas.empty:
-            self._modelo_historico.definir_itens([])  # (a visibilidade do historico segue o modelo)
-            return
-
-        # a mesma ordem de "Todas as Propostas": a mais recente primeiro (na mesma data, a cadastrada por ultimo)
+        # a mais recente primeiro (na mesma data, a cadastrada por ultimo); os dias esperando resposta, pelo HISTÓRICO
         ordenado = propostas_mod.ordenar(antigas)
-        itens = [
-            _montar_item_historico(indice, banco, equipamento, valor, status, data, tempo)
-            for indice, banco, equipamento, valor, status, data, tempo in zip(
-                ordenado.index, ordenado["BANCO"], ordenado["EQUIPAMENTO"], ordenado["VALOR (R$)"],
-                ordenado["STATUS"], ordenado["DATA"], ordenado["TEMPO"],
-            )
-        ]
-        if selecionar is not None:
-            selecionada = selecionar
+        if self._so_historico or ordenado.empty:  # o VENDEDOR le do Google Sheets: sem o historico (conta da DATA)
+            por_indice = vendas_mod.propostas_na_lista(ordenado)
         else:
-            selecionada = self._indice_real_proposta_selecionada() if mesmo_cliente else None
-        self._modelo_historico.definir_itens(itens, manter_limite=mesmo_cliente, garantir_visivel=selecionada)
-        if selecionada is not None:
-            linha = self._modelo_historico.linha_do_indice_real(selecionada)
-            if linha is not None:
-                self._lista_historico.setCurrentIndex(self._modelo_historico.index(linha))
+            por_indice = vendas_mod.propostas_na_lista(ordenado, (), bd.ler_historico(propostas_mod.CAMINHO_XLSX))
+        self.lista_antigas.definir_propostas([por_indice[i] for i in ordenado.index],
+                                             voltar_ao_inicio=not mesmo_cliente)
+        self._atualizar_visibilidade_do_historico()
 
     @staticmethod
     def _resumo_do_historico(historico: pd.DataFrame) -> str:
@@ -1399,80 +1339,35 @@ class FichaClienteScreen(QWidget):
         partes.append(f"última atividade {_formatar_ultima_atividade(resumo['ultima_atividade'])}")
         return " · ".join(partes)
 
-    def _indice_real_proposta_selecionada(self) -> int | None:
-        """Posicao real (no arquivo) da proposta do card selecionado no historico."""
-        linha = self._lista_historico.linha_atual()
-        return None if linha is None else self._modelo_historico.indice_real(linha)
-
     def _atualizar_visibilidade_do_historico(self, *_args) -> None:
         """O historico (os cards) aparece se ha propostas ou o card "Nova proposta"; senao, o aviso (VENDEDOR) ou
         nada (as propostas de antes das vendas so aparecem se ainda houver alguma)."""
-        ha_cards = self._modelo_historico.total() > 0 or self._modelo_historico.tem_rascunho()
-        self._contentor_historico.setVisible(ha_cards)
+        ha_cards = self.lista_antigas.total() > 0 or self.lista_antigas.rascunho is not None
+        self.lista_antigas.setVisible(ha_cards)
         if self._so_historico:
             self._historico_vazio.setVisible(not ha_cards)
             return
         self._historico_vazio.setVisible(False)
-        for parte in (self._titulo_historico, self._dica_antigas, self._botao_excluir_proposta):
+        for parte in (self._titulo_historico, self._dica_antigas):
             parte.setVisible(ha_cards)
-
-    def _expandir_proposta_antiga(self, linha: int) -> None:
-        """Duplo clique numa proposta de antes das vendas: antes, fecha o formulario de um card de venda."""
-        if self.lista_vendas.liberar():
-            self._expansor.alternar(linha)
 
     def _descartar_expansao(self) -> None:
         """Recolhe o card expandido e o formulario do card de venda (a ficha mudou de assunto); avisa se havia
         edicao nao salva."""
         tinha = self.lista_vendas.tem_edicao_pendente()
         self.lista_vendas.descartar()
-        if self._expansor.descartar() or tinha:
+        if self.lista_antigas.descartar() or tinha:
             QMessageBox.information(
                 self,
                 "Alterações descartadas",
                 "A proposta que estava sendo editada foi fechada e as alterações que não tinham sido salvas foram descartadas.",
             )
 
-    def _dados_da_proposta(self, indice_real: int):
-        """O que o card expandido precisa da proposta na posicao `indice_real`: (cpf, cliente, dict)."""
+    def _linha_da_proposta(self, indice_real: int) -> dict | None:
+        """A proposta na posicao `indice_real` como a ficha a leu (o formulario do card aberto abre com ela)."""
         if not self._cpf_selecionado or indice_real not in self._historico_atual.index:
             return None
-        return self._cpf_selecionado, self._campo_nome.text(), self._historico_atual.loc[indice_real].to_dict()
-
-    def _recarregar_e_selecionar(self, indice: int | None) -> None:
-        """Depois de gravar uma proposta: le a ficha de novo e deixa selecionado o card dela."""
-        self._depois_de_mudar_propostas(selecionar=indice)
-
-    def _rolar_ate(self, area: QRect) -> None:
-        """O historico nao rola sozinho (quem rola e o painel da ficha): mostra `area` (do card
-        expandido ou novo, em coordenadas da lista). Adiado um instante: a altura do painel so e
-        atualizada quando o Qt refaz o layout."""
-        self._area_a_mostrar = area
-        QTimer.singleShot(0, self._tentar_rolar)
-
-    def _tentar_rolar(self, *_args) -> None:
-        """Rola o painel ate mostrar `_area_a_mostrar`. Se o painel ainda nao cresceu o bastante (o
-        card acabou de expandir), fica pendente e tenta de novo quando a faixa de rolagem mudar."""
-        area = self._area_a_mostrar
-        if area is None or not self._lista_historico.isVisible():
-            return
-        barra = self._rolagem_ficha.verticalScrollBar()
-        topo = self._lista_historico.viewport().mapTo(self._rolagem_ficha.widget(), area.topLeft()).y()
-        altura_visivel = self._rolagem_ficha.viewport().height()
-        if area.height() + 24 > altura_visivel:
-            alvo = topo - 12  # nao cabe: o topo do card
-        elif topo - 12 < barra.value():
-            alvo = topo - 12
-        elif topo + area.height() + 12 > barra.value() + altura_visivel:
-            alvo = topo + area.height() + 12 - altura_visivel
-        else:
-            self._area_a_mostrar = None  # ja esta a vista
-            return
-        alvo = max(0, alvo)
-        if alvo > barra.maximum():
-            return  # o painel ainda nao cresceu: a mudanca da faixa de rolagem chama de novo
-        barra.setValue(alvo)
-        self._area_a_mostrar = None
+        return self._historico_atual.loc[indice_real].to_dict()
 
     # -- cadastro de cliente novo (inline, mesmo padrao Editar/OK/Cancelar da edicao) --
 
@@ -1731,7 +1626,7 @@ class FichaClienteScreen(QWidget):
         self._atualizar_lista()
         self._mostrar_cliente(cpf_texto)
 
-    def _recarregar_ficha_atual(self, selecionar: int | None = None) -> bool:
+    def _recarregar_ficha_atual(self) -> bool:
         """Recarrega cliente + historico do CPF selecionado, com a mesma
         protecao contra erro de leitura que o primeiro carregamento
         (_selecionar_cliente) ja tinha - antes disso, so o carregamento
@@ -1751,7 +1646,7 @@ class FichaClienteScreen(QWidget):
             self._cpf_selecionado = None
             self._painel_stack.setCurrentIndex(0)
             return False
-        self._preencher_ficha(cliente, historico, vendas, mesmo_cliente=True, selecionar=selecionar)
+        self._preencher_ficha(cliente, historico, vendas, mesmo_cliente=True)
         return True
 
     def _ler_propostas_e_vendas(self, cpf: str) -> tuple[pd.DataFrame, list[vendas_mod.ResumoDaVenda]]:
@@ -1760,7 +1655,7 @@ class FichaClienteScreen(QWidget):
 
     def _nova_venda(self) -> bool:
         """"+ Nova venda" com o cliente da ficha: cria a venda e deixa o card dela aberto, pronto pro primeiro banco."""
-        if not self._cpf_selecionado or not self._expansor.liberar():
+        if not self._cpf_selecionado or not self.lista_antigas.liberar():
             return False
         if not self.lista_vendas.nova_venda(self._cpf_selecionado):
             return False
@@ -1812,15 +1707,15 @@ class FichaClienteScreen(QWidget):
         venda = next((v for v in self._vendas_do_cliente if v.id == proposta.get("ID_VENDA")), None)
         if venda is not None:  # numa venda, "outro banco" e o "+ Adicionar proposta" do card dela
             return self.lista_vendas.editar_proposta(venda, None)
-        if not self.lista_vendas.liberar():
+        if not self.lista_antigas.nova_a_partir_de(self._cpf_selecionado, self._campo_nome.text(), proposta):
             return False
-        self._expansor.nova_a_partir_de(self._cpf_selecionado, self._campo_nome.text(), proposta)
+        self._atualizar_visibilidade_do_historico()
         return True
 
-    def _depois_de_mudar_propostas(self, selecionar: int | None = None) -> None:
+    def _depois_de_mudar_propostas(self) -> None:
         """Lancou, editou, duplicou ou excluiu uma proposta: recarrega a ficha aberta
         (historico) e repinta a bolinha "Em aberto" - ela pode ter aparecido ou sumido."""
-        self._recarregar_ficha_atual(selecionar=selecionar)
+        self._recarregar_ficha_atual()
         self._invalidar_em_aberto()
         # a lista tambem (mantem o cliente aberto): assim a "impressao" da planilha fica em dia e a propria
         # gravacao desta tela nao parece, 2 s depois, uma mudanca feita por fora
@@ -1828,33 +1723,7 @@ class FichaClienteScreen(QWidget):
         self.dados_atualizados.emit()
 
     def tem_edicao_pendente(self) -> bool:
-        return self._expansor.tem_alteracoes() or self.lista_vendas.tem_edicao_pendente()
-
-    def _excluir_proposta_selecionada(self) -> None:
-        """Exclui a proposta do card selecionado no historico (1 clique), com a mesma
-        confirmacao de "Todas as Propostas"."""
-        if not self._cpf_selecionado:
-            return
-        # o card expandido pode ser outro (ou este): as posicoes andam depois de excluir, entao
-        # nada fica expandido - e edicao nao salva nao some sem perguntar
-        if not self._expansor.liberar():
-            return
-
-        indice_real = self._indice_real_proposta_selecionada()
-        if indice_real is None:
-            QMessageBox.information(
-                self, "Nenhuma proposta selecionada", "Clique em um card do histórico para selecionar a proposta a excluir."
-            )
-            return
-
-        proposta = self._historico_atual.loc[indice_real].to_dict()
-        if not excluir_proposta_com_confirmacao(self, indice_real, self._campo_nome.text(), proposta):
-            return
-
-        # o card excluido nao existe mais; os indices dos seguintes mudam - nao ha o que "manter selecionado"
-        self._lista_historico.setCurrentIndex(QModelIndex())
-        self._lista_historico.clearSelection()
-        self._depois_de_mudar_propostas()
+        return self.lista_antigas.tem_edicao_pendente() or self.lista_vendas.tem_edicao_pendente()
 
     def _excluir_cliente(self) -> None:
         if not self._cpf_selecionado:

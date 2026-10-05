@@ -44,7 +44,6 @@ from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
-from desktop.widgets.lista_cartoes import ALTURA_CARTAO, ESPACO
 from desktop.theme import PALETAS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets import botao_copiar as botao_copiar_mod
 from desktop.widgets.botao_copiar import BotaoCopiar
@@ -523,7 +522,8 @@ def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
     assert tela._cpf_selecionado is None and tela._modo_novo_cliente
     assert tela._campo_nome.text() == "" and tela._campo_cpf.text() == ""
     assert tela._resumo_label.text() == "Nenhuma venda registrada ainda."
-    assert not tela._botao_nova_venda.isVisible() and not tela._botao_excluir_proposta.isVisible()
+    assert not tela._botao_nova_venda.isVisible() and not tela.lista_antigas.isVisible()
+    assert not hasattr(tela, "_botao_excluir_proposta"), "excluir proposta so de dentro do card aberto"
     assert tela.lista_vendas.vazio.text() == "Salve o cliente para lançar a primeira venda."
     assert not tela._botao_novo_cliente.isEnabled(), "nao pode abrir um segundo rascunho ao mesmo tempo"
     print("OK: abre em branco, já em edição - sem histórico/botões de proposta (cliente ainda não existe).")
@@ -551,7 +551,7 @@ def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
     assert not tela._modo_novo_cliente and tela._modo_leitura_cliente
     assert apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
     assert tela._campo_nome.text() == "BEATRIZ NOVA" and tela._painel_stack.currentIndex() == 1
-    assert tela._botao_nova_venda.isVisible() and tela._botao_excluir_proposta.isHidden(), "sem propostas antigas, sem o Excluir"
+    assert tela._botao_nova_venda.isVisible() and tela.lista_antigas.isHidden(), "sem propostas antigas, sem a lista delas"
     assert "+ Nova venda" in tela.lista_vendas.vazio.text()
     assert tela._botao_novo_cliente.isEnabled()
     gravado = clientes_mod.buscar_por_cpf(cpf_novo)
@@ -862,7 +862,7 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         barra.setValue(barra.maximum())
         app.processEvents()
         viewport = rolagem.viewport()
-        fim_historico = tela._lista_historico.mapTo(viewport, QPoint(0, tela._lista_historico.height())).y()
+        fim_historico = tela.lista_antigas.mapTo(viewport, QPoint(0, tela.lista_antigas.height())).y()
         assert fim_historico <= viewport.height() + 1, "rolado até o fim, o histórico de propostas aparece inteiro"
         topo_cartao = tela._campo_nome.mapTo(viewport, QPoint(0, 0)).y()
         assert topo_cartao < 0, "e o topo do cartão saiu pra cima (rolou de verdade)"
@@ -872,7 +872,7 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         barra.setValue(0)
         app.processEvents()
         assert tela._botao_nova_venda.mapTo(tela, QPoint(0, 0)).y() == y_botao, "o botão não rola"
-        assert tela._botao_nova_venda.isVisible() and tela._botao_excluir_proposta.isVisible()
+        assert tela._botao_nova_venda.isVisible() and tela.lista_antigas.isVisible()
         assert y_botao + tela._botao_nova_venda.height() <= tela.height()
         print("OK: rolar até o fim mostra as propostas antigas inteiras; '+ Nova venda' fica fixo embaixo.")
 
@@ -892,19 +892,21 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         assert abs(borda(cartao) - borda(tela._botao_nova_venda)) <= 1, "com a barra de volta, alinhados de novo"
         print("OK: os botões de baixo ficam alinhados com o cartão com a barra de rolagem e sem ela.")
 
-        # a lista de cards do historico tem a altura das linhas de cards (sem barra de rolagem propria)
-        colunas = tela._lista_historico.colunas()
-        altura_5 = tela._lista_historico.height()
-        assert altura_5 == -(-5 // colunas) * (ALTURA_CARTAO + ESPACO), (altura_5, colunas)
+        # as propostas antigas: os cards numa coluna so (a Ficha), a lista na altura deles (sem barra de rolagem
+        # propria: quem rola e o painel)
+        lista = tela.lista_antigas
+        altura_5 = lista.height()
+        assert len(lista.cards) == 5 and {lista.coluna_do_card(c) for c in lista.cards} == {0}, "uma coluna só"
+        assert altura_5 >= sum(c.height() for c in lista.cards), (altura_5, [c.height() for c in lista.cards])
         tela._selecionar_por_cpf(cpfs["parcial"])
         app.processEvents()
-        altura_1 = tela._lista_historico.height()
-        assert altura_1 == ALTURA_CARTAO + ESPACO < altura_5, (altura_1, altura_5)
+        altura_1 = lista.height()
+        assert len(lista.cards) == 1 and altura_1 < altura_5, (altura_1, altura_5)
         tela._selecionar_por_cpf(cpfs["vazio"])
         app.processEvents()
-        assert not tela._contentor_historico.isVisible() and not tela._titulo_historico.isVisible()
+        assert not lista.isVisible() and not tela._titulo_historico.isVisible()
         assert not tela._historico_vazio.isVisible() and tela.lista_vendas.vazio.isVisible()
-        print(f"OK: o histórico em cards tem {altura_5} px com 5 propostas ({colunas} por linha) e {altura_1} px com 1; "
+        print(f"OK: as propostas antigas em cards (uma coluna) têm {altura_5} px com 5 propostas e {altura_1} px com 1; "
               "sem proposta nenhuma, só o aviso de 'nenhuma venda'.")
 
         # outro cliente: o painel volta pro topo

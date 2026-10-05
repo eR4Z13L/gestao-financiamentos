@@ -1,17 +1,14 @@
-"""Tela Todas as Propostas.
+"""Tela Todas as Propostas: TODAS as propostas, um card por pedido a um banco (desenhado com o usuario em 04/10/2026).
 
-Lista as propostas de todos os clientes (nao so de um) em CARDS - um por
-proposta, com o essencial pra reconhecer cada uma de relance (cliente,
-equipamento + banco, data + tempo e o status colorido). Um clique num card so o
-seleciona (e o botao Excluir de baixo age sobre ele); o duplo clique (ou Enter)
-EXPANDE o proprio card, ali na lista, com todos os detalhes, os botoes de copiar e a
-edicao (ExpansorDeProposta, o mesmo do historico da Ficha de Cliente); so um card
-fica expandido por vez.
+Os cards sao os de desktop/widgets/lista_de_propostas.py (o mesmo da Ficha, nas propostas de antes das vendas), em
+colunas que encaixam, como na tela Vendas: fechados, mostram o banco, o status com as mesmas acoes rapidas do card da
+venda, o cliente, as condicoes e ha quanto tempo esperam a resposta; dois cliques abrem a propria proposta ali (o
+formulario, "Ver na venda →" e "Abrir a ficha"). Excluir so de dentro do formulario, com confirmacao.
 
-Os cards vem de 30 em 30 ("Carregar mais") e na ordenacao escolhida. Busca
-livre, filtro por status, vendedor, banco, equipamento e periodo, todos
-combinados (a regra esta em core/propostas.py); cadastro/edicao/exclusao
-reaproveitam core/propostas.py e o mesmo card expansivel.
+Os cards vem de 30 em 30 ("Carregar mais") e na ordenacao escolhida - ao abrir, as que esperam resposta ha mais
+tempo primeiro. Busca livre, filtro de resposta (status), vendedor, banco, equipamento e periodo, todos combinados (a
+regra esta em core/propostas.py), mais o filtro que vem do Dashboard. "+ Nova venda" cria a venda (a tela Vendas
+mostra a criada).
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ from collections import Counter
 from typing import Mapping
 
 import pandas as pd
-from PySide6.QtCore import QDate, QModelIndex, Qt, Signal
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -29,6 +26,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -36,14 +34,13 @@ from PySide6.QtWidgets import (
 from core import dashboard as dashboard_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
-from core.formatting import formatar_data, formatar_tempo
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.campo_data import CampoData, ler_periodo
-from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
-from desktop.widgets.expansor_proposta import ExpansorDeProposta
-from desktop.widgets.lista_cartoes import ListaCartoes, ModeloCartoes, chave_cor_etapa
+from desktop.widgets.lista_de_propostas import ListaDePropostas, chave_da_proposta
+from desktop.widgets.lista_de_vendas import FaixaDeAviso
 
 _COLUNAS_EXIBICAO = [
     "DATA", "VENDEDOR", "CLIENTE", "CPF", "EQUIPAMENTO", "BANCO",
@@ -95,31 +92,19 @@ class _ComboListaLarga(QComboBox):
         super().showPopup()
 
 
-def _montar_item(indice: int, cliente: str, status: str, data, equipamento: str, banco: str, tempo: str) -> dict:
-    etapa = propostas_mod.etapa_status(status)
-    return {
-        "indice": indice,  # posicao real da proposta no arquivo
-        # CPF sem cliente cadastrado: CLIENTE vem vazio - o card avisa em vez de ficar sem nome
-        "cliente": cliente,
-        "status": status,
-        "data": formatar_data(data),
-        "equipamento": equipamento,
-        "banco": banco,
-        "tempo": formatar_tempo(tempo),
-        "etapa": etapa,
-        "cor": chave_cor_etapa(etapa),
-    }
-
-
 class PropostasScreen(QWidget):
     # a tela leu (ou releu) as propostas: quem mostra algo derivado delas (o selo da barra
     # lateral) pode se atualizar. Sai depois de todo carregamento que deu certo.
     dados_atualizados = Signal()
+    ficha_pedida = Signal(str)  # cpf ("Abrir a ficha" de um card aberto)
+    venda_pedida = Signal(str, str)  # (ID_VENDA, ID_PROPOSTA) ("Ver na venda →")
+    nova_venda_pedida = Signal()  # "+ Nova venda": a janela cria e mostra a venda na tela Vendas
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         self._todas = pd.DataFrame(columns=_COLUNAS_EXIBICAO)  # dados crus; indice = posicao real no arquivo
+        self._itens: dict[int, vendas_mod.PropostaNaLista] = {}  # o card de cada proposta, pelo indice
         self._vigia = VigiaDoArquivo()
         self._estado_periodo: tuple = (None, None, ())  # ultimo periodo aplicado (ver _ao_mudar_periodo)
         # o filtro que o Dashboard pediu (ex.: "em aberto ha mais de 7 dias"); vale junto com os demais
@@ -135,6 +120,11 @@ class PropostasScreen(QWidget):
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
         cabecalho.addWidget(criar_botao_recarregar(self._ao_recarregar))
+        self._botao_nova = QPushButton("+ Nova venda")
+        self._botao_nova.setProperty("role", "botao_primario")
+        self._botao_nova.setToolTip("Nova venda (cliente e equipamentos); os bancos entram depois, no card da venda")
+        self._botao_nova.clicked.connect(self.nova_venda_pedida)
+        cabecalho.addWidget(self._botao_nova)
         layout.addLayout(cabecalho)
 
         layout.addLayout(self._construir_linha_busca_e_ordenacao())
@@ -148,30 +138,25 @@ class PropostasScreen(QWidget):
         self._contador.setWordWrap(True)
         layout.addWidget(self._contador)
 
-        self._modelo = ModeloCartoes(self)
-        self._lista = ListaCartoes()
-        self._lista.setModel(self._modelo)
-        self._lista.definir_mensagem_vazia(_MENSAGEM_VAZIA)
-        layout.addWidget(self._lista, stretch=1)
+        conteudo = QWidget()
+        conteudo.setProperty("role", "transparente")
+        coluna = QVBoxLayout(conteudo)
+        coluna.setContentsMargins(0, 0, 4, 0)
+        self.rolagem = QScrollArea()
+        self.rolagem.setWidgetResizable(True)
+        self.rolagem.setFrameShape(QFrame.Shape.NoFrame)
+        self.rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.rolagem.setWidget(conteudo)
+        self.lista = ListaDePropostas(self.rolagem, self._linha_da_proposta, conteudo)
+        self.lista.gravou.connect(self._depois_de_gravar)
+        self.lista.ficha_pedida.connect(self.ficha_pedida)
+        self.lista.venda_pedida.connect(self.venda_pedida)
+        coluna.addWidget(self.lista)
+        coluna.addStretch()
+        layout.addWidget(self.rolagem, stretch=1)
 
-        # o duplo clique (ou Enter) EXPANDE o card ali mesmo (o mesmo do historico da Ficha de
-        # Cliente): ler, editar, lancar e duplicar proposta. Gravar recarrega os cards e o
-        # card gravado fica selecionado (ver _recarregar_e_selecionar)
-        self._expansor = ExpansorDeProposta(self._lista, self._modelo, self._dados_da_proposta, self._recarregar_e_selecionar, self)
-        self._lista.acionado.connect(self._expansor.alternar)
-
-        # fixos embaixo: agem sobre o card selecionado (1 clique ja basta, sem
-        # duplo clique), e assim nao poluem cada card com botoes
-        linha_botoes = QHBoxLayout()
-        self._botao_excluir = QPushButton("Excluir")
-        self._botao_excluir.setProperty("role", "botao_perigo")
-        self._botao_excluir.clicked.connect(self._excluir_selecionada)
-        linha_botoes.addWidget(self._botao_excluir)
-        self._botao_nova = QPushButton("+ Nova Proposta")
-        self._botao_nova.setProperty("role", "botao_primario")
-        self._botao_nova.clicked.connect(self._abrir_nova_proposta)
-        linha_botoes.addWidget(self._botao_nova)
-        layout.addLayout(linha_botoes)
+        self.faixa_aviso = FaixaDeAviso()
+        layout.addWidget(self.faixa_aviso)
 
         self._aplicar_restricoes_papel()
         self._carregar_dados()
@@ -185,8 +170,12 @@ class PropostasScreen(QWidget):
         self._busca.textChanged.connect(self._aplicar_filtros)
         linha.addWidget(self._busca, stretch=1)
 
+        rotulo_resposta = QLabel("Resposta")
+        rotulo_resposta.setProperty("role", "secundario")
+        linha.addWidget(rotulo_resposta)
         self._filtro_status = QComboBox()
         self._filtro_status.setMinimumWidth(150)
+        self._filtro_status.setToolTip("O status da proposta (a resposta do banco)")
         self._filtro_status.currentIndexChanged.connect(self._aplicar_filtros)
         linha.addWidget(self._filtro_status)
 
@@ -278,32 +267,33 @@ class PropostasScreen(QWidget):
         return chip
 
     def _aplicar_restricoes_papel(self) -> None:
-        """VENDEDOR e so-leitura - ver mesmo metodo em FichaClienteScreen: nao
-        ve os botoes de excluir/criar, mas AINDA expande o card em leitura (so
-        leitura + copiar - o card expandido ja nao oferece "Editar" nem "Duplicar" pra
-        quem nao e ADMIN). Sem isso, com os detalhes fora do card, o vendedor perderia
-        acesso a valor/equipamento/banco/observacoes."""
+        """VENDEDOR e so-leitura: nao cria venda, e os cards dele nao tem acoes (sem a venda); ainda abre a proposta,
+        com o formulario travado (valor, equipamento, banco, observacoes, copiar)."""
         if not sessao_mod.eh_vendedor():
             return
         self._bloco_filtro_vendedor.setVisible(False)  # so enxerga as proprias propostas: filtrar por vendedor nao faz sentido
-        self._botao_excluir.setVisible(False)
         self._botao_nova.setVisible(False)
 
     # -- carregamento e filtro -----------------------------------------------
 
     def _ao_recarregar(self, *_args) -> None:
         """Botao Recarregar: le tudo de novo. Se ha um card com edicao nao salva, pergunta antes."""
-        if self._expansor.liberar():
+        if self.lista.pode_descartar():
+            self.lista.descartar()
             self._carregar_dados()
 
-    def _recarregar_e_selecionar(self, indice: int | None) -> None:
-        """Depois de gravar uma proposta: le de novo e deixa selecionado o card dela."""
-        self._carregar_dados(selecionar=indice)
+    def _depois_de_gravar(self, aviso: str = "") -> None:
+        self._carregar_dados()
+        self.faixa_aviso.avisar(aviso)
 
-    def _carregar_dados(self, *_args, selecionar: int | None = None) -> None:
+    def avisar(self, texto: str) -> None:
+        self.faixa_aviso.avisar(texto)
+
+    def _carregar_dados(self, *_args) -> None:
         self._vigia.registrar_leitura()
         try:
             self._todas = propostas_mod.listar_propostas()
+            self._itens = self._montar_itens(self._todas)
         except FileNotFoundError:
             QMessageBox.critical(
                 self,
@@ -331,10 +321,22 @@ class PropostasScreen(QWidget):
         self._repovoar_filtro(self._filtro_equipamento, propostas_mod.valores_distintos(self._todas, "EQUIPAMENTO"))
         self._recarregar_vendedores_filtro()
 
-        # recarregar (botao Recarregar, ou depois de editar/excluir/criar) NAO volta
-        # pra primeira pagina: quem ja tinha carregado mais cards continua vendo
-        self._aplicar_filtros(manter_pagina=True, selecionar=selecionar)
+        # recarregar (botao Recarregar, ou depois de gravar) NAO volta pra primeira
+        # pagina: quem ja tinha carregado mais cards continua vendo, no mesmo lugar
+        self._aplicar_filtros(manter_pagina=True)
         self.dados_atualizados.emit()
+
+    @staticmethod
+    def _montar_itens(todas: pd.DataFrame) -> dict[int, vendas_mod.PropostaNaLista]:
+        """O card de cada proposta. O ADMIN tem as vendas e o HISTÓRICO (acoes, dias esperando desde a ultima troca);
+        o VENDEDOR le do Google Sheets, sem eles: os dias contam da DATA e os cards nao tem acoes."""
+        if sessao_mod.eh_vendedor():
+            return vendas_mod.propostas_na_lista(todas)
+        return vendas_mod.propostas_na_lista_do_arquivo(todas)
+
+    def _linha_da_proposta(self, indice: int) -> dict | None:
+        """A proposta como esta leitura a trouxe (o formulario do card aberto abre com ela)."""
+        return self._todas.loc[indice].to_dict() if indice in self._todas.index else None
 
     def propostas_carregadas(self) -> pd.DataFrame:
         """As propostas como a ultima leitura desta tela as trouxe (sem ler de novo: pro
@@ -342,7 +344,7 @@ class PropostasScreen(QWidget):
         return self._todas
 
     def tem_edicao_pendente(self) -> bool:
-        return self._expansor.tem_alteracoes()
+        return self.lista.tem_edicao_pendente()
 
     @staticmethod
     def _repovoar_filtro(combo: QComboBox, opcoes: list[str]) -> bool:
@@ -390,7 +392,7 @@ class PropostasScreen(QWidget):
         """Ao aparecer e a cada tique da janela com esta tela aberta: se a planilha mudou desde a ultima
         leitura (outra tela gravou, baixou da nuvem, restaurou backup), rele tudo - menos com um card em
         edicao nao salva, que nunca e descartado sem perguntar (o botao Recarregar pergunta). True se releu."""
-        if self._vigia.mudou_desde_a_leitura() and not self._expansor.tem_alteracoes():
+        if self._vigia.mudou_desde_a_leitura() and not self.tem_edicao_pendente():
             self._carregar_dados()
             return True
         return False
@@ -418,12 +420,11 @@ class PropostasScreen(QWidget):
             campo.blockSignals(False)
         self._aplicar_filtros()
 
-    def _aplicar_filtros(self, *_args, manter_pagina: bool = False, selecionar: int | None = None) -> None:
+    def _aplicar_filtros(self, *_args, manter_pagina: bool = False) -> None:
         """Reaplica busca + filtros + ordenacao (todos combinados). Mudar
         qualquer um deles (sinais dos controles) volta pra primeira pagina;
         `manter_pagina=True` (recarregar) preserva quantos cards ja tinham sido
-        carregados. `selecionar`: a proposta (indice real) que fica selecionada e visivel
-        (padrao: a que ja estava)."""
+        carregados e a rolagem. O card aberto continua aberto se a proposta continua na lista."""
         inicio, fim, avisos = ler_periodo(self._filtro_de, self._filtro_ate)
         status_escolhido = self._filtro_status.currentText()
         try:
@@ -437,6 +438,7 @@ class PropostasScreen(QWidget):
                 data_de=inicio,
                 data_ate=fim,
                 ordenacao=self._ordenacao.currentData(),
+                dias_esperando={i: item.proposta.dias_esperando for i, item in self._itens.items()},
             )
             if self._filtro_dashboard is not None:
                 # recalculado a cada vez, sobre as propostas de agora: o filtro continua certo depois de uma edicao
@@ -459,71 +461,23 @@ class PropostasScreen(QWidget):
             )
         )
 
-        itens = [
-            _montar_item(indice, cliente, status, data, equipamento, banco, tempo)
-            for indice, cliente, status, data, equipamento, banco, tempo in zip(
-                df.index, df["CLIENTE"], df["STATUS"], df["DATA"], df["EQUIPAMENTO"], df["BANCO"], df["TEMPO"]
-            )
-        ]
+        itens = [self._itens[indice] for indice in df.index if indice in self._itens]
         # a contagem e o resumo por status sao SO do resultado filtrado
-        resumo = resumo_por_etapa(Counter(item["etapa"] for item in itens))
+        resumo = resumo_por_etapa(Counter(propostas_mod.etapa_status(i.proposta.status) for i in itens))
         contador = f"{len(itens)} proposta(s)" + (f" · {resumo}" if resumo else "")
         if avisos:
             contador += " — " + "; ".join(avisos)
         self._contador.setText(contador)
+        # a proposta aberta continua na lista mesmo que a busca ou um filtro a tirem (como na tela Vendas): o que foi
+        # digitado nela nunca some sem perguntar
+        aberta = next((i for i in self._itens.values() if chave_da_proposta(i) == self.lista.aberta), None)
+        if aberta is not None and self.lista.aberta not in {chave_da_proposta(i) for i in itens}:
+            itens.insert(0, aberta)
+        self.lista.definir_propostas(itens, texto_vazio=_MENSAGEM_VAZIA, voltar_ao_inicio=not manter_pagina)
 
-        # mantem selecionado o mesmo card (mesma proposta no arquivo) depois de
-        # recarregar/filtrar - senao editar uma proposta "perde" o card. Ele
-        # sempre aparece, mesmo que caia alem da pagina carregada.
-        selecionada = selecionar if selecionar is not None else self._indice_real_selecionado()
-        self._modelo.definir_itens(itens, manter_limite=manter_pagina, garantir_visivel=selecionada)
-        if selecionada is not None:
-            linha = self._modelo.linha_do_indice_real(selecionada)
-            if linha is not None:
-                self._lista.setCurrentIndex(self._modelo.index(linha))
-
-    # -- selecao e acoes ------------------------------------------------------
-
-    def _indice_real_selecionado(self) -> int | None:
-        linha = self._lista.linha_atual()
-        return None if linha is None else self._modelo.indice_real(linha)
-
-    def _limpar_selecao(self) -> None:
-        self._lista.setCurrentIndex(QModelIndex())
-        self._lista.clearSelection()
-
-    def _linha_selecionada(self) -> tuple[int | None, dict | None]:
-        indice_real = self._indice_real_selecionado()
-        if indice_real is None:
-            return None, None
-        return indice_real, self._todas.loc[indice_real].to_dict()
-
-    def _dados_da_proposta(self, indice_real: int):
-        """O que o card expandido precisa da proposta na posicao `indice_real`: (cpf, cliente, dict)."""
-        if indice_real not in self._todas.index:
-            return None
-        proposta = self._todas.loc[indice_real].to_dict()
-        return proposta["CPF"], proposta["CLIENTE"], proposta
-
-    def _excluir_selecionada(self) -> None:
-        # o card expandido pode ser outro (ou este): as posicoes andam depois de excluir, entao
-        # nada fica expandido - e edicao nao salva nao some sem perguntar
-        if not self._expansor.liberar():
-            return
-        indice_real, proposta = self._linha_selecionada()
-        if indice_real is None:
-            QMessageBox.information(
-                self, "Nenhuma proposta selecionada", "Clique em um card para selecionar a proposta a excluir."
-            )
-            return
-
-        if not excluir_proposta_com_confirmacao(self, indice_real, proposta["CLIENTE"], proposta):
-            return
-
-        # o card excluido nao existe mais; os indices dos seguintes mudam - nao
-        # da pra "manter a selecao" por indice real depois de uma exclusao
-        self._limpar_selecao()
-        self._carregar_dados()
+    def propostas_visiveis(self) -> list[vendas_mod.PropostaNaLista]:
+        """As propostas que a lista mostra agora, na ordem (os cards vem de 30 em 30)."""
+        return self.lista.propostas()
 
     # -- filtro vindo do Dashboard ---------------------------------------------------
 
@@ -546,7 +500,7 @@ class PropostasScreen(QWidget):
         """Mostra so as propostas que o `filtro` do Dashboard escolhe, com o periodo que ele estava usando. Zera
         os demais filtros e a busca (senao a lista podia vir vazia sem a pessoa saber por que). Com edicao
         nao salva em algum card, pergunta antes; False se a pessoa preferiu continuar editando."""
-        if not self._expansor.liberar():
+        if not self.lista.liberar():
             return False
         self._busca.blockSignals(True)
         self._busca.clear()
@@ -566,13 +520,3 @@ class PropostasScreen(QWidget):
             self._carregar_dados()  # arquivo local: releitura barata, e garante os dados de agora
         self._aplicar_filtros()  # e volta pra primeira pagina
         return True
-
-    def _abrir_nova_proposta(self) -> None:
-        self.abrir_nova_proposta()
-
-    def abrir_nova_proposta(self) -> None:
-        """O card "Nova proposta" no topo da lista, com o campo de cliente pra escolher (o mesmo
-        do botao "+ Nova Proposta"; a barra lateral tambem chama isto). So o ADMIN cria."""
-        if not sessao_mod.eh_admin():
-            return
-        self._expansor.nova(cpf=None)

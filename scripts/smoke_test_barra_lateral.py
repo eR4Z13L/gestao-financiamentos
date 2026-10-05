@@ -9,7 +9,7 @@ Nada aqui toca em dado real:
 
 Cobre: identidade (nome/acesso), botao Sair (com e sem edicao nao salva, e o fluxo de trocar de
 usuario), indicador de sincronizacao nos tres estados (+ vendedor), selo de propostas paradas,
-ultima tela e geometria lembradas, menu (grupos, teclado, atalhos, icones), "+ Nova proposta",
+ultima tela e geometria lembradas, menu (grupos, teclado, atalhos, icones), "+ Nova venda",
 recolher, e o fundo dos rotulos (regra global de QLabel) + tooltip.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_barra_lateral.py
@@ -32,7 +32,7 @@ import pandas as pd
 from PySide6.QtCore import QByteArray, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QShortcut
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QToolTip, QVBoxLayout, QWidget
 
 import config
 
@@ -58,6 +58,7 @@ from desktop.main_window import (
 )
 from desktop.theme import CORES_STATUS, PALETAS, TEMA_CLARO, TEMA_ESCURO
 from desktop.widgets import icones_linha
+from desktop.widgets import lista_de_vendas as lista_de_vendas_mod
 from desktop.widgets.identidade_usuario import IdentidadeUsuario
 from desktop.widgets.indicador_sincronizacao import descrever_leitura, descrever_sincronizacao
 from desktop.widgets.menu_lateral import texto_do_selo
@@ -150,8 +151,8 @@ def testar_menu_e_grupos(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     ], linhas_v
     assert PAGINA_ADMINISTRACAO not in vendedor._indice_por_chave and PAGINA_CADASTROS not in vendedor._indice_por_chave
     assert PAGINA_VENDAS not in vendedor._indice_por_chave, "Vendas ainda e so do ADMIN"
-    assert vendedor._botao_nova_proposta is None
-    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Vendas, Cadastros e Administração e sem '+ Nova proposta'.")
+    assert vendedor._botao_nova_venda is None
+    print("OK: VENDEDOR so ve um grupo (sem titulo), sem Vendas, Cadastros e Administração e sem '+ Nova venda'.")
     msgs.exigir_vazio("montar o menu")
 
 
@@ -293,11 +294,11 @@ def testar_selo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     p20 = int(todas[(todas["STATUS"] == "Aprovado") & (todas["TEMPO"] == "20 dias")].index[0])
     janela.ir_para(PAGINA_PROPOSTAS)
     tela = janela._tela_propostas
-    tela._expansor.alternar(tela._modelo.linha_do_indice_real(p12))
-    formulario = tela._expansor.formulario()
-    formulario._habilitar_edicao()
+    tela.lista.abrir_proposta(next(i for i in tela.propostas_visiveis() if i.proposta.indice == p12))
+    formulario = tela.lista.card_aberto().formulario
     formulario._status.setCurrentText(propostas_mod.STATUS_NEGADO)
     formulario._salvar()
+    QApplication.processEvents()  # a lista avisa `gravou` fora do sinal do formulario
     assert menu.selo(PAGINA_PROPOSTAS) == 1, "gravar em Todas as Propostas recalcula o selo"
     print("OK: gravar uma proposta em Todas as Propostas recalcula o selo (2 -> 1).")
 
@@ -323,18 +324,21 @@ def testar_selo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     assert menu.selo(PAGINA_PROPOSTAS) is None
     ficha = janela._tela_ficha
     ficha._selecionar_por_cpf(fx.CPF_ANA)
-    ficha._expansor.alternar(ficha._modelo_historico.linha_do_indice_real(novo))
-    formulario = ficha._expansor.formulario()
-    formulario._habilitar_edicao()
+
+    def _abrir_na_ficha():
+        ficha.lista_antigas.abrir_proposta(next(c.item for c in ficha.lista_antigas.cards if c.item.proposta.indice == novo))
+        return ficha.lista_antigas.card_aberto()
+
+    formulario = _abrir_na_ficha().formulario
     formulario._observacoes.setPlainText("editado no teste")
     formulario._salvar()
+    QApplication.processEvents()
     assert menu.selo(PAGINA_PROPOSTAS) == 1, "gravar na Ficha de Cliente recalcula o selo"
     print("OK: gravar na Ficha de Cliente recalcula o selo (sem selo -> 1).")
 
-    # excluir a proposta (mesma tela) tira o selo de novo
-    ficha._expansor.liberar()
-    ficha._lista_historico.setCurrentIndex(ficha._modelo_historico.index(ficha._modelo_historico.linha_do_indice_real(novo)))
-    ficha._excluir_proposta_selecionada()
+    # excluir a proposta (de dentro do card aberto, mesma tela) tira o selo de novo
+    _abrir_na_ficha().botao_excluir.click()
+    QApplication.processEvents()
     assert menu.selo(PAGINA_PROPOSTAS) is None
     area = _retangulo_do_item(janela, PAGINA_PROPOSTAS)
     imagem = janela.grab().toImage()
@@ -524,8 +528,9 @@ def testar_sair(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
 
     # edicao nao salva em Todas as Propostas
     janela.ir_para(PAGINA_PROPOSTAS)
-    janela._tela_propostas.abrir_nova_proposta()
-    janela._tela_propostas._expansor.formulario()._observacoes.setPlainText("rascunho de teste")
+    todas = janela._tela_propostas
+    todas.lista.abrir_proposta(todas.propostas_visiveis()[0])
+    todas.lista.card_aberto().formulario._observacoes.setPlainText("rascunho de teste")
     assert janela.tem_edicao_pendente()
 
     msgs.limpar()
@@ -539,7 +544,7 @@ def testar_sair(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     assert saidas == [1, 1], "respondeu Sim: sai"
     print("OK: com edicao nao salva em Todas as Propostas, pergunta antes (Não = fica, Sim = sai).")
 
-    janela._tela_propostas._expansor.descartar()
+    todas.lista.descartar()
     assert not janela.tem_edicao_pendente()
 
     # e o mesmo na Ficha de Cliente
@@ -559,11 +564,11 @@ def testar_sair(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     ficha.lista_vendas.descartar()
     msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
 
-    # rascunho aberto mas SEM nada digitado nao conta como edicao pendente
-    janela._tela_propostas.abrir_nova_proposta()
-    assert janela._tela_propostas._expansor.eh_rascunho() and not janela.tem_edicao_pendente()
-    janela._tela_propostas._expansor.descartar()
-    print("OK: um card 'Nova proposta' em branco nao conta como edicao pendente.")
+    # proposta aberta mas SEM nada digitado nao conta como edicao pendente
+    todas.lista.abrir_proposta(todas.propostas_visiveis()[0])
+    assert todas.lista.card_aberto().formulario is not None and not janela.tem_edicao_pendente()
+    todas.lista.descartar()
+    print("OK: uma proposta aberta sem nada digitado nao conta como edicao pendente.")
 
     # -- fluxo de trocar de usuario (desktop/main.py) --
     class _AppFalso:
@@ -597,7 +602,7 @@ def testar_sair(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         assert not anterior._temporizador_do_indicador.isActive(), "a janela antiga para de atualizar o indicador"
         nova = controlador.janela
         amb.janelas.append(nova)
-        assert nova._identidade.nome() == "Vendedor Exemplo" and nova._botao_nova_proposta is None
+        assert nova._identidade.nome() == "Vendedor Exemplo" and nova._botao_nova_venda is None
         assert PAGINA_ADMINISTRACAO not in nova._indice_por_chave, "a janela nova e montada pro papel de quem entrou"
         assert app_falso.saidas == 0
         print("OK: Sair -> login -> outra pessoa entra: janela nova montada pro papel dela (VENDEDOR sem Administração).")
@@ -697,29 +702,63 @@ def testar_ultima_tela_e_geometria(amb: Ambiente, msgs: Mensagens, tema: str) ->
     msgs.exigir_vazio("ultima tela")
 
 
-def testar_nova_proposta(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
-    linha(f"8) Botao '+ Nova proposta' [{tema}]")
+class _DialogoDeVendaFalso:
+    """No lugar do dialogo de nova venda (modal: travaria o teste). `aceitar`: cria a venda de verdade (na planilha
+    ficticia), como o OK do dialogo; senao, Cancelar."""
+
+    aceitar = True
+    abertos = 0
+
+    def __init__(self, *_args, **_kwargs):
+        self.id_venda = None
+
+    def exec(self):
+        _DialogoDeVendaFalso.abertos += 1
+        if not _DialogoDeVendaFalso.aceitar:
+            return QDialog.DialogCode.Rejected
+        self.id_venda, _ = vendas_mod.criar_venda(fx.CPF_ANA, ["Mesa Exemplo"])
+        return QDialog.DialogCode.Accepted
+
+
+def testar_nova_venda(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
+    linha(f"8) Botao '+ Nova venda' [{tema}]")
     amb.resetar_preferencias()
     janela = amb.nova_janela("admin", tema)
     janela.ir_para(PAGINA_DASHBOARD)
-    assert not janela._tela_propostas._expansor.eh_rascunho()
-    janela._botao_nova_proposta.click()
-    assert janela.chave_atual() == PAGINA_PROPOSTAS, "leva a Todas as Propostas"
-    assert janela._tela_propostas._expansor.eh_rascunho() and janela._tela_propostas._modelo.tem_rascunho()
-    print("OK: '+ Nova proposta' abre Todas as Propostas com o card 'Nova proposta' em edicao.")
+    original = lista_de_vendas_mod.VendaDialog
+    lista_de_vendas_mod.VendaDialog = _DialogoDeVendaFalso
+    try:
+        _DialogoDeVendaFalso.aceitar, _DialogoDeVendaFalso.abertos = False, 0
+        janela._botao_nova_venda.click()
+        assert _DialogoDeVendaFalso.abertos == 1 and janela.chave_atual() == PAGINA_DASHBOARD, \
+            "cancelar o dialogo deixa a pessoa onde estava"
+        _DialogoDeVendaFalso.aceitar = True
+        janela._botao_nova_venda.click()
+        assert janela.chave_atual() == PAGINA_VENDAS, "criada a venda, leva a tela Vendas"
+        card = janela._tela_vendas.lista.card_aberto()
+        assert card is not None and card.venda.cpf == fx.CPF_ANA, "com o card da venda criada aberto"
+        print("OK: '+ Nova venda' abre o dialogo; cancelado, fica onde estava; criada, mostra a venda aberta na tela Vendas.")
+
+        # o mesmo pelo "+ Nova venda" de Todas as Propostas
+        janela.ir_para(PAGINA_PROPOSTAS)
+        janela._tela_propostas._botao_nova.click()
+        assert janela.chave_atual() == PAGINA_VENDAS and _DialogoDeVendaFalso.abertos == 3
+        print("OK: o \"+ Nova venda\" de Todas as Propostas faz o mesmo.")
+    finally:
+        lista_de_vendas_mod.VendaDialog = original
 
     janela._alternar_sidebar()
-    assert janela._botao_nova_proposta.text() == "+" and janela._botao_nova_proposta.toolTip() == "Nova proposta"
+    assert janela._botao_nova_venda.text() == "+" and janela._botao_nova_venda.toolTip() == "Nova venda"
     janela._alternar_sidebar()
-    assert janela._botao_nova_proposta.text() == "+ Nova proposta"
+    assert janela._botao_nova_venda.text() == "+ Nova venda"
     print("OK: recolhido, o botao vira '+' (com tooltip).")
 
     vendedor = amb.nova_janela("vendedor", tema)
-    vendedor._tela_propostas.abrir_nova_proposta()  # a segunda trava: nem por codigo o VENDEDOR abre
-    assert not vendedor._tela_propostas._expansor.eh_rascunho()
-    print("OK: o VENDEDOR nao tem o botao, e abrir_nova_proposta() por codigo nao faz nada pra ele.")
+    vendedor.nova_venda()  # a segunda trava: nem por codigo o VENDEDOR cria
+    assert vendedor._botao_nova_venda is None and not hasattr(vendedor, "_tela_vendas")
+    print("OK: o VENDEDOR nao tem o botao, e nova_venda() por codigo nao faz nada pra ele.")
     amb.resetar_preferencias()
-    msgs.exigir_vazio("nova proposta")
+    msgs.exigir_vazio("nova venda")
 
 
 def testar_recolher_e_tema(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
@@ -759,16 +798,16 @@ def testar_recolher_e_tema(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
         assert _contar_pixels(imagem_r, cor_do_icone, area_do_icone, 16) > 8, f"o icone de {chave} sumiu da barra recolhida"
     print("OK: recolhida, o icone de cada item continua desenhado e centrado (nao some, nao e espremido).")
 
-    # a identidade e o "+ Nova proposta" cabem na barra estreita (o avatar ja saiu cortado: 34 px numa area de 32)
+    # a identidade e o "+ Nova venda" cabem na barra estreita (o avatar ja saiu cortado: 34 px numa area de 32)
     avatar = janela._identidade._avatar
     assert avatar.geometry().right() <= janela._identidade.rect().right(), "o avatar esta cortado pela borda da barra recolhida"
     centro_do_avatar = avatar.mapTo(janela._sidebar, QPoint(avatar.width() // 2, 0)).x()
     assert abs(centro_do_avatar - janela._sidebar.width() // 2) <= 1, "o avatar deveria ficar centrado na barra recolhida"
-    botao_nova = janela._botao_nova_proposta
+    botao_nova = janela._botao_nova_venda
     assert botao_nova.sizeHint().width() <= botao_nova.width(), (
         f"o '+' esta cortado: o botao pede {botao_nova.sizeHint().width()} px e tem {botao_nova.width()} px"
     )
-    print("OK: recolhida, o avatar nao e cortado e fica centrado, e o '+' de Nova proposta cabe no botao.")
+    print("OK: recolhida, o avatar nao e cortado e fica centrado, e o '+' de Nova venda cabe no botao.")
     janela._alternar_sidebar()
     assert janela._sidebar.width() == 230 and not janela._rotulo_versao.isHidden()
     assert janela._rotulo_versao.text() == f"v{config.VERSAO_APP}"
@@ -946,7 +985,7 @@ def main() -> None:
                     testar_indicador_de_sincronizacao,
                     testar_sair,
                     testar_ultima_tela_e_geometria,
-                    testar_nova_proposta,
+                    testar_nova_venda,
                     testar_recolher_e_tema,
                     testar_fundo_dos_rotulos_e_tooltip,
                 ):

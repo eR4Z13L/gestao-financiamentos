@@ -536,7 +536,7 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         color: {p['texto_secundario']};
     }}
 
-    /* o "+ Nova proposta" da barra lateral recolhida vira so o "+": sem o padding lateral um botao
+    /* o "+ Nova venda" da barra lateral recolhida vira so o "+": sem o padding lateral um botao
        normal, o "+" nao cabe nos ~32 px e aparece cortado */
     QPushButton[role="botao_primario"][compacto="true"] {{
         padding: 6px 0px;

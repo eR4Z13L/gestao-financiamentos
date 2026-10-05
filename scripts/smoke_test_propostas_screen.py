@@ -1,6 +1,5 @@
-"""Testa a tela Todas as Propostas (filtro, cadastro/edicao/
-exclusao), o modo "cliente avulso" do formulario de proposta (card expandido), remover_proposta, e o
-menu retratil/seletor de tema da MainWindow.
+"""Testa a tela Todas as Propostas (filtro, edicao e exclusao de dentro do card aberto, "+ Nova venda"), o modo
+"cliente avulso" do formulario de proposta, remover_proposta, e o menu retratil/seletor de tema da MainWindow.
 
 Os testes que mexem em dados usam copia temporaria do arquivo (nunca o
 real). O teste de tema/menu usa uma planilha 100% ficticia (scripts/fixture_ficticia.py) e as
@@ -170,80 +169,63 @@ def testar_propostas_screen(app: QApplication) -> None:
     with _StubMensagens():
         try:
             tela = PropostasScreen()
-            total_inicial = tela._modelo.total()
+            total_inicial = tela.lista.total()
             assert total_inicial == len(propostas_mod.listar_propostas())
             print(f"OK: carregou {total_inicial} proposta(s), igual a listar_propostas().")
 
-            # filtro por status
+            # filtro por status (a "Resposta")
             assert tela._filtro_status.count() > 1
             status_alvo = tela._filtro_status.itemText(1)  # indice 0 = "Todos"
             tela._filtro_status.setCurrentText(status_alvo)
             esperado = int((propostas_mod.listar_propostas()["STATUS"] == status_alvo).sum())
-            assert tela._modelo.total() == esperado
-            print(f"OK: filtro por status '{status_alvo}' -> {tela._modelo.total()} linha(s) (esperado {esperado}).")
+            assert tela.lista.total() == esperado
+            print(f"OK: filtro por status '{status_alvo}' -> {tela.lista.total()} card(s) (esperado {esperado}).")
             tela._filtro_status.setCurrentText(_FILTRO_TODOS)
 
             # busca livre por CPF sem pontuacao
             propostas_completo = propostas_mod.listar_propostas()
             cpf_exemplo = propostas_completo.iloc[0]["CPF"]
             tela._busca.setText(apenas_digitos(cpf_exemplo))
-            assert tela._modelo.total() >= 1
-            print(f"OK: busca por CPF (sem pontuação) encontrou {tela._modelo.total()} linha(s).")
+            assert tela.lista.total() >= 1
+            print(f"OK: busca por CPF (sem pontuação) encontrou {tela.lista.total()} card(s).")
             tela._busca.setText("")
-            assert tela._modelo.total() == total_inicial
+            assert tela.lista.total() == total_inicial
 
-            # seleciona a primeira linha e edita
-            tela._lista.setCurrentIndex(tela._modelo.index(0))  # (nao dispara o clique: so seleciona o card)
-            indice_real, proposta_antes = tela._linha_selecionada()
-            assert indice_real is not None
-
-            tela._expansor.alternar(tela._lista.linha_atual())  # duplo clique: o proprio card expande
-            formulario = tela._expansor.formulario()
-            assert tela._expansor.esta_expandido() and formulario._modo_leitura, "proposta existente deveria abrir em modo leitura"
-            formulario._habilitar_edicao()
+            # dois cliques num card: abre a PROPRIA proposta, ja em edicao (o ADMIN)
+            item = tela.propostas_visiveis()[0]
+            indice_real = item.proposta.indice
+            assert tela.lista.abrir_proposta(item)
+            formulario = tela.lista.card_aberto().formulario
+            assert formulario is not None and not formulario._modo_leitura, "o ADMIN abre direto no formulario em edicao"
             formulario._observacoes.setPlainText("editado via tela todas propostas")
             formulario._salvar()
-            gravado = tela._expansor.formulario()
-            assert gravado is not None and gravado is not formulario and gravado._modo_leitura, \
-                "gravar volta o card a leitura (continua expandido, ja com o que foi gravado)"
-            assert gravado._observacoes.toPlainText() == "editado via tela todas propostas"
-            tela._expansor.descartar()
-
+            app.processEvents()  # a lista avisa `gravou` fora do sinal do formulario
+            assert tela.lista.aberta is None, "gravar fecha o card (ele mostra o que foi gravado)"
             depois = propostas_mod.listar_propostas()
             assert depois.loc[indice_real, "OBSERVAÇÕES"] == "editado via tela todas propostas"
             print(f"OK: editar pela tela 'Todas as Propostas' funcionou (posição real {indice_real}).")
 
-            # editar recarrega os cards (_carregar_dados) e o MESMO card continua
-            # selecionado (mesma proposta no arquivo)
-            assert tela._linha_selecionada()[0] == indice_real, "o card editado continua selecionado"
-            indice_real_para_excluir, _ = tela._linha_selecionada()
-            assert indice_real_para_excluir == indice_real, "deveria continuar sendo a mesma proposta (so 1 linha 0 possivel)"
+            # excluir: so de dentro do formulario do card aberto (com confirmacao) - nao ha mais seleciona + Excluir
+            assert not hasattr(tela, "_botao_excluir") and not hasattr(tela, "_excluir_selecionada")
+            total_antes_excluir = tela.lista.total()
+            item = next(i for i in tela.propostas_visiveis() if i.proposta.indice == indice_real)
+            tela.lista.abrir_proposta(item)
+            card = tela.lista.card_aberto()
+            assert card.botao_excluir is not None
+            card.botao_excluir.click()
+            app.processEvents()
+            assert tela.lista.total() == total_antes_excluir - 1
+            assert len(propostas_mod.listar_propostas()) == total_antes_excluir - 1
+            print(f"OK: exclusão de dentro do card aberto funcionou ({total_antes_excluir} -> {tela.lista.total()}).")
 
-            total_antes_excluir = tela._modelo.total()
-            tela._excluir_selecionada()
-            assert tela._modelo.total() == total_antes_excluir - 1
-            assert clientes_mod.buscar_por_cpf  # so garante que o import nao foi removido por engano
-            print(f"OK: exclusão pela tela funcionou ({total_antes_excluir} -> {tela._modelo.total()}).")
-
-            # nova proposta avulsa (sem cliente pre-selecionado)
-            cliente_alvo = clientes_mod.listar_clientes().iloc[0]
-            rotulo = f"{cliente_alvo['CLIENTE']} — {cliente_alvo['CPF/CNPJ']}"
-            total_antes_add = tela._modelo.total()
-
-            tela._abrir_nova_proposta()
-            formulario = tela._expansor.formulario()
-            assert tela._expansor.eh_rascunho() and formulario._cliente_combo is not None
-            formulario._cliente_combo.setCurrentText(rotulo)
-            formulario._valor.setValue(9999)
-            formulario._equipamento.addItem("Equip Nova Tela")  # como se ja estivesse no cadastro (a lista e fechada)
-            formulario._equipamento.setCurrentText("Equip Nova Tela")
-            formulario._banco.addItem("Banco Nova Tela")  # como se ja estivesse no cadastro (a lista e fechada)
-            formulario._banco.setCurrentText("Banco Nova Tela")
-            formulario._salvar()
-            assert not tela._expansor.esta_expandido(), "gravar tira o card 'Nova proposta'"
-
-            assert tela._modelo.total() == total_antes_add + 1
-            print(f"OK: nova proposta avulsa criada pela tela ({total_antes_add} -> {tela._modelo.total()}).")
+            # no lugar do "+ Nova Proposta": "+ Nova venda" (a janela cria a venda e mostra na tela Vendas)
+            pedidos: list[str] = []
+            tela.nova_venda_pedida.connect(lambda: pedidos.append("nova venda"))
+            assert tela._botao_nova.text() == "+ Nova venda"
+            tela._botao_nova.click()
+            assert pedidos == ["nova venda"]
+            assert not hasattr(tela, "abrir_nova_proposta"), "a \"Nova proposta\" de Todas as Propostas deixou de existir"
+            print("OK: \"+ Nova venda\" no lugar do \"+ Nova Proposta\".")
 
             print("\nOK: PropostasScreen funciona de ponta a ponta.")
         finally:

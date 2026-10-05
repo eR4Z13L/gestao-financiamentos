@@ -60,7 +60,7 @@ def _do_periodo(propostas: pd.DataFrame, periodo: str, hoje) -> pd.DataFrame:
 
 
 def _indices_da_lista(tela_propostas) -> set[int]:
-    return {int(item["indice"]) for item in tela_propostas._modelo._todos}
+    return {item.proposta.indice for item in tela_propostas.propostas_visiveis()}
 
 
 def _clicar(widget: QWidget, ponto: QPoint | None = None) -> None:
@@ -246,7 +246,7 @@ def testar_atencao_e_cliques(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     janela.ir_para("propostas")
     tela_propostas._busca.setText("texto que nao existe em nenhuma proposta")
     tela_propostas._filtro_banco.setCurrentIndex(1)
-    assert len(tela_propostas._modelo._todos) == 0
+    assert tela_propostas.lista.total() == 0
     janela.ir_para("dashboard")
     linhas[0].click()
     assert tela_propostas._busca.text() == "" and tela_propostas._filtro_banco.currentIndex() == 0
@@ -257,12 +257,12 @@ def testar_atencao_e_cliques(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     total = len(tela_propostas._todas)
     tela_propostas._botao_remover_chip.click()
     assert not tela_propostas.chip_do_filtro_visivel() and tela_propostas.filtro_do_dashboard() is None
-    assert len(tela_propostas._modelo._todos) == total
+    assert tela_propostas.lista.total() == total
     janela.ir_para("dashboard")
     linhas[0].click()
     assert tela_propostas.chip_do_filtro_visivel() and tela_propostas._botao_limpar_filtros.isEnabled()
     tela_propostas._botao_limpar_filtros.click()
-    assert not tela_propostas.chip_do_filtro_visivel() and len(tela_propostas._modelo._todos) == total
+    assert not tela_propostas.chip_do_filtro_visivel() and tela_propostas.lista.total() == total
     print("OK: 'Remover filtro' e 'Limpar filtros' tiram o filtro do dashboard e a lista volta inteira.")
 
     # o periodo escolhido vai junto, nos campos de data de Todas as Propostas
@@ -351,8 +351,8 @@ def testar_atencao_e_cliques(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
 
     # com edicao NAO salva em algum card: pergunta antes de sair do que esta editando
     janela.ir_para("propostas")
-    tela_propostas.abrir_nova_proposta()
-    tela_propostas._expansor.formulario()._observacoes.setPlainText("rascunho de teste")
+    tela_propostas.lista.abrir_proposta(tela_propostas.propostas_visiveis()[0])
+    tela_propostas.lista.card_aberto().formulario._observacoes.setPlainText("rascunho de teste")
     assert janela.tem_edicao_pendente()
     janela.ir_para("dashboard")
     msgs.limpar()
@@ -572,12 +572,12 @@ def testar_tema_e_recarga(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     [w for w in _widgets(tela._cartao_atencao) if isinstance(w, LinhaClicavel)][0].click()  # so as paradas: cabem na 1a pagina
     tela_propostas = janela._tela_propostas
     indice = paradas.indices[0]
-    tela_propostas._expansor.alternar(tela_propostas._modelo.linha_do_indice_real(indice))
-    formulario = tela_propostas._expansor.formulario()
+    tela_propostas.lista.abrir_proposta(next(i for i in tela_propostas.propostas_visiveis() if i.proposta.indice == indice))
+    formulario = tela_propostas.lista.card_aberto().formulario
     status_original = propostas_mod.listar_propostas().loc[indice, "STATUS"]
-    formulario._habilitar_edicao()
     formulario._status.setCurrentText(propostas_mod.STATUS_NEGADO)
     formulario._salvar()
+    QApplication.processEvents()  # a lista avisa `gravou` fora do sinal do formulario
     assert tela._desatualizado, "gravar em Todas as Propostas marca o Dashboard"
     janela.ir_para("dashboard")
     assert not tela._desatualizado, "ao voltar, o Dashboard releu os dados"

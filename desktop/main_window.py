@@ -1,7 +1,7 @@
 """Janela principal: barra lateral (retratil) + area de conteudo (QStackedWidget).
 
 A barra lateral, de cima pra baixo: botao de recolher e nome do app; quem esta logado (avatar,
-nome e nivel de acesso); "+ Nova proposta" (so ADMIN); o menu, em grupos, com um selo de
+nome e nivel de acesso); "+ Nova venda" (so ADMIN); o menu, em grupos, com um selo de
 "propostas paradas" em Todas as Propostas; e o rodape (estado da sincronizacao, tema, Sair e
 a versao).
 
@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
             self._tela_vendas.dados_atualizados.connect(self._atualizar_selo_propostas)
             self._tela_vendas.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
             self._tela_vendas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
+            self._tela_propostas.venda_pedida.connect(self.abrir_venda)
+            self._tela_propostas.nova_venda_pedida.connect(self.nova_venda)
+        self._tela_propostas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
         self._tela_dashboard.ficha_pedida.connect(self.abrir_ficha_do_cliente)
@@ -217,6 +220,23 @@ class MainWindow(QMainWindow):
         self.ir_para(PAGINA_FICHA)
         self._tela_ficha.abrir_ficha_do_cliente(cpf)
 
+    def abrir_venda(self, id_venda: str, id_proposta: str | None = None) -> None:
+        """A tela Vendas com o card da venda `id_venda` aberto e, com `id_proposta`, ja com o formulario dela (o "Ver na
+        venda →" de Todas as Propostas: da pra ver de qual proposta a pessoa veio)."""
+        if not sessao_mod.eh_admin() or not self._confirmar_descartar_edicoes():
+            return
+        self.ir_para(PAGINA_VENDAS)
+        self._tela_vendas.mostrar_venda(id_venda, id_proposta)
+
+    def nova_venda(self) -> None:
+        """"+ Nova venda" (a barra lateral e Todas as Propostas): o dialogo de nova venda e, criada, a tela Vendas com o
+        card dela aberto, pronto pro primeiro banco. Cancelar o dialogo deixa tudo como estava."""
+        if not sessao_mod.eh_admin() or not self._confirmar_descartar_edicoes():
+            return
+        if self._tela_vendas.nova_venda():
+            self.ir_para(PAGINA_VENDAS)
+            self._tela_vendas.lista.rolar_ate_o_aberto()
+
     def abrir_nova_proposta_duplicada(self, cpf: str, indice_da_proposta: int) -> None:
         """A Ficha do cliente com o card "Nova proposta" ja preenchido a partir da proposta `indice_da_proposta`."""
         if not sessao_mod.eh_admin():  # so o ADMIN cria proposta (a trava de verdade tambem esta no core)
@@ -295,20 +315,20 @@ class MainWindow(QMainWindow):
         layout_identidade.addWidget(self._identidade)
         layout.addWidget(self._contentor_identidade)
 
-        # atalho de quem cria proposta o dia todo; o VENDEDOR so le, entao nem tem o botao
-        self._botao_nova_proposta: QPushButton | None = None
+        # atalho de quem cria venda o dia todo; o VENDEDOR so le, entao nem tem o botao
+        self._botao_nova_venda: QPushButton | None = None
         if sessao_mod.eh_admin():
-            self._botao_nova_proposta = QPushButton("+ Nova proposta")
-            self._botao_nova_proposta.setProperty("role", "botao_primario")
-            self._botao_nova_proposta.setToolTip("Nova proposta")
-            self._botao_nova_proposta.clicked.connect(self._ao_clicar_nova_proposta)
+            self._botao_nova_venda = QPushButton("+ Nova venda")
+            self._botao_nova_venda.setProperty("role", "botao_primario")
+            self._botao_nova_venda.setToolTip("Nova venda")
+            self._botao_nova_venda.clicked.connect(self.nova_venda)
             contentor_nova = QWidget()
             contentor_nova.setProperty("role", "transparente")
             layout_nova = QVBoxLayout(contentor_nova)
             layout_nova.setContentsMargins(_MARGEM_LATERAL, 0, _MARGEM_LATERAL, 8)
-            layout_nova.addWidget(self._botao_nova_proposta)
+            layout_nova.addWidget(self._botao_nova_venda)
             layout.addWidget(contentor_nova)
-            self._contentor_nova_proposta = contentor_nova
+            self._contentor_nova_venda = contentor_nova
 
         self._menu = MenuLateral()
         self._menu.definir_itens(grupos)
@@ -360,23 +380,17 @@ class MainWindow(QMainWindow):
         self._identidade.definir_recolhido(recolhido)
         margem = _MARGEM_LATERAL_RECOLHIDA if recolhido else _MARGEM_LATERAL
         self._contentor_identidade.layout().setContentsMargins(margem, 0, margem, 12)
-        if self._botao_nova_proposta is not None:
-            self._botao_nova_proposta.setText("+" if recolhido else "+ Nova proposta")
-            self._contentor_nova_proposta.layout().setContentsMargins(margem, 0, margem, 8)
+        if self._botao_nova_venda is not None:
+            self._botao_nova_venda.setText("+" if recolhido else "+ Nova venda")
+            self._contentor_nova_venda.layout().setContentsMargins(margem, 0, margem, 8)
             # o "+" cabe na barra estreita so sem o padding de um botao normal (ver theme.py)
-            self._botao_nova_proposta.setProperty("compacto", recolhido)
-            self._botao_nova_proposta.style().unpolish(self._botao_nova_proposta)
-            self._botao_nova_proposta.style().polish(self._botao_nova_proposta)
+            self._botao_nova_venda.setProperty("compacto", recolhido)
+            self._botao_nova_venda.style().unpolish(self._botao_nova_venda)
+            self._botao_nova_venda.style().polish(self._botao_nova_venda)
         self._menu.definir_recolhido(recolhido)
         for botao in (self._indicador_sincronizacao, self._botao_tema, self._botao_sair):
             botao.definir_recolhido(recolhido)
         self._rotulo_versao.setVisible(not recolhido)
-
-    # -- nova proposta --------------------------------------------------------------------
-
-    def _ao_clicar_nova_proposta(self) -> None:
-        self.ir_para(PAGINA_PROPOSTAS)
-        self._tela_propostas.abrir_nova_proposta()
 
     # -- selo de propostas paradas ---------------------------------------------------------
 

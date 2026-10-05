@@ -142,13 +142,13 @@ def main() -> None:
             _ir(janela, PAGINA_DASHBOARD)
             propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
                                               "EQUIPAMENTO": "Equipamento Modelo Y", "VALOR (R$)": 999})
-            original = propostas._expansor.tem_alteracoes
-            propostas._expansor.tem_alteracoes = lambda: True  # um card com edicao nao salva
+            original = propostas.lista.tem_edicao_pendente
+            propostas.lista.tem_edicao_pendente = lambda: True  # um card com edicao nao salva
             try:
                 _ir(janela, PAGINA_PROPOSTAS)
                 assert len(propostas._todas) == antes + 1, "com edicao pendente, nao rele (o botao Atualizar pergunta)"
             finally:
-                propostas._expansor.tem_alteracoes = original
+                propostas.lista.tem_edicao_pendente = original
             _ir(janela, PAGINA_DASHBOARD)
             _ir(janela, PAGINA_PROPOSTAS)
             assert len(propostas._todas) == antes + 2, "sem a edicao pendente, a proxima volta rele"
@@ -295,13 +295,13 @@ def main() -> None:
             antes = len(propostas._todas)
             propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
                                               "EQUIPAMENTO": "Equipamento Modelo Y", "VALOR (R$)": 111})
-            original = propostas._expansor.tem_alteracoes
-            propostas._expansor.tem_alteracoes = lambda: True
+            original = propostas.lista.tem_edicao_pendente
+            propostas.lista.tem_edicao_pendente = lambda: True
             try:
                 tique()
                 assert len(propostas._todas) == antes, "card em edicao: o tique nao rele"
             finally:
-                propostas._expansor.tem_alteracoes = original
+                propostas.lista.tem_edicao_pendente = original
             tique()
             assert len(propostas._todas) == antes + 1
             print("OK: Todas as Propostas aberta rele sozinha; com um card em edicao, espera.")

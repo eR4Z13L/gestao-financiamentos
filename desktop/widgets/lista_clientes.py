@@ -3,8 +3,8 @@ nome em destaque, o Tipo (Cliente/Avalista) num badge colorido, o vendedor
 responsavel e uma bolinha "Em aberto" pra quem tem alguma proposta ainda nao
 encerrada. O CPF/CNPJ NAO aparece no card (segue valendo na busca).
 
-Mesma ideia dos cards de proposta (lista_cartoes.py): QListView + delegate (o
-card e DESENHADO, nao e um widget por cliente), cores do tema que se refazem
+QListView + delegate (o card e DESENHADO, nao e um widget por cliente - como eram
+os cards antigos de proposta; as medidas de desenho comuns ficaram em lista_cartoes.py), cores do tema que se refazem
 sozinhas quando ele muda, selecao por clique unico com destaque (fundo azulado e
 borda mais grossa). Aqui e uma coluna so, que ocupa a largura da lista.
 """

@@ -36,6 +36,7 @@ from core import vendas as vendas_mod
 from core.validators import apenas_digitos
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
+from desktop.widgets.card_da_venda import LARGURA_CARD
 
 
 # as telas criadas pelo teste ficam vivas ate o fim, como no app (onde cada tela existe a sessao toda). Largadas, viram
@@ -129,13 +130,14 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
     historico_esperado = propostas_mod.historico_por_cpf(cpf_com_proposta)
     vendas_esperadas = vendas_mod.vendas_do_cliente(cpf_com_proposta)
     antigas = historico_esperado[~historico_esperado["ID_VENDA"].isin({v.id for v in vendas_esperadas})]
-    assert tela._modelo_historico.rowCount() == len(antigas)
+    assert tela.lista_antigas.total() == len(antigas)
+    assert sorted(c.item.proposta.indice for c in tela.lista_antigas.cards) == sorted(antigas.index)[:30]
     assert [c.venda.id for c in tela.lista_vendas.cards] == [v.id for v in vendas_esperadas][:30]
-    assert tela._contentor_historico.isHidden() is antigas.empty
+    assert tela.lista_antigas.isHidden() is antigas.empty
     assert tela._historico_vazio.isHidden() is True  # (o aviso "nenhuma proposta" e so do vendedor)
     print(
         f"Selecionar '{cliente_com_proposta['CLIENTE']}' preencheu a ficha, as vendas ({len(vendas_esperadas)}) e as "
-        f"propostas de antes das vendas ({tela._modelo_historico.rowCount()}, esperado {len(antigas)})."
+        f"propostas de antes das vendas ({tela.lista_antigas.total()}, esperado {len(antigas)})."
     )
 
     # agora um cliente sem nenhuma proposta, pra exercitar o estado vazio do historico
@@ -150,8 +152,8 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
         if tela._lista.cpf_da_linha(i) == cliente_sem_proposta["CPF/CNPJ"]
     )
     tela._lista.definir_linha_atual(indice_sem_proposta)
-    assert tela._modelo_historico.rowCount() == 0
-    assert tela._contentor_historico.isHidden() is True and tela._titulo_historico.isHidden() is True
+    assert tela.lista_antigas.total() == 0
+    assert tela.lista_antigas.isHidden() is True and tela._titulo_historico.isHidden() is True
     assert tela.lista_vendas.vazio.isHidden() is bool(vendas_mod.vendas_do_cliente(cliente_sem_proposta["CPF/CNPJ"]))
     print(f"Selecionar '{cliente_sem_proposta['CLIENTE']}' (sem propostas) mostrou o estado vazio corretamente.")
 
@@ -330,6 +332,10 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         historico = propostas_mod.historico_por_cpf(cpf)
         if not historico.empty:
             propostas_mod.atualizar_proposta(historico.index[0], {"OBSERVAÇÕES": url_longa})
+        # e uma proposta de antes das vendas (fora de qualquer venda) com a URL nas observacoes: o card dela aparece
+        propostas_mod.adicionar_proposta({"CPF": cpf, "BANCO": "Banco Longo", "EQUIPAMENTO": "Equipamento Longo",
+                                          "VALOR (R$)": 1000, "STATUS": propostas_mod.STATUS_EM_ANALISE,
+                                          "OBSERVAÇÕES": url_longa})
 
         tela = _manter_viva(FichaClienteScreen())
         tela._selecionar_por_cpf(cpf)
@@ -350,12 +356,14 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
         assert tela._botao_abrir_rede_social.toolTip() == "Abrir no maapp.com.br", "o tooltip deveria mostrar um link curto, não a URL crua"
         print("OK: a Rede Social mostra a URL crua no campo, com um ícone (tooltip 'Abrir no maapp.com.br') do lado.")
 
-        if not historico.empty:
-            # os cards do historico nao mostram as observacoes (ficam na tela de leitura da proposta):
-            # a URL longa la nao pode pesar no tamanho da lista
-            largura_lista = tela._lista_historico.minimumSizeHint().width()
-            assert largura_lista < 400, f"a lista de cards do historico pede {largura_lista}px de largura minima"
-            print(f"OK: a lista de cards do histórico pede só {largura_lista}px de largura mínima, mesmo com a URL longa nas observações.")
+        if tela.lista_antigas.cards:
+            # os cards do historico nao mostram as observacoes (ficam no formulario da proposta aberta):
+            # a URL longa la nao pode pesar no tamanho dos cards - cada um pede so a largura minima de um card
+            largura_card = max(c.minimumSizeHint().width() for c in tela.lista_antigas.cards)
+            assert largura_card <= LARGURA_CARD + 40, f"um card do historico pede {largura_card}px de largura minima"
+            print(f"OK: os cards do histórico pedem só {largura_card}px de largura mínima, mesmo com a URL longa nas observações.")
+        else:
+            print("(este cliente não tem propostas de antes das vendas: a largura dos cards é conferida em smoke_test_todas_as_propostas)")
 
         print("\nOK: texto longo sem espaço não estica mais o layout da Ficha de Cliente.")
     finally:

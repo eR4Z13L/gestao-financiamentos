@@ -11,6 +11,8 @@ foram definidas pelo usuário e valem sempre.
 
 **Git**
 - Commit e push SÓ quando o usuário pedir com todas as letras ("pode commitar", "envia pro GitHub"). "Commitar" não autoriza push.
+- Exceção (decidida em 05/10): conversa que roda na nuvem pode enviar ao GitHub o PRÓPRIO ramo `claude/...` (é como ela
+  trabalha) — nunca o `master`. Nada entra no `master` sem o OK do usuário e a revisão da conversa gerente.
 - Nunca reconstruir o .exe nem o instalador sem pedido.
 - Nunca entram no git: `data/` (planilha real e backups), `data_dev_oficial/`, `credentials/`, `config_local*.py`, `docs/`.
 - Antes de cada commit: conferir, nos arquivos que vão entrar, que não há nome, CPF/CNPJ, telefone, e-mail ou endereço lidos da planilha real (comparar linha a linha) nem segredo (chave privada, conta de serviço do Google, segredo do login Google — os arquivos de `credentials/`). Em testes, exemplos e mensagens de commit, só dados claramente fictícios.

@@ -519,6 +519,30 @@ def _numero_ou_none(valor):
     return None if valor is None or valor == "" or pd.isna(valor) else valor
 
 
+_ESPERANDO_RESPOSTA = {propostas_mod.ETAPA_EM_ANALISE, propostas_mod.ETAPA_PRE_APROVADO}
+
+
+def _proposta_da_linha(indice, p: pd.Series, ultimas: dict, pilhas: dict, fechadas: list[str],
+                       hoje: pd.Timestamp) -> PropostaNaVenda:
+    """Uma linha da aba PROPOSTAS pronta pra tela. Os dias esperando resposta contam da ultima troca de status no
+    HISTÓRICO e, sem ela (ou sem ID_PROPOSTA, nas de antes das vendas), da DATA da proposta."""
+    id_proposta = p.get("ID_PROPOSTA") or ""
+    dias = None
+    if propostas_mod.etapa_status(p["STATUS"]) in _ESPERANDO_RESPOSTA:
+        dias = _dias_desde(ultimas.get(id_proposta, p["DATA"]) if id_proposta else p["DATA"], hoje)
+    meses = _numero_ou_none(p["MESES"])
+    anterior = (pilhas.get(id_proposta) or [None])[-1] if id_proposta else None
+    carencia = _numero_ou_none(p.get("CARÊNCIA (DIAS)"))
+    return PropostaNaVenda(
+        id_proposta, int(indice), p["BANCO"], p["STATUS"], _numero_ou_none(p["VALOR (R$)"]),
+        int(meses) if meses is not None else None, p["DATA"] if pd.notna(p["DATA"]) else None,
+        p["EQUIPAMENTO"], bool(id_proposta) and id_proposta in fechadas, dias,
+        # status de antes das vendas nao volta
+        anterior if anterior in [*STATUS_DA_PROPOSTA, PROPOSTA_EFETIVADA] else None,
+        int(carencia) if carencia is not None else None, _numero_ou_none(p.get("PARCELA (R$)")),
+    )
+
+
 def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     """Todas as vendas, prontas pra tela (a mais recente primeiro), cada uma com as suas propostas."""
     hoje = pd.Timestamp(hoje or date.today())
@@ -530,28 +554,12 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     pilhas = _pilhas_de_anteriores(historico)
     por_cpf = {apenas_digitos(c): (nome, vendedor) for c, nome, vendedor
                in zip(clientes["CPF/CNPJ"], clientes["CLIENTE"], clientes["VENDEDOR"])}
-    esperando = {propostas_mod.ETAPA_EM_ANALISE, propostas_mod.ETAPA_PRE_APROVADO}
 
     resultado = []
     for _, v in vendas.iterrows():
         da_venda = propostas[propostas["ID_VENDA"] == v["ID_VENDA"]].sort_values("DATA", kind="stable")
         fechadas = [i for i in fechadas_da_venda(v["BANCO_ESCOLHIDO"]) if i in set(da_venda["ID_PROPOSTA"])]
-        itens = []
-        for indice, p in da_venda.iterrows():
-            dias = None
-            if propostas_mod.etapa_status(p["STATUS"]) in esperando:
-                dias = _dias_desde(ultimas.get(p["ID_PROPOSTA"], p["DATA"]), hoje)
-            meses = _numero_ou_none(p["MESES"])
-            anterior = (pilhas.get(p["ID_PROPOSTA"]) or [None])[-1]
-            carencia = _numero_ou_none(p["CARÊNCIA (DIAS)"])
-            itens.append(PropostaNaVenda(
-                p["ID_PROPOSTA"], int(indice), p["BANCO"], p["STATUS"], _numero_ou_none(p["VALOR (R$)"]),
-                int(meses) if meses is not None else None, p["DATA"] if pd.notna(p["DATA"]) else None,
-                p["EQUIPAMENTO"], bool(p["ID_PROPOSTA"]) and p["ID_PROPOSTA"] in fechadas, dias,
-                # status de antes das vendas nao volta
-                anterior if anterior in [*STATUS_DA_PROPOSTA, PROPOSTA_EFETIVADA] else None,
-                int(carencia) if carencia is not None else None, _numero_ou_none(p["PARCELA (R$)"]),
-            ))
+        itens = [_proposta_da_linha(indice, p, ultimas, pilhas, fechadas, hoje) for indice, p in da_venda.iterrows()]
         nome, vendedor = por_cpf.get(apenas_digitos(v["CPF"]), ("", ""))
         criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None
         # o status vem dos bancos (uma venda gravada com etapas de antes - "Banco escolhido", "Nota fiscal" - le certo)
@@ -564,6 +572,42 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
         ))
     resultado.sort(key=lambda r: r.data_criacao if r.data_criacao is not None else pd.Timestamp.min, reverse=True)
     return resultado
+
+
+@dataclass(frozen=True)
+class PropostaNaLista:
+    """Uma proposta como Todas as Propostas (e a Ficha, nas de antes das vendas) a mostra: um card por pedido a um
+    banco, com a venda dele para as acoes do card (as mesmas do card da venda)."""
+    proposta: PropostaNaVenda
+    venda: ResumoDaVenda | None  # None: de antes das vendas (ou a leitura do VENDEDOR, que ainda nao tem as vendas)
+    cpf: str
+    cliente: str
+    vendedor: str
+
+
+def propostas_na_lista(propostas: pd.DataFrame, vendas=(), historico: pd.DataFrame | None = None,
+                       hoje: date | None = None) -> dict[int, PropostaNaLista]:
+    """Para cada proposta de `propostas` (as ja lidas, pelo indice = posicao real no arquivo), o que o card dela
+    mostra. `vendas` (listar_vendas) da a venda de cada uma e o resto do que o card da venda mostra (anel, voltar,
+    dias esperando); as que nao estao em nenhuma delas saem da propria linha, com os dias esperando pelo `historico`
+    (sem ele, ou sem ID_PROPOSTA, contados da DATA)."""
+    hoje = pd.Timestamp(hoje or date.today())
+    na_venda = {p.indice: (p, v) for v in vendas for p in v.propostas}
+    ultimas = _ultimas_mudancas(historico) if historico is not None else {}
+    resultado = {}
+    for indice, linha in propostas.iterrows():
+        proposta, venda = na_venda.get(int(indice), (None, None))
+        if proposta is None or not proposta.id or proposta.id != (linha.get("ID_PROPOSTA") or ""):  # outra leitura
+            proposta, venda = _proposta_da_linha(indice, linha, ultimas, {}, [], hoje), None
+        cliente = venda.cliente if venda is not None else (linha.get("CLIENTE") or "")
+        vendedor = venda.vendedor if venda is not None else (linha.get("VENDEDOR") or "")
+        resultado[int(indice)] = PropostaNaLista(proposta, venda, linha["CPF"], cliente, vendedor)
+    return resultado
+
+
+def propostas_na_lista_do_arquivo(propostas: pd.DataFrame, hoje: date | None = None) -> dict[int, PropostaNaLista]:
+    """propostas_na_lista com as vendas e o HISTÓRICO do arquivo (o ADMIN, em Todas as Propostas)."""
+    return propostas_na_lista(propostas, listar_vendas(hoje), bd.ler_historico(_caminho()), hoje)
 
 
 def vendas_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]:

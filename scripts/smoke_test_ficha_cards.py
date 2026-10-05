@@ -2,8 +2,9 @@
 Tipo num badge colorido de cores fora das dos status, vendedor, bolinha "Em aberto"
 pra quem tem proposta nao encerrada, SEM o CPF/CNPJ no card, selecao por clique
 unico com destaque) e (2) o historico de propostas (banco em destaque, "Equipamento .
-Valor", status com as mesmas cores de "Todas as Propostas", tempo e data; um clique
-seleciona, o duplo clique abre). Dados FICTICIOS, numa planilha temporaria.
+Valor" ate o passo 2; agora o mesmo card de proposta de Todas as Propostas: banco em destaque, cliente e
+equipamento, condicoes, a faixa na cor do status; dois cliques abrem o formulario ali, e o vendedor so le). Dados
+FICTICIOS, numa planilha temporaria.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cards.py
 """
@@ -48,10 +49,10 @@ from core import vendedores as vendedores_mod
 from core.formatting import formatar_equipamento_e_valor
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
-from desktop.screens import propostas_screen as propostas_screen_mod
-from desktop.screens.ficha_cliente_screen import FichaClienteScreen, _montar_item_historico
+from desktop.screens.ficha_cliente_screen import FichaClienteScreen
 from desktop.theme import COR_EM_ABERTO, CORES_STATUS, CORES_TIPO, PALETAS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
-from desktop.widgets.lista_cartoes import ALTURA_CARTAO, chave_cor_status
+from desktop.widgets.card_da_proposta import CardDaProposta
+from desktop.widgets.lista_cartoes import chave_cor_status
 from desktop.widgets.lista_clientes import (
     ALTURA_CARTAO_CLIENTE,
     ListaClientes,
@@ -60,8 +61,6 @@ from desktop.widgets.lista_clientes import (
     rotulo_do_tipo,
     textos_do_cliente,
 )
-from desktop.widgets.expansor_proposta import ExpansorDeProposta
-from desktop.widgets.formulario_proposta import FormularioProposta
 
 
 def linha(titulo: str) -> None:
@@ -353,47 +352,21 @@ def _criar_planilha_vazia(caminho: Path) -> None:
 
 class _Stubs:
     def __enter__(self):
-        self.orig = (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
-                     ExpansorDeProposta.alternar, ExpansorDeProposta.nova)
-        alternar_original, nova_original = ExpansorDeProposta.alternar, ExpansorDeProposta.nova
+        self.orig = (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question)
         self.titulos: list[str] = []
         self.textos: list[str] = []
-        self.dialogos: list[FormularioProposta] = []
-        self.acao_exec = None  # funcao(formulario) chamada logo depois de o card expandir
 
         def _msg(*args, **kwargs):
             self.titulos.append(str(args[1]) if len(args) > 1 else "")
             self.textos.append(str(args[2]) if len(args) > 2 else "")
             return QMessageBox.StandardButton.Ok
 
-        def _entregar(expansor):
-            # entrega o formulario do card expandido ao teste; depois recolhe (o mesmo que o exec() simulado de
-            # antes, que devolvia Rejected): nada fica expandido entre um passo e outro
-            formulario = expansor.formulario()
-            self.dialogos.append(formulario)
-            if self.acao_exec:
-                self.acao_exec(formulario)
-            expansor.descartar()
-
-        def _alternar(expansor, linha):
-            antes = expansor.formulario()
-            alternar_original(expansor, linha)
-            if expansor.formulario() is not None and expansor.formulario() is not antes:
-                _entregar(expansor)
-
-        def _nova(expansor, cpf, nome_cliente=None):
-            nova_original(expansor, cpf, nome_cliente)
-            if expansor.formulario() is not None:
-                _entregar(expansor)
-
         QMessageBox.warning = QMessageBox.critical = QMessageBox.information = staticmethod(_msg)
         QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
-        ExpansorDeProposta.alternar, ExpansorDeProposta.nova = _alternar, _nova
         return self
 
     def __exit__(self, *_):
-        (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
-         ExpansorDeProposta.alternar, ExpansorDeProposta.nova) = self.orig
+        QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question = self.orig
 
 
 def _duplo_clique(widget, ponto: QPoint) -> None:
@@ -446,12 +419,13 @@ def _em_aberto(tela: FichaClienteScreen) -> dict[str, bool]:
     return {tela._lista.nome_da_linha(i): tela._lista.esta_em_aberto(i) for i in range(tela._lista.count())}
 
 
-def _selecionar_card_do_historico(tela: FichaClienteScreen, linha_: int) -> QPoint:
-    lista = tela._lista_historico
-    retangulo = lista.visualRect(lista.model().index(linha_))
-    ponto = QPoint(retangulo.left() + 40, retangulo.top() + 30)
-    QTest.mouseClick(lista.viewport(), Qt.MouseButton.LeftButton, pos=ponto)
-    return ponto
+def _cards_antigos(tela: FichaClienteScreen) -> list[CardDaProposta]:
+    return [c for c in tela.lista_antigas.cards if isinstance(c, CardDaProposta)]
+
+
+def _ponto_no_topo(card: CardDaProposta) -> QPoint:
+    """Um ponto no topo do card (na altura do banco, longe dos botoes da direita)."""
+    return QPoint(card.banco.geometry().left() + 4, card.banco.geometry().center().y())
 
 
 def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
@@ -520,22 +494,17 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
         # editar a unica proposta aberta da ALFA pra Efetivado: a bolinha some
         tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
-        modelo = tela._modelo_historico
-        assert [modelo.item(i)["titulo"] for i in range(modelo.total())] == ["PORTOBANK", "SANTANDER"]
-        card_aberto = next(i for i in range(modelo.total()) if modelo.item(i)["status"] == "Em Análise")
-        _selecionar_card_do_historico(tela, card_aberto)
-
-        def _efetivar(dialogo: FormularioProposta) -> None:
-            dialogo._habilitar_edicao()
-            dialogo._status.setCurrentText("Efetivado")
-            dialogo._salvar()
-
-        stubs.acao_exec = _efetivar
-        tela._expansor.alternar(tela._lista_historico.linha_atual())  # duplo clique no card selecionado
-        stubs.acao_exec = None
+        assert [c.banco.text() for c in _cards_antigos(tela)] == ["PORTOBANK", "SANTANDER"], "a mais recente primeiro"
+        aberta = next(c.item for c in _cards_antigos(tela) if c.item.proposta.status == "Em Análise")
+        assert tela.lista_antigas.abrir_proposta(aberta)  # os dois cliques: o formulario ali, em edicao
+        formulario = tela.lista_antigas.card_aberto().formulario
+        formulario._status.setCurrentText("Efetivado")
+        formulario._salvar()
+        _ciclos(app)
         assert _em_aberto(tela)["ALFA CLIENTE"] is False, "sem proposta aberta a bolinha some, sem refazer a lista"
         assert tela._lista.linha_atual() == 0 and tela._cpf_selecionado == cpfs["alfa"], "a lista e a seleção seguem onde estavam"
-        assert modelo.item(tela._lista_historico.linha_atual())["status"] == "Efetivado", "o card editado segue selecionado, com o status novo"
+        editado = next(c for c in _cards_antigos(tela) if c.item.proposta.indice == aberta.proposta.indice)
+        assert editado.pilula.text() == "Efetivado" and tela.lista_antigas.aberta is None, "gravou: o card fecha, com o status novo"
 
         # lancar uma proposta nova (aberta) na GAMA: a bolinha aparece
         tela._selecionar_por_cpf(cpfs["gama"])
@@ -556,7 +525,7 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
         nova._salvar()
         _ciclos(app)
         assert _em_aberto(tela)["GAMA SEM PROPOSTA"] is True
-        assert [p.banco for p in tela.lista_vendas.cards[0].venda.propostas] == ["Banco Novo"] and modelo.total() == 0
+        assert [p.banco for p in tela.lista_vendas.cards[0].venda.propostas] == ["Banco Novo"] and tela.lista_antigas.total() == 0
         print("OK: efetivar a única proposta aberta apaga a bolinha; lançar uma nova acende - sem refazer a lista nem perder a seleção.")
 
         # erro ao ler as propostas: avisa (uma vez) e a lista segue funcionando sem a marca
@@ -580,12 +549,16 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
             propostas_mod.cpfs_com_proposta_em_aberto = original
         print("OK: se a leitura falha, avisa (uma vez só) e a lista de clientes segue funcionando sem a marca.")
     finally:
-        stubs.acao_exec = None
         tela.close()
 
 
+def _item_de_teste(status: str, banco: str = "B", equipamento: str = "E", valor=1.0) -> vendas_mod.PropostaNaLista:
+    proposta = vendas_mod.PropostaNaVenda("", 0, banco, status, valor, 12, pd.Timestamp(2026, 1, 1), equipamento, False, None)
+    return vendas_mod.PropostaNaLista(proposta, None, _cpf(9), "CLIENTE", "ANA")
+
+
 def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
-    linha("6) Histórico em cards: banco em destaque, 'Equipamento · Valor', cores de status iguais às de Todas as Propostas")
+    linha("6) Propostas antigas no card de proposta: banco em destaque, cliente e equipamento, condições, cor do status")
     original_obter = settings_mod.obter_tema
     tela = None
     try:
@@ -597,103 +570,97 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
             tela.show()
             tela._selecionar_por_cpf(cpfs["beta"])
             _ciclos(app)
-            modelo, lista = tela._modelo_historico, tela._lista_historico
             # BETA: 03/03 Negado (MOVA HTM / CADEIRA / R$ 900) e 02/03 Efetivado (SMART / LASER / R$ 1.500,50)
-            item0, item1 = modelo.item(0), modelo.item(1)
-            assert (item0["titulo"], item0["linha2"], item0["status"], item0["data"], item0["tempo"]) == \
-                ("MOVA HTM", "CADEIRA · R$ 900,00", "Negado", "03/03/2026", "Encerrado")
-            assert (item1["titulo"], item1["linha2"], item1["status"], item1["data"]) == \
-                ("SMART", "LASER · R$ 1.500,50", "Efetivado", "02/03/2026")
-            assert "titulo" in item0 and modelo.data(modelo.index(0)) == "MOVA HTM", "o destaque do card é o banco"
-            assert "MOVA HTM" in modelo.data(modelo.index(0), Qt.ItemDataRole.ToolTipRole) and \
-                "CADEIRA · R$ 900,00" in modelo.data(modelo.index(0), Qt.ItemDataRole.ToolTipRole)
+            card0, card1 = _cards_antigos(tela)
+            assert (card0.banco.text(), card0.cliente.text(), card0.condicoes.text(), card0.pilula.text()) == \
+                ("MOVA HTM", "BETA AVALISTA · CADEIRA", "R$ 900 · 12x", "Negado"), card0.condicoes.text()
+            assert (card1.banco.text(), card1.cliente.text(), card1.pilula.text()) == ("SMART", "BETA AVALISTA · LASER", "Efetivado")
+            assert card1.condicoes.text() == "R$ 1.500,50 · 12x", card1.condicoes.text()
+            assert card0.sem_venda is not None and card0.espera is None, "de antes das vendas; encerrada não espera resposta"
+            assert not card0.pilula.clicavel and not card0.controles["bolinhas"] and card0.controles["anel"] is None, \
+                "sem venda: a etiqueta só mostra o status (muda pelo formulário)"
 
-            # a faixa de cada card tem a mesma cor do status (a mesma tabela de "Todas as Propostas")
-            imagem = lista.viewport().grab().toImage()
-            for i, chave in ((0, "negado"), (1, "efetivado")):
-                r = lista.visualRect(modelo.index(i))
-                pixel = imagem.pixelColor(r.left() + 3, r.top() + ALTURA_CARTAO // 2)
-                assert pixel.rgb() == QColor(CORES_STATUS[tema][chave]["faixa"]).rgb(), f"{tema}: faixa do card {i} ({pixel.name()})"
+            # a faixa de cada card tem a mesma cor do status (a mesma tabela de Todas as Propostas e do card da venda)
+            for card, chave in ((card0, "negado"), (card1, "efetivado")):
+                pixel = card.grab().toImage().pixelColor(2, card.height() // 2)
+                assert pixel.rgb() == QColor(CORES_STATUS[tema][chave]["faixa"]).rgb(), f"{tema}: faixa de {card.banco.text()} ({pixel.name()})"
             tela.close()
             tela = None
-        print("OK (escuro e claro): o card mostra o banco em destaque, 'CADEIRA · R$ 900,00', data e tempo; a faixa tem a cor do "
-              "status (a mesma de Todas as Propostas).")
+        print("OK (escuro e claro): o card mostra o banco em destaque, 'BETA AVALISTA · CADEIRA', 'R$ 900 · 12x' e a etiqueta "
+              "'sem venda'; a faixa tem a cor do status (a mesma de Todas as Propostas).")
     finally:
         if tela is not None:
             tela.close()
         settings_mod.obter_tema = original_obter
         app.setStyleSheet("")
 
-    # o mesmo status pinta igual nas duas telas (mesma funcao de cor)
+    # o mesmo status pinta igual em toda tela (mesma funcao de cor)
     for status in ("Em Análise", "Pré-aprovado", "Aprovado", "Nota Fiscal Anexada", "Garantia Assinada", "Efetivado", "Negado", "APROVADO", "", "Status Novo"):
-        do_historico = _montar_item_historico(0, "B", "E", 1.0, status, pd.Timestamp(2026, 1, 1), "1 dias")
-        de_propostas = propostas_screen_mod._montar_item(0, "CLIENTE", status, pd.Timestamp(2026, 1, 1), "E", "B", "1 dias")
-        assert do_historico["cor"] == de_propostas["cor"], status
-        assert do_historico["cor"] == chave_cor_status(status) and do_historico["etapa"] == de_propostas["etapa"]
-    vazio = _montar_item_historico(0, "", "", float("nan"), "", pd.NaT, "")
-    assert (vazio["titulo"], vazio["titulo_vazio"], vazio["linha2"], vazio["status"], vazio["data"]) == ("", "(sem banco)", "—", "", "—")
-    print("OK: cada status tem a mesma cor no histórico e em Todas as Propostas; banco/equipamento/valor em branco não quebram o card.")
+        card = CardDaProposta(_item_de_teste(status))
+        assert card.chave_da_cor() == chave_cor_status(status) == card.pilula.cor, status
+        card.deleteLater()
+    vazio = CardDaProposta(_item_de_teste("", banco="", equipamento="", valor=None))
+    assert (vazio.banco.text(), vazio.pilula.text(), vazio.condicoes.text()) == ("Sem banco", "Sem status", "12x")
+    vazio.deleteLater()
+    print("OK: cada status tem a mesma cor em toda tela; banco/equipamento/valor em branco não quebram o card.")
 
-    linha("6b) Histórico: 1 clique seleciona, duplo clique (ou Enter) expande o card, 'Excluir Proposta Selecionada' age no selecionado")
+    linha("6b) Propostas antigas: dois cliques abrem o formulário no próprio card; dois cliques no topo fecham")
     tela = FichaClienteScreen()
     tela.resize(1250, 800)
     tela.show()
     tela._selecionar_por_cpf(cpfs["beta"])
     _ciclos(app)
-    lista, modelo = tela._lista_historico, tela._modelo_historico
-    stubs.dialogos.clear()
-    stubs.textos.clear()
-    tela._botao_excluir_proposta.click()
-    assert stubs.dialogos == [] and "Clique em um card" in stubs.textos[-1], "sem card selecionado: avisa"
-    assert not hasattr(tela, "_botao_editar_proposta"), "'Editar Proposta Selecionada' saiu: a edição é dentro do card expandido"
-    ponto = _selecionar_card_do_historico(tela, 1)
-    assert stubs.dialogos == [], "1 clique só seleciona (não abre a proposta)"
-    assert tela._indice_real_proposta_selecionada() == modelo.indice_real(1)
-    _selecionar_card_do_historico(tela, 0)
-    assert stubs.dialogos == [] and tela._indice_real_proposta_selecionada() == modelo.indice_real(0), "outro clique só troca a seleção"
-    ponto0 = _selecionar_card_do_historico(tela, 0)
-    _duplo_clique(lista.viewport(), ponto0)
-    assert len(stubs.dialogos) == 1, "o duplo clique abre a proposta, uma vez só"
-    dialogo = stubs.dialogos[0]
-    assert dialogo._modo_leitura and dialogo._banco.currentText() == "MOVA HTM" and dialogo._equipamento.currentText() == "CADEIRA"
-    assert dialogo._valor.value() == 900 and dialogo._observacoes.toPlainText() == "obs CADEIRA", "meses/observações estão na leitura"
-    stubs.dialogos.clear()
-    lista.setCurrentIndex(modelo.index(1))
-    QTest.keyClick(lista, Qt.Key.Key_Return)
-    assert len(stubs.dialogos) == 1 and stubs.dialogos[0]._banco.currentText() == "SMART", "Enter abre a proposta selecionada"
-    print("OK: 1 clique seleciona; o duplo clique (e o Enter) expande o card em leitura, com meses/observações; "
-          "'Excluir Proposta Selecionada' avisa se não há seleção.")
+    assert not hasattr(tela, "_botao_excluir_proposta") and not hasattr(tela, "_botao_editar_proposta"), \
+        "nada de selecionar e excluir/editar por baixo: tudo dentro do card aberto"
+    card = _cards_antigos(tela)[0]
+    QTest.mouseClick(card, Qt.MouseButton.LeftButton, pos=_ponto_no_topo(card))
+    _ciclos(app)
+    assert tela.lista_antigas.aberta is None, "1 clique não abre"
+    _duplo_clique(card, _ponto_no_topo(card))
+    _ciclos(app)
+    aberto = tela.lista_antigas.card_aberto()
+    assert aberto is not None and aberto.aberto and aberto.item.proposta.banco == "MOVA HTM", "dois cliques abrem a própria"
+    formulario = aberto.formulario
+    assert not formulario._modo_leitura and formulario._banco.currentText() == "MOVA HTM"
+    assert formulario._equipamento.currentText() == "CADEIRA" and formulario._valor.value() == 900
+    assert formulario._observacoes.toPlainText() == "obs CADEIRA", "meses/observações estão no formulário"
+    assert aberto.botao_excluir is not None and aberto.ver_na_venda is None and aberto.abrir_ficha is None, \
+        "excluir só ali dentro; sem venda (nem 'Ver na venda'); na própria ficha, sem 'Abrir a ficha'"
+    _duplo_clique(aberto, _ponto_no_topo(aberto))
+    _ciclos(app)
+    assert tela.lista_antigas.aberta is None, "dois cliques no topo do card aberto fecham"
+    print("OK: 1 clique não abre; dois cliques abrem o formulário ali (com meses/observações e o 'Excluir esta proposta…'); "
+          "dois cliques no topo fecham.")
 
-    # trocar de cliente comeca limpo; recarregar o mesmo cliente mantem o card selecionado
-    _selecionar_card_do_historico(tela, 0)
+    # trocar de cliente fecha o card; recarregar o mesmo cliente o mantem aberto
+    tela.lista_antigas.abrir_proposta(_cards_antigos(tela)[1].item)
     tela._selecionar_por_cpf(cpfs["alfa"])
-    assert tela._indice_real_proposta_selecionada() is None, "outro cliente: nenhum card do histórico selecionado"
-    _selecionar_card_do_historico(tela, 1)
-    escolhido = tela._indice_real_proposta_selecionada()
+    assert tela.lista_antigas.aberta is None, "outro cliente: nenhum card aberto"
+    tela.lista_antigas.abrir_proposta(_cards_antigos(tela)[1].item)
+    escolhido = tela.lista_antigas.aberta
     tela._recarregar_ficha_atual()
-    assert tela._indice_real_proposta_selecionada() == escolhido, "recarregar o mesmo cliente mantém o card selecionado"
-    print("OK: abrir outro cliente limpa a seleção do histórico; recarregar o mesmo cliente a mantém.")
+    assert escolhido is not None and tela.lista_antigas.aberta == escolhido, "recarregar o mesmo cliente mantém o card aberto"
+    tela.lista_antigas.descartar()
+    print("OK: abrir outro cliente fecha o card; recarregar o mesmo cliente o mantém aberto.")
 
-    linha("6c) Histórico: alinhado com o cartão de dados, sem barra própria, rola junto com o painel")
+    linha("6c) Propostas antigas: alinhadas com o cartão de dados, sem barra própria, a roda rola o painel")
     tela._selecionar_por_cpf(cpfs["beta"])
     cartao = tela._campo_nome.parentWidget()
     direita = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
-    for largura in (1250, 900, 700):
+    for largura in (2600, 1250, 900):  # (na larga, cabiam varias colunas: a ficha usa uma so)
         tela.resize(largura, 800)
         _ciclos(app, 8)
-        colunas = lista.colunas()
-        ultimo = lista.visualRect(modelo.index(min(colunas, modelo.total()) - 1))
-        borda_do_card = lista.mapTo(tela, QPoint(ultimo.x() + lista.largura_do_cartao(), 0)).x()
-        assert abs(borda_do_card - direita(cartao)) <= 3, f"{largura}px: histórico termina em {borda_do_card}, o cartão de dados em {direita(cartao)}"
-        assert lista.height() == -(-modelo.total() // colunas) * (ALTURA_CARTAO + 12), f"{largura}px: {colunas} coluna(s), altura {lista.height()}"
-    assert lista.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff, "o histórico não tem barra própria"
-    print("OK: em 3 larguras (2 colunas e 1), o último card termina na borda do cartão de dados (±3 px) e a lista tem a altura das linhas.")
+        for card in _cards_antigos(tela):
+            assert abs(direita(card) - direita(cartao)) <= 3, f"{largura}px: card termina em {direita(card)}, o cartão em {direita(cartao)}"
+        assert {tela.lista_antigas.coluna_do_card(c) for c in _cards_antigos(tela)} == {0}, "na ficha, uma coluna só"
+    print("OK: em 3 larguras (até 2600 px), cada card termina na borda do cartão de dados (±3 px), numa coluna só.")
 
     tela.setMinimumSize(100, 100)
     tela.resize(1250, 420)  # baixa: o painel precisa rolar
     _ciclos(app, 8)
     barra = tela._rolagem_ficha.verticalScrollBar()
     assert barra.maximum() > 0 and barra.value() == 0
+
     def roda_sobre(widget, ponto: QPoint) -> QWheelEvent:
         evento = QWheelEvent(
             QPointF(ponto), QPointF(widget.mapToGlobal(ponto)), QPoint(0, 0), QPoint(0, -240),
@@ -703,13 +670,13 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
         return evento
 
     # (um sendEvent num FILHO nao propaga pro painel - nem num QScrollArea puro do Qt; a propagacao real e dos eventos
-    # do sistema. O que da pra conferir com fidelidade: a lista IGNORA a roda - ela nao a prende - e o painel a usa.)
-    ignorado = not roda_sobre(lista.viewport(), QPoint(60, 40)).isAccepted()
-    assert ignorado, "a lista de cards do histórico não pode consumir a roda do mouse (senão o painel não rolaria sobre ela)"
+    # do sistema. O que da pra conferir com fidelidade: o card IGNORA a roda - nao a prende - e o painel a usa.)
+    card = _cards_antigos(tela)[0]
+    assert not roda_sobre(card, _ponto_no_topo(card)).isAccepted(), "o card não pode consumir a roda do mouse"
     roda_sobre(tela._rolagem_ficha.viewport(), QPoint(50, 50))
     _ciclos(app)
     assert barra.value() > 0, "e o painel rola com a roda"
-    print("OK: a lista de cards do histórico não prende a roda do mouse (ignora o evento, que segue pro painel); o painel rola com ela.")
+    print("OK: o card não prende a roda do mouse (ignora o evento, que segue pro painel); o painel rola com ela.")
     tela.close()
 
 
@@ -727,26 +694,33 @@ def testar_vendedor(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arqu
         _ciclos(app)
         assert _nomes(tela) == ["ALFA CLIENTE", "GAMA SEM PROPOSTA"], "o vendedor só vê os próprios clientes"
         assert _em_aberto(tela) == {"ALFA CLIENTE": False, "GAMA SEM PROPOSTA": True}, "a marca é só das propostas dele: " + str(_em_aberto(tela))
-        assert tela._botao_novo_cliente.isHidden() and tela._botao_excluir_proposta.isHidden() and tela._botao_nova_venda.isHidden()
+        assert tela._botao_novo_cliente.isHidden() and tela._botao_nova_venda.isHidden()
         assert tela.lista_vendas.isHidden() and tela._titulo_vendas.isHidden(), "o vendedor não vê os cards de venda (são de edição)"
         tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
-        assert tela._modelo_historico.total() == 2
-        stubs.dialogos.clear()
-        ponto = _selecionar_card_do_historico(tela, 0)
-        assert stubs.dialogos == [], "1 clique só seleciona"
-        _duplo_clique(tela._lista_historico.viewport(), ponto)
-        assert len(stubs.dialogos) == 1, "o duplo clique abre a proposta pro vendedor também"
-        dialogo = stubs.dialogos[0]
-        assert dialogo._modo_leitura and dialogo._botao_editar.isHidden() and dialogo._botao_duplicar.isHidden(), "só leitura: sem 'Editar' nem 'Duplicar'"
-        assert dialogo._valor.value() > 0 and dialogo._observacoes.toPlainText().startswith("obs "), "vê meses/observações pela leitura"
+        cards = _cards_antigos(tela)
+        assert len(cards) == 2 and all(not c.pilula.clicavel and not c.controles["bolinhas"] for c in cards), "sem ações"
+        QTest.mouseClick(cards[0], Qt.MouseButton.LeftButton, pos=_ponto_no_topo(cards[0]))
+        assert tela.lista_antigas.aberta is None, "1 clique não abre"
+        _duplo_clique(cards[0], _ponto_no_topo(cards[0]))
+        _ciclos(app)
+        aberto = tela.lista_antigas.card_aberto()
+        assert aberto is not None, "dois cliques abrem a proposta pro vendedor também"
+        formulario = aberto.formulario
+        assert formulario._modo_leitura and formulario._botao_editar.isHidden() and formulario._botao_duplicar.isHidden(), \
+            "só leitura: sem 'Editar' nem 'Mandar a outro banco'"
+        assert aberto.botao_excluir is None, "nem excluir"
+        assert formulario._valor.value() > 0 and formulario._observacoes.toPlainText().startswith("obs "), "vê meses/observações pela leitura"
+        formulario._botao_recolher.click()
+        _ciclos(app)
+        assert tela.lista_antigas.aberta is None, "'Recolher' fecha o card"
     finally:
         if tela is not None:
             tela.close()
         clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa = fontes
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
-    print("OK: o vendedor vê só os próprios clientes e a marca só das propostas dele; sem botões de editar; o duplo clique num "
-          "card abre a proposta em leitura (é por ela que ele vê meses e observações).")
+    print("OK: o vendedor vê só os próprios clientes e a marca só das propostas dele; sem botões de editar; dois cliques num "
+          "card abrem a proposta em leitura (é por ela que ele vê meses e observações).")
 
 
 def main() -> None:

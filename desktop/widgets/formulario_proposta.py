@@ -1,13 +1,12 @@
-"""Formulario de lancamento/edicao de proposta: o conteudo do CARD EXPANDIDO (ver
-ListaCartoes.expandir e ExpansorDeProposta).
+"""Formulario de lancamento/edicao de proposta: o que aparece dentro do card aberto (o card da venda, o card de
+proposta de Todas as Propostas e da Ficha, e o card "Nova proposta").
 
 Mesmo formulario serve pra tres casos:
 - cpf fixo + proposta=None -> nova proposta pra um cliente ja conhecido
   (aberta a partir da Ficha de Cliente); com `base`, ja vem preenchida (duplicar)
 - cpf fixo + proposta+indice -> abrir uma proposta existente
-- cpf=None -> nova proposta "avulsa" (aberta a partir da tela Todas as
-  Propostas, que nao tem um cliente pre-selecionado): mostra um campo de
-  cliente pesquisavel na primeira linha.
+- cpf=None -> nova proposta "avulsa" (sem um cliente pre-selecionado): mostra um
+  campo de cliente pesquisavel na primeira linha.
 
 Os campos ficam numa grade compacta (Data, Meses e Status numa linha; Valor,
 Carencia e Parcela na outra; Equipamento e Banco na terceira; so as Observacoes ocupam
@@ -21,7 +20,7 @@ formulario vira o de edicao, com OK/Cancel - e Cancel descarta o que foi digitad
 VOLTA pra leitura (so "Recolher" fecha o card). Proposta nova abre direto em
 edicao (nao ha o que "voltar"): Cancel avisa `cancelada`.
 
-O formulario nao sabe onde esta: quem o hospeda (ExpansorDeProposta) reage aos
+O formulario nao sabe onde esta: quem o hospeda (a lista de vendas ou a de propostas) reage aos
 sinais - `gravada` (salvou; `indice_gravado` diz qual proposta), `recolher_pedido`
 (Recolher, ou Esc na leitura), `cancelada` (Cancel/Esc numa proposta nova) e
 `duplicacao_pedida`.
@@ -134,7 +133,7 @@ class FormularioProposta(QWidget):
     cancelada = Signal()
     duplicacao_pedida = Signal()
     # emitido ANTES de `gravada`, so quando o status acabou de virar "Efetivado" (nao
-    # quando ja estava): (cpf, equipamento, indice_gravado). Quem escuta (ExpansorDeProposta)
+    # quando ja estava): (cpf, equipamento, indice_gravado). Quem escuta (a lista de propostas)
     # oferece encerrar as outras propostas em aberto da mesma venda - ver
     # desktop/widgets/encerrar_propostas_da_venda.py. Emitido ANTES de `gravada` de
     # proposito: depois dela o card e recarregado/recriado, e este `self` pode nao

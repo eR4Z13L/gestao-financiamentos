@@ -1,7 +1,8 @@
-"""Testa os filtros (vendedor, banco, equipamento, periodo) e a ordenacao (data,
+"""Testa os filtros (vendedor, banco, equipamento, periodo) e a ordenacao (esperando resposta, data,
 valor, tempo parado) de "Todas as Propostas": as regras em core/propostas.py e a
 tela PropostasScreen, combinados com a busca e o filtro de status que ja existiam.
-Dados FICTICIOS, em memoria (nenhuma planilha).
+Dados FICTICIOS, em memoria (as vendas e o historico que a tela le saem de uma planilha ficticia vazia de propostas
+correspondentes, numa pasta temporaria).
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_filtros_propostas.py
 """
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -21,12 +23,16 @@ from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QStyleFactor
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+import fixture_ficticia as fx
+from core import data_store as bd
 from core import propostas as propostas_mod
+from core import vendas as vendas_mod
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
 from core.propostas import (
     ORDENACAO_DATA_ANTIGA,
     ORDENACAO_DATA_RECENTE,
+    ORDENACAO_ESPERANDO,
     ORDENACAO_OPCOES,
     ORDENACAO_TEMPO_PARADO,
     ORDENACAO_VALOR_MAIOR,
@@ -35,7 +41,7 @@ from core.propostas import (
     ordenar,
     valores_distintos,
 )
-from desktop.screens.propostas_screen import PropostasScreen
+from desktop.screens.propostas_screen import PropostasScreen, resumo_por_etapa
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 
 NAN = float("nan")
@@ -94,8 +100,12 @@ def testar_ordenacao() -> None:
         # mais dias em aberto primeiro (18, 14, 9, 9, 1, 0, -6); depois os Encerrado (mais recente
         # primeiro); por ultimo quem nao tem TEMPO
         ORDENACAO_TEMPO_PARADO: [2, 5, 1, 0, 7, 9, 10, 4, 3, 8, 6],
+        # sem os dias esperando: primeiro as que esperam resposta (Em Análise), da mais recente para a mais antiga,
+        # depois as demais, tambem da mais recente (sem data no fim) - o caso com os dias esta logo abaixo
+        ORDENACAO_ESPERANDO: [10, 7, 1, 0, 5, 9, 2, 4, 3, 8, 6],
     }
     assert {chave for chave, _ in ORDENACAO_OPCOES} == set(esperado), "toda opção do seletor tem teste"
+    assert ORDENACAO_OPCOES[0][0] == ORDENACAO_ESPERANDO, "a primeira opção (a de quando a tela abre) é a esperando resposta"
     for chave, ordem in esperado.items():
         resultado = ordenar(df, chave)
         assert _indices(resultado) == ordem, f"{chave}: {_indices(resultado)} != {ordem}"
@@ -113,7 +123,34 @@ def testar_ordenacao() -> None:
     vazio = pd.DataFrame(columns=COLUNAS)
     for chave, _ in ORDENACAO_OPCOES:
         assert ordenar(vazio, chave).empty
+    assert ordenar(vazio, ORDENACAO_ESPERANDO, dias_esperando={1: 3}).empty
     print("OK: sem nenhuma proposta, todas as ordenações devolvem vazio (sem erro).")
+
+
+def testar_ordem_esperando() -> None:
+    linha("1b) Ordem \"Esperando resposta há mais tempo\" (com os dias de cada uma)")
+    df = _df()
+    # as que esperam (Em Análise: 0, 1, 5, 7 e 10) pela espera, a maior primeiro; 0, 1 e 5 empatadas em 9 dias:
+    # a data mais recente primeiro (0 e 1 no mesmo dia: a cadastrada por ultimo); a 10 nao tem o numero: no fim
+    # delas. O numero de quem NAO espera (2, que esta Aprovado) nao conta: as demais vem por data, como sempre.
+    dias = {0: 9, 1: 9, 5: 9, 7: 1, 10: None, 2: 30}
+    assert _indices(ordenar(df, ORDENACAO_ESPERANDO, dias_esperando=dias)) == [1, 0, 5, 7, 10, 9, 2, 4, 3, 8, 6]
+    assert _indices(ordenar(df, ORDENACAO_ESPERANDO, dias_esperando=pd.Series(dias))) == [1, 0, 5, 7, 10, 9, 2, 4, 3, 8, 6], \
+        "aceita os dias numa Series (pelo indice) também"
+    # a espera manda mais que a data: a mais antiga (5) passa na frente quando espera ha mais dias
+    assert _indices(ordenar(df, ORDENACAO_ESPERANDO, dias_esperando={0: 9, 1: 9, 5: 14, 7: 20, 10: 2})) == \
+        [7, 5, 1, 0, 10, 9, 2, 4, 3, 8, 6]
+    # Pré-aprovado tambem espera a resposta (ainda nao e a final); "APROVADO" em caixa alta nao
+    pre = df.copy()
+    pre.loc[9, "STATUS"] = "Pré-aprovado"
+    pre.loc[2, "STATUS"] = "APROVADO"
+    assert _indices(ordenar(pre, ORDENACAO_ESPERANDO, dias_esperando={9: 40, 2: 50, 0: 1})) == \
+        [9, 0, 10, 7, 1, 5, 2, 4, 3, 8, 6]
+    assert list(ordenar(df, ORDENACAO_ESPERANDO, dias_esperando=dias).columns) == COLUNAS, "nada de coluna auxiliar"
+    assert _indices(filtrar_propostas(df, banco="SANTANDER", ordenacao=ORDENACAO_ESPERANDO, dias_esperando=dias)) == \
+        [0, 7, 10, 8], "o filtrar repassa os dias para a ordem"
+    print("OK: as que esperam resposta (Em Análise / Pré-aprovado) primeiro, pela espera (empate: a mais recente; "
+          "sem o número: no fim delas); depois as demais por data; o filtrar repassa os dias.")
 
 
 def testar_filtros() -> None:
@@ -162,6 +199,65 @@ def testar_filtros() -> None:
     print("OK: sem nenhuma proposta, buscar/filtrar devolve vazio (sem erro).")
 
 
+def testar_propostas_na_lista() -> None:
+    linha("1c) A venda e os dias esperando de cada card (core.vendas.propostas_na_lista)")
+    hoje = pd.Timestamp(2026, 9, 30)
+    df = _df()
+    df["ID_PROPOSTA"] = ""
+    df.loc[1, "ID_PROPOSTA"] = "P-um"
+    na_venda = vendas_mod.PropostaNaVenda("P-um", 1, "PORTOBANK", "Em Análise", 50000.0, 12, pd.Timestamp(2026, 9, 10),
+                                          "LASER", False, 4)
+    venda = vendas_mod.ResumoDaVenda("V-um", df.loc[1, "CPF"], "ANA A", "ANA", "LASER", vendas_mod.VENDA_AGUARDANDO, "", (),
+                                     pd.Timestamp(2026, 9, 10), 4, "", (na_venda,))
+    itens = vendas_mod.propostas_na_lista(df, [venda], None, hoje)
+    assert itens[1].venda is venda and itens[1].proposta is na_venda, "a da venda leva a venda (e o que ela já calculou)"
+    assert itens[0].venda is None and itens[0].proposta.dias_esperando == 20, "a de antes das vendas: dias pela DATA"
+    # outra leitura, em que a posicao 1 ja e outra proposta (sem o ID da venda): nunca mistura as duas
+    outra = df.copy()
+    outra.loc[1, "ID_PROPOSTA"] = ""
+    assert vendas_mod.propostas_na_lista(outra, [venda], None, hoje)[1].venda is None, "a posição bate, o ID não: sem venda"
+    vazia = vendas_mod.PropostaNaVenda("", 1, "PORTOBANK", "Em Análise", 50000.0, 12, None, "LASER", False, 4)
+    venda_sem_id = vendas_mod.ResumoDaVenda(*[getattr(venda, c) for c in ("id", "cpf", "cliente", "vendedor", "equipamentos",
+                                            "status", "motivo", "fechadas", "data_criacao", "dias_na_etapa", "observacoes")],
+                                            (vazia,))
+    assert vendas_mod.propostas_na_lista(outra, [venda_sem_id], None, hoje)[1].venda is None, "proposta sem ID nunca casa"
+    # com o historico: uma proposta com ID (fora de venda) conta da ultima troca, nao da DATA
+    historico = pd.DataFrame([{"QUANDO": pd.Timestamp(2026, 9, 28, 15), "TIPO": "proposta", "ID": "P-um", "DE": "",
+                               "PARA": "Em Análise", "MOTIVO": "", "COMPUTADOR": ""}])
+    assert vendas_mod.propostas_na_lista(df, [], historico, hoje)[1].proposta.dias_esperando == 2
+    assert vendas_mod.propostas_na_lista(df, [], None, hoje)[1].proposta.dias_esperando == 20
+    print("OK: a da venda leva a venda; a posição sem o mesmo ID nunca mistura; os dias contam do histórico e, sem ele, da DATA.")
+
+
+def testar_propostas_do_arquivo() -> None:
+    linha("1d) propostas_na_lista_do_arquivo lê o HISTÓRICO do arquivo (planilha fictícia)")
+    fx.apontar_modulos_para(fx.criar(Path(tempfile.mkdtemp(prefix="filtros_historico_"))))
+    try:
+        caminho = propostas_mod.CAMINHO_XLSX
+        propostas = bd.ler_propostas(caminho)[bd.PROPOSTAS_COLUNAS_EDITAVEIS].copy()
+        alvo = int(propostas.index[propostas["STATUS"] == propostas_mod.STATUS_EM_ANALISE][0])
+        propostas.loc[alvo, "ID_PROPOSTA"] = "P-sem-venda"  # uma proposta com ID e sem venda
+        propostas.loc[alvo, "DATA"] = pd.Timestamp.today().normalize() - pd.Timedelta(days=30)
+        bd.escrever_vendas_e_propostas(caminho, propostas=propostas, historico_novo=[
+            {"QUANDO": pd.Timestamp.today().normalize(), "TIPO": "proposta", "ID": "P-sem-venda", "DE": "",
+             "PARA": propostas_mod.STATUS_EM_ANALISE, "MOTIVO": "", "COMPUTADOR": ""}])
+        itens = vendas_mod.propostas_na_lista_do_arquivo(propostas_mod.listar_propostas())
+        assert itens[alvo].venda is None and itens[alvo].proposta.dias_esperando == 0, itens[alvo].proposta.dias_esperando
+    finally:
+        fx.restaurar_modulos()
+    print("OK: a espera de uma proposta com ID conta da última troca no histórico do arquivo (0 dias), não da DATA (30).")
+
+
+def testar_resumo_por_etapa() -> None:
+    linha("3b) A contagem por status do topo (resumo_por_etapa)")
+    assert resumo_por_etapa({"em_analise": 12, "aprovado": 5, "negado": 30}) == "12 em análise · 5 aprovadas · 30 negadas"
+    assert resumo_por_etapa({"negado": 1, "aprovado": 1, "efetivado": 1, "em_analise": 1}) ==         "1 em análise · 1 aprovada · 1 efetivada · 1 negada"
+    assert resumo_por_etapa({"em_analise": 0, "negado": 2}) == "2 negadas", "zeros não aparecem"
+    assert resumo_por_etapa({}) == ""
+    assert resumo_por_etapa({"garantia": 2, "nota_fiscal": 1, "desconhecida": 1, "": 3}) ==         "1 com nota fiscal anexada · 2 com garantia assinada · 1 com status não reconhecido · 3 sem status", "ordem do funil"
+    print("OK: '12 em análise · 5 aprovadas · 30 negadas' (singular/plural, na ordem do funil, sem zeros).")
+
+
 def testar_valores_distintos() -> None:
     linha("3) Opções dos filtros (core.propostas.valores_distintos)")
     df = _df()
@@ -182,9 +278,11 @@ def testar_valores_distintos() -> None:
 
 class _Contexto:
     """Serve as propostas e os vendedores em memoria e troca as caixas de mensagem
-    por stubs que guardam o texto (modais travariam o teste)."""
+    por stubs que guardam o texto (modais travariam o teste). A tela tambem le as vendas e o historico do arquivo:
+    aponta para uma planilha ficticia, numa pasta temporaria (nunca a real)."""
 
     def __enter__(self):
+        fx.apontar_modulos_para(fx.criar(Path(tempfile.mkdtemp(prefix="filtros_propostas_"))))
         self.originais = (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
                           propostas_mod.listar_propostas, vendedores_mod.listar_vendedores)
         self.mensagens: list[str] = []
@@ -214,6 +312,7 @@ class _Contexto:
     def __exit__(self, *_):
         (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question,
          propostas_mod.listar_propostas, vendedores_mod.listar_vendedores) = self.originais
+        fx.restaurar_modulos()
 
 
 def _ciclos(app: QApplication, n: int = 4) -> None:
@@ -232,8 +331,8 @@ def _escolher(combo: QComboBox, dado) -> None:
 
 
 def _na_lista(tela: PropostasScreen) -> list[int]:
-    m = tela._modelo
-    return [m.indice_real(i) for i in range(m.rowCount()) if not m.eh_mais(i)]
+    """As propostas dos cards montados (a pagina carregada), na ordem da lista."""
+    return [card.item.proposta.indice for card in tela.lista.cards]
 
 
 def _digitar_data(campo, texto: str) -> None:
@@ -251,10 +350,10 @@ def testar_controles(app: QApplication, ctx: _Contexto) -> PropostasScreen:
     assert _opcoes(tela._filtro_banco) == ["Todos", "HUBCRED BV", "PORTOBANK", "SANTANDER", "SMART"]
     assert _opcoes(tela._filtro_equipamento) == ["Todos", "BISTURI", "LASER", "MESA", "PTOLOMEU"]
     assert _opcoes(tela._ordenacao) == [rotulo for _, rotulo in ORDENACAO_OPCOES]
-    assert tela._ordenacao.currentData() == ORDENACAO_DATA_RECENTE, "abre na ordem de sempre: mais recente primeiro"
+    assert tela._ordenacao.currentData() == ORDENACAO_ESPERANDO, "abre com as que esperam resposta há mais tempo primeiro"
     assert not tela._botao_limpar_filtros.isEnabled(), "sem filtro nenhum, não há o que limpar"
     print("OK: vendedores cadastrados, bancos e equipamentos das propostas (cada um com 'Todos' antes); "
-          "5 ordenações; abre na mais recente primeiro.")
+          "6 ordenações; abre com as que esperam resposta há mais tempo primeiro.")
 
     # tudo cabe na janela padrao (1200 - menu), sem controle cortado
     for controle in (tela._filtro_vendedor, tela._filtro_banco, tela._filtro_equipamento, tela._filtro_de, tela._filtro_ate,
@@ -263,12 +362,15 @@ def testar_controles(app: QApplication, ctx: _Contexto) -> PropostasScreen:
         assert 0 < canto.x() <= tela.width() - 24 + 1, f"{controle} vaza pela direita ({canto.x()} de {tela.width()})"
     print(f"OK: na janela padrão (conteúdo de {tela.width()} px) nenhum controle vaza da tela.")
 
-    assert _na_lista(tela) == [10, 9, 7, 1, 0, 5, 2, 4, 3, 8, 6]
+    # sem historico, a espera conta da DATA: 5 (05/09), 0 e 1 (10/09), 7 (18/09) e 10 (25/09) - a que esta ha
+    # mais tempo primeiro (0 e 1 empatadas: a cadastrada por ultimo); depois as demais, da mais recente
+    assert _na_lista(tela) == [5, 1, 0, 7, 10, 9, 2, 4, 3, 8, 6], _na_lista(tela)
     for chave, ordem in (
         (ORDENACAO_DATA_ANTIGA, [8, 3, 4, 2, 5, 0, 1, 7, 9, 10, 6]),
         (ORDENACAO_VALOR_MAIOR, [3, 8, 1, 0, 10, 5, 2, 9, 7, 4, 6]),
         (ORDENACAO_VALOR_MENOR, [7, 9, 5, 2, 10, 1, 0, 3, 8, 4, 6]),
         (ORDENACAO_TEMPO_PARADO, [2, 5, 1, 0, 7, 9, 10, 4, 3, 8, 6]),
+        (ORDENACAO_ESPERANDO, [5, 1, 0, 7, 10, 9, 2, 4, 3, 8, 6]),
         (ORDENACAO_DATA_RECENTE, [10, 9, 7, 1, 0, 5, 2, 4, 3, 8, 6]),
     ):
         _escolher(tela._ordenacao, chave)
@@ -359,7 +461,7 @@ def testar_filtros_na_tela(app: QApplication, ctx: _Contexto, tela: PropostasScr
     # a busca deixa de estourar com caracteres de regex
     for especial in ("(", "C++", "a[b"):
         tela._busca.setText(especial)
-        assert tela._modelo.total() == 0
+        assert tela.lista.total() == 0
         assert tela._contador.text().startswith("0 proposta(s)")
     tela._busca.setText("")
     assert not ctx.mensagens, ctx.mensagens
@@ -457,26 +559,27 @@ def testar_recarga_e_paginacao(app: QApplication, ctx: _Contexto, tela: Proposta
                    pd.Timestamp(2026, 3, 1) + pd.Timedelta(days=i), f"{i} dias") for i in range(70)])
     ctx.usar(muitas)
     tela._carregar_dados()
-    assert (tela._modelo.total(), tela._modelo.visiveis()) == (70, 30)
-    tela._modelo.mostrar_mais()
-    assert tela._modelo.visiveis() == 60
+    lista = tela.lista
+    assert (lista.total(), len(lista.cards)) == (70, 30) and not lista.botao_mais.isHidden()
+    lista.botao_mais.click()
+    assert len(lista.cards) == 60
     tela._carregar_dados()
-    assert tela._modelo.visiveis() == 60, "recarregar mantém a página"
+    assert len(lista.cards) == 60, "recarregar mantém a página"
     _digitar_data(tela._filtro_de, "01/03/20")  # data ainda incompleta: nao e filtro
-    assert tela._modelo.visiveis() == 60, "digitar uma data ainda incompleta não refaz a lista nem volta pra primeira página"
+    assert len(lista.cards) == 60, "digitar uma data ainda incompleta não refaz a lista nem volta pra primeira página"
     _digitar_data(tela._filtro_de, "")
-    assert tela._modelo.visiveis() == 60
+    assert len(lista.cards) == 60
     _escolher(tela._filtro_vendedor, "ANA")
-    assert tela._modelo.total() == 24 and tela._modelo.visiveis() == 24 and not tela._modelo.eh_mais(24), "24 < 30: sem 'Carregar mais'"
+    assert lista.total() == 24 and len(lista.cards) == 24 and lista.botao_mais.isHidden(), "24 < 30: sem 'Carregar mais'"
     _escolher(tela._filtro_vendedor, None)
-    tela._modelo.mostrar_mais()
-    assert tela._modelo.visiveis() == 60
+    lista.botao_mais.click()
+    assert len(lista.cards) == 60
     _escolher(tela._ordenacao, ORDENACAO_TEMPO_PARADO)
-    assert tela._modelo.visiveis() == 30, "mudar a ordenação volta pra primeira página"
+    assert len(lista.cards) == 30, "mudar a ordenação volta pra primeira página"
     assert _na_lista(tela)[:3] == [69, 68, 67], "a mais parada (69 dias) primeiro"
-    tela._modelo.mostrar_mais()
+    lista.botao_mais.click()
     _escolher(tela._filtro_banco, "BANCO 1")
-    assert tela._modelo.visiveis() == min(30, tela._modelo.total()), "mudar um filtro volta pra primeira página"
+    assert len(lista.cards) == min(30, lista.total()), "mudar um filtro volta pra primeira página"
     _escolher(tela._ordenacao, ORDENACAO_DATA_RECENTE)
     tela._limpar_filtros()
     print("OK: 70 propostas: recarregar mantém a página; mudar filtro/ordenação volta à primeira; "
@@ -513,8 +616,12 @@ def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     testar_ordenacao()
+    testar_ordem_esperando()
+    testar_propostas_na_lista()
+    testar_propostas_do_arquivo()
     testar_filtros()
     testar_valores_distintos()
+    testar_resumo_por_etapa()
     try:
         with _Contexto() as ctx:
             tela = testar_controles(app, ctx)
