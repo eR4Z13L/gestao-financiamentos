@@ -249,6 +249,19 @@ def apontar_modulos_para(caminho: Path) -> None:
         modulo.CAMINHO_XLSX = caminho
 
 
+def bloquear_google() -> None:
+    """Faz qualquer tentativa de falar com o Google Sheets (leitura do vendedor ou envio do admin)
+    derrubar o teste: um teste nunca le nem grava a planilha oficial na nuvem."""
+    from core import data_store_sheets as leitura_sheets
+    from core import sheets_sync
+
+    def _sem_rede(*_a, **_k):
+        raise AssertionError("o teste tentou acessar o Google de verdade")
+
+    leitura_sheets._obter_cliente = _sem_rede
+    sheets_sync._obter_cliente = _sem_rede
+
+
 def restaurar_modulos() -> None:
     for modulo in _MODULOS:
         modulo.CAMINHO_XLSX = config.CAMINHO_XLSX

@@ -3,11 +3,13 @@
    temporaria, nunca a senha real do ADMIN).
 2. core.sessao - guard de escrita (exigir_admin) e filtro por vendedor
    logado, testados de forma isolada (sem tocar em nenhum arquivo).
-3. core.data_store_sheets - leitura real do Google Sheets (SO LEITURA,
-   nunca escreve) - confere que o formato bate com core.data_store (mesmas
-   colunas, contagem de linhas) e que login de vendedor com senha ERRADA ou
-   usuario inexistente e recusado (o caso de senha CORRETA foi validado
-   manualmente, pra nao expor uma senha real de vendedor neste arquivo).
+3. core.data_store_sheets - leitura do Google Sheets SIMULADO: uma planilha
+   100% ficticia (scripts/fixture_ficticia.py) e enviada a um Google falso em
+   memoria pelo mesmo caminho do app (sheets_sync._escrever_aba) e lida de
+   volta - confere que o formato bate com core.data_store (mesmas colunas,
+   contagem de linhas, tipos) e o login de vendedor (senha certa aceita; senha
+   ERRADA ou usuario inexistente recusados). Nenhum byte vai pro Google de
+   verdade: o acesso real derruba o teste.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_fase2.py
 """
@@ -15,6 +17,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_fase2.py
 from __future__ import annotations
 
 import atexit
+import json
 import shutil
 import sys
 import tempfile
@@ -22,20 +25,61 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import gspread
 import pandas as pd
 
-from config import CAMINHO_XLSX
+import config
 
+config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+import fixture_ficticia as fx
 from core import auth
 from core import data_store as bd
 from core import data_store_sheets as bd_sheets
 from core import sessao as sessao_mod
+from core import sheets_sync
 from core import vendedores as vendedores_mod
 
 # as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
 # esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
 PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
 atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
+
+
+class _AbaFalsa:
+    """Uma aba do Google falso: guarda os valores como a API guardaria (so o que passa por JSON)."""
+
+    def __init__(self):
+        self.valores: list[list] = []
+
+    def clear(self) -> None:
+        self.valores = []
+
+    def update(self, valores, range_name=None, raw=True, **_kw) -> None:
+        assert range_name == "A1" and raw is True, "o envio sobrescreve a aba inteira em modo RAW"
+        self.valores = json.loads(json.dumps(valores))  # a API de verdade so aceita JSON
+
+    def get_all_values(self, value_render_option=None, **_kw):
+        assert value_render_option == "UNFORMATTED_VALUE", "a leitura pede os valores sem formatacao"
+        return [list(linha_) for linha_ in self.valores]
+
+
+class _GoogleFalso:
+    """O cliente gspread e a planilha aberta, em memoria."""
+
+    def __init__(self):
+        self.abas: dict[str, _AbaFalsa] = {}
+
+    def open_by_key(self, _chave):
+        return self
+
+    def worksheet(self, nome: str) -> _AbaFalsa:
+        if nome not in self.abas:
+            raise gspread.WorksheetNotFound(nome)
+        return self.abas[nome]
+
+    def add_worksheet(self, title, rows, cols) -> _AbaFalsa:
+        self.abas[title] = _AbaFalsa()
+        return self.abas[title]
 
 
 def linha(titulo: str) -> None:
@@ -91,7 +135,7 @@ def testar_sessao_e_guard_de_escrita() -> None:
     except sessao_mod.PermissaoNegada:
         print("OK: exigir_admin() bloqueia quando ninguém está logado.")
 
-    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario="ARIANE"))
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario="VENDEDORA TESTE"))
     assert sessao_mod.eh_vendedor() and not sessao_mod.eh_admin()
     try:
         sessao_mod.exigir_admin()
@@ -99,9 +143,9 @@ def testar_sessao_e_guard_de_escrita() -> None:
     except sessao_mod.PermissaoNegada:
         print("OK: exigir_admin() bloqueia uma sessão de VENDEDOR.")
 
-    df = pd.DataFrame({"VENDEDOR": ["Ariane", "BRUNO", "ariane ", ""], "X": [1, 2, 3, 4]})
+    df = pd.DataFrame({"VENDEDOR": ["Vendedora Teste", "OUTRO TESTE", "vendedora teste ", ""], "X": [1, 2, 3, 4]})
     filtrado = sessao_mod.filtrar_por_vendedor_logado(df)
-    assert list(filtrado["X"]) == [1, 3], "deveria pegar só as linhas da ARIANE, sem diferenciar maiúsculas/espaço"
+    assert list(filtrado["X"]) == [1, 3], "deveria pegar só as linhas da VENDEDORA TESTE, sem diferenciar maiúsculas/espaço"
     print("OK: filtrar_por_vendedor_logado() pega só as linhas do vendedor logado (case/espaço-insensível).")
 
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
@@ -114,10 +158,25 @@ def testar_sessao_e_guard_de_escrita() -> None:
     sessao_mod.encerrar()
 
 
-def testar_leitura_sheets_bate_com_local() -> None:
-    linha("4) core.data_store_sheets - leitura real do Google Sheets (só leitura)")
+def montar_google_falso(caminho: Path) -> dict[str, str]:
+    """Gera as senhas iniciais dos vendedores da planilha ficticia, manda as abas pro Google falso pelo
+    mesmo caminho do app e liga a leitura do vendedor nele. Devolve {vendedor: senha} pro teste de login."""
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
+    senhas = vendedores_mod.gerar_senhas_iniciais_pendentes()
+    sessao_mod.encerrar()
+    google = _GoogleFalso()
+    for aba, leitor in ((bd.ABA_CLIENTES, bd.ler_clientes), (bd.ABA_PROPOSTAS, bd.ler_propostas),
+                        (bd.ABA_VENDEDORES, bd.ler_vendedores)):
+        sheets_sync._escrever_aba(google, aba, leitor(caminho))
+    bd_sheets._obter_cliente = lambda: google
+    bd_sheets.esquecer_conexao()
+    return senhas
 
-    clientes_local = bd.ler_clientes(CAMINHO_XLSX)
+
+def testar_leitura_sheets_bate_com_local(caminho: Path) -> None:
+    linha("4) core.data_store_sheets - leitura do Google Sheets simulado (planilha fictícia)")
+
+    clientes_local = bd.ler_clientes(caminho)
     clientes_sheets = bd_sheets.ler_clientes()
     assert list(clientes_sheets.columns) == list(bd.CLIENTES_COLUNAS)
     assert len(clientes_sheets) == len(clientes_local), (
@@ -126,11 +185,13 @@ def testar_leitura_sheets_bate_com_local() -> None:
     )
     print(f"OK: CLIENTES no Sheets bate com o local ({len(clientes_sheets)} linhas, mesmas colunas).")
 
-    propostas_local = bd.ler_propostas(CAMINHO_XLSX)
+    propostas_local = bd.ler_propostas(caminho)
     propostas_sheets = bd_sheets.ler_propostas()
     assert list(propostas_sheets.columns) == list(bd.PROPOSTAS_COLUNAS)
     assert len(propostas_sheets) == len(propostas_local)
-    assert propostas_sheets["VALOR (R$)"].dtype.kind == "f", "VALOR (R$) deveria vir como numero, nao texto"
+    # numero, nao texto (na planilha ficticia so ha valores redondos: inteiro, como o local tambem le)
+    assert pd.api.types.is_numeric_dtype(propostas_sheets["VALOR (R$)"]), "VALOR (R$) deveria vir como numero, nao texto"
+    assert list(propostas_sheets["VALOR (R$)"]) == list(propostas_local["VALOR (R$)"]), "os valores voltam iguais"
     assert pd.api.types.is_datetime64_any_dtype(propostas_sheets["DATA"]), "DATA deveria vir como data, nao texto"
     print(f"OK: PROPOSTAS no Sheets bate com o local ({len(propostas_sheets)} linhas, tipos corretos).")
 
@@ -143,23 +204,33 @@ def testar_leitura_sheets_bate_com_local() -> None:
     print(f"OK: VENDEDORES no Sheets tem {len(vendedores_sheets)} linha(s) ({pendentes} com senha pendente).")
 
 
-def testar_login_vendedor_recusa_casos_invalidos() -> None:
-    linha("5) core.vendedores.verificar_login - casos inválidos (login correto já testado manualmente)")
+def testar_login_vendedor(senhas: dict[str, str]) -> None:
+    linha("5) core.vendedores.verificar_login - senha certa aceita, casos inválidos recusados")
+
+    assert senhas, "a planilha fictícia deveria ter vendedor sem senha pra gerar"
+    for nome, senha in senhas.items():
+        assert vendedores_mod.verificar_login(nome, senha) == nome
+        assert vendedores_mod.verificar_login(f"  {nome.lower()} ", senha) == nome, "nome sem diferenciar maiúsculas/espaço"
+    print(f"OK: senha certa aceita para {len(senhas)} vendedor(es) fictício(s), devolvendo a grafia cadastrada.")
 
     assert vendedores_mod.verificar_login("Vendedor Que Nao Existe", "qualquer-coisa") is None
     print("OK: usuário inexistente é recusado.")
 
     algum_vendedor = vendedores_mod.listar_vendedores()[0]
     assert vendedores_mod.verificar_login(algum_vendedor, "com certeza senha errada") is None
-    print(f"OK: senha errada para um usuário real ('{algum_vendedor}') é recusada.")
+    print(f"OK: senha errada para um vendedor cadastrado ('{algum_vendedor}') é recusada.")
 
 
 def main() -> None:
     testar_hash_senha()
     testar_credencial_admin_em_copia_temporaria(PASTA_TEMPORARIA / "_smoke_test_admin_senha.json")
     testar_sessao_e_guard_de_escrita()
-    testar_leitura_sheets_bate_com_local()
-    testar_login_vendedor_recusa_casos_invalidos()
+    caminho = fx.criar(PASTA_TEMPORARIA)
+    fx.apontar_modulos_para(caminho)
+    fx.bloquear_google()
+    senhas = montar_google_falso(caminho)
+    testar_leitura_sheets_bate_com_local(caminho)
+    testar_login_vendedor(senhas)
     linha("TUDO OK")
 
 

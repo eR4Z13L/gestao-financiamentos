@@ -3,8 +3,9 @@ digitavel (com calendario como alternativa), endereco em campos separados com
 botao de copiar (retraido numa linha por padrao, expande nos 7 campos), campos
 novos (pai/mae/profissao), o "endereco a revisar" (editavel/apagavel) e o
 painel do cliente com barra de rolagem (campos sem espremer). Tudo com
-clientes FICTICIOS numa copia temporaria da planilha - nao depende dos dados
-reais.
+clientes FICTICIOS numa planilha 100% ficticia em pasta temporaria
+(scripts/fixture_ficticia.py) - nunca le os dados reais; preferencias do app
+isoladas e acesso ao Google bloqueado.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cliente.py
 """
@@ -28,22 +29,13 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
-import os
-
-# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
-# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
-os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
-from config import CAMINHO_XLSX
-
-
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
-from core import bancos as bancos_mod
+import fixture_ficticia as fx
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -54,8 +46,8 @@ from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
 from desktop.widgets.formatters import formatar_cep_parcial, formatar_data_parcial
 
-CPF_SEPARADO = "529.982.247-25"
-CPF_REVISAR = "390.533.447-05"
+CPF_SEPARADO = fx.cpf_ficticio(500_000_021)  # validos e fora da fixture
+CPF_REVISAR = fx.cpf_ficticio(500_000_022)
 
 # as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
 # esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
@@ -336,7 +328,7 @@ def _cadastrar_clientes_de_endereco() -> dict[str, str]:
 
 def testar_dados_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     linha("3b) grade de dados sem buraco quando campos não essenciais estão vazios; e-mails múltiplos e resumo sem redundância")
-    cpf = "232.002.423-96"
+    cpf = fx.cpf_ficticio(500_000_023)
     clientes_mod.adicionar_cliente(
         {"CPF/CNPJ": cpf, "CLIENTE": "Cliente Vinculado", "TIPO": "Cliente",
          "NASCIMENTO": pd.Timestamp(1985, 3, 10), "VINCULADO": "Fulano de Tal",
@@ -345,9 +337,7 @@ def testar_dados_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     # o formulario nunca deixaria digitar 2 e-mails grudados (adicionar_cliente valida) - mas o
     # campo pode ter vindo assim de uma edicao direta na planilha, ou de antes dessa validacao
     # existir; grava direto no arquivo (bypassa o core) pra simular esse dado ja existente.
-    # IMPORTANTE: usa clientes_mod.CAMINHO_XLSX (redirecionado pro `tmp` isolado em main()),
-    # NUNCA o `CAMINHO_XLSX` importado no topo deste arquivo - esse continua apontando pra
-    # planilha REAL (so serviu pra montar o `tmp` no main()).
+    # usa clientes_mod.CAMINHO_XLSX: a planilha ficticia que main() montou
     caminho_teste = clientes_mod.CAMINHO_XLSX
     # nunca openpyxl.load_workbook() direto - usa o "with" que desliga o gc por toda a
     # duracao do uso do workbook (ver o comentario em core.data_store._carregar_planilha)
@@ -395,11 +385,11 @@ def testar_dados_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     assert 'href="mailto:segundo@exemplo.com"' in tela._rotulo_email.text()
     print("OK: dois e-mails digitados juntos no mesmo campo viram 2 links de mailto separados.")
 
-    # caso real encontrado na planilha migrada: 2 e-mails + um TELEFONE (com espaço por
+    # formato encontrado na planilha migrada (numero inventado): 2 e-mails + um TELEFONE (com espaço por
     # dentro) grudados no mesmo campo - o telefone vira texto puro intacto (não um mailto:
     # quebrado, nem fragmentado nos espaços internos dele)
-    misto = FichaClienteScreen._texto_com_link_de_email("a@b.com\nc@d.com\n+55 77 9208-1246")
-    assert misto.count("mailto:") == 2 and "+55 77 9208-1246" in misto and "mailto:+55" not in misto
+    misto = FichaClienteScreen._texto_com_link_de_email("a@b.com\nc@d.com\n+55 11 9000-0000")
+    assert misto.count("mailto:") == 2 and "+55 11 9000-0000" in misto and "mailto:+55" not in misto
     print("OK: um trecho que não é e-mail (ex.: telefone colado junto) vira texto puro intacto, sem virar mailto: nem se fragmentar.")
 
     # resumo contando vendas: sem venda ainda, as propostas de antes das vendas entram na conta
@@ -959,16 +949,14 @@ def main() -> None:
     gc.disable()
 
     app = QApplication.instance() or QApplication(sys.argv)
+    fx.isolar_preferencias(PASTA_TEMPORARIA)
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     testar_mascaras()
     testar_campo_data(app)
 
-    tmp = PASTA_TEMPORARIA / "_smoke_test_ficha_cliente.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp)
-    clientes_mod.CAMINHO_XLSX = tmp
-    propostas_mod.CAMINHO_XLSX = tmp
-    bancos_mod.CAMINHO_XLSX = tmp
-    vendedores_mod.CAMINHO_XLSX = tmp
+    tmp = fx.criar(PASTA_TEMPORARIA)
+    fx.apontar_modulos_para(tmp)
+    fx.bloquear_google()
     try:
         with _Mensagens() as msgs:
             testar_ficha(app)
