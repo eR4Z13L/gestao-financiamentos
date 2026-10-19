@@ -794,11 +794,16 @@ def escrever_vendas_e_propostas(
     propostas: pd.DataFrame | None = None,
     vendas: pd.DataFrame | None = None,
     historico_novo: list[dict] | None = None,
+    clientes: pd.DataFrame | None = None,
 ) -> None:
     """Grava, numa UNICA gravacao (todas ou nenhuma), o que mudou de propostas e vendas e ACRESCENTA as linhas
     novas do historico - criar uma venda mexe nas tres abas, e nenhuma pode ficar sem a outra. Depois sincroniza
-    cada aba que mudou. `propostas` so com as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS)."""
+    cada aba que mudou. `propostas` so com as colunas editaveis (PROPOSTAS_COLUNAS_EDITAVEIS). `clientes`
+    (trocar o CPF de um cliente leva as propostas e vendas junto) regrava tambem o cadastro."""
     with _carregar_planilha(caminho_xlsx) as wb:
+        if clientes is not None:
+            _conferir_cabecalho(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, caminho_xlsx.name)
+            _escrever_linhas_simples(wb[ABA_CLIENTES], ABA_CLIENTES, CLIENTES_COLUNAS, _registros_para_gravar(clientes))
         if propostas is not None:
             _escrever_linhas_propostas(wb[ABA_PROPOSTAS], _registros_para_gravar(propostas[PROPOSTAS_COLUNAS_EDITAVEIS]))
         if vendas is not None:
@@ -809,6 +814,8 @@ def escrever_vendas_e_propostas(
             for registro in historico_novo:
                 ws.append([_limpar_valor(registro.get(coluna)) for coluna in HISTORICO_COLUNAS])
         _salvar_planilha(wb, caminho_xlsx)
+    if clientes is not None:
+        sheets_sync.sincronizar_em_background(ABA_CLIENTES, ler_clientes(caminho_xlsx))
     if propostas is not None:
         sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, ler_propostas(caminho_xlsx))
     if vendas is not None:

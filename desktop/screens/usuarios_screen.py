@@ -53,6 +53,7 @@ _ROTULO_POR_MOTIVO = {
     backup_mod.MOTIVO_COPIA_DA_NUVEM: "Cópia da nuvem (antes de sobrescrever)",
     backup_mod.MOTIVO_PRE_VENDAS: "Antes de juntar as propostas em vendas",
     backup_mod.MOTIVO_PRE_EQUIPAMENTOS: "Antes de trazer os equipamentos das propostas para o cadastro",
+    backup_mod.MOTIVO_PRE_CPF: "Antes de corrigir CPF",
 }
 
 

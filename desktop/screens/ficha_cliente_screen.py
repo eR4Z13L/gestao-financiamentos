@@ -48,6 +48,7 @@ from core.formatting import (
 )
 from core.endereco import UFS_VALIDAS
 from core.validators import apenas_digitos, cpf_cnpj_valido, email_valido
+from desktop.dialogs import escolha_dialog
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.botao_icone_link import BotaoIconeLink
@@ -1703,11 +1704,16 @@ class FichaClienteScreen(QWidget):
             "UF": self._campo_uf.currentText().strip(),
             "ENDEREÇO (REVISAR)": self._campo_endereco_revisar.text().strip(),
         }
+        resultado = None
         try:
             if self._modo_novo_cliente:
                 clientes_mod.adicionar_cliente(campos)
             else:
-                clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)
+                if cpf_mudou:
+                    clientes_mod.exigir_cpf_livre(cpf_texto)  # CPF repetido: erro direto, sem perguntar
+                    if not self._confirmar_levar_junto(self._cpf_selecionado):
+                        return
+                resultado = clientes_mod.atualizar_cliente(self._cpf_selecionado, campos)
         except clientes_mod.ErroCliente as exc:
             QMessageBox.warning(self, "Não foi possível salvar", str(exc))
             return
@@ -1723,10 +1729,29 @@ class FichaClienteScreen(QWidget):
 
         self._aplicar_modo_edicao_cliente(leitura=True)
         self._invalidar_em_aberto()  # o CPF pode ter mudado: as propostas em aberto sao ligadas a ele
+        if resultado is not None and (resultado.propostas or resultado.vendas):
+            self.dados_atualizados.emit()  # propostas e vendas mudaram de CPF: as outras telas precisam reler
         self._recarregar_vendedores_filtro()
         self._busca.setText("")
         self._atualizar_lista()
         self._mostrar_cliente(cpf_texto)
+
+    def _confirmar_levar_junto(self, cpf_antigo: str) -> bool:
+        """CPF/CNPJ trocado: se o cliente tem propostas ou vendas nele, pergunta antes de leva-las para o CPF novo
+        (nao existe "so o cadastro": era isso que as deixava sumidas da ficha). Sem nada ligado, nao pergunta.
+        Erro ao contar levanta para o chamador mostrar (nada e gravado)."""
+        n_propostas, n_vendas = clientes_mod.contar_vinculos_do_cpf(cpf_antigo)
+        if not n_propostas and not n_vendas:
+            return True
+        escolha = escolha_dialog.escolher(
+            self,
+            "Corrigir CPF/CNPJ",
+            f"Este cliente tem {n_propostas} {'proposta' if n_propostas == 1 else 'propostas'} e "
+            f"{n_vendas} {'venda' if n_vendas == 1 else 'vendas'} no CPF/CNPJ antigo.\n\n"
+            "Levar tudo para o CPF/CNPJ novo? Um backup é feito antes.",
+            ["Levar junto e salvar", "Cancelar"],
+        )
+        return escolha == 0
 
     def _recarregar_ficha_atual(self) -> bool:
         """Recarrega cliente + historico do CPF selecionado, com a mesma

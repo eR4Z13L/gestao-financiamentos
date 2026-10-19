@@ -9,11 +9,14 @@ data_store.py precisa mudar.
 from __future__ import annotations
 
 import unicodedata
+from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
 from config import CAMINHO_XLSX
+from core import backup as backup_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
 from core.endereco import UFS_VALIDAS
@@ -188,8 +191,14 @@ def _validar_campos(campos: dict, cpf_original: str | None = None) -> None:
     if email and not email_valido(email):
         raise ErroCliente("E-mail inválido - confira o endereço digitado.")
 
-    existente = buscar_por_cpf(cpf)
-    if cpf_mudou and existente is not None:
+    if cpf_mudou:
+        exigir_cpf_livre(cpf)
+
+
+def exigir_cpf_livre(cpf: str) -> None:
+    """Recusa (ErroCliente) um CPF/CNPJ que ja e de algum cliente. A Ficha chama antes de perguntar se leva as
+    propostas e vendas junto, para nao perguntar e depois recusar."""
+    if buscar_por_cpf(cpf) is not None:
         raise ErroCliente(f"Já existe um cliente cadastrado com o CPF/CNPJ {cpf}.")
 
 
@@ -212,7 +221,29 @@ def adicionar_cliente(campos: dict) -> None:
     bd.escrever_clientes(CAMINHO_XLSX, df)
 
 
-def atualizar_cliente(cpf_original: str, campos: dict) -> None:
+@dataclass(frozen=True)
+class ResultadoTrocaCpf:
+    """O que a edicao de um cliente levou junto. Sem troca de CPF (ou sem nada ligado a ele): tudo zero e sem backup."""
+
+    propostas: int = 0
+    vendas: int = 0
+    backup: Path | None = None
+
+
+def contar_vinculos_do_cpf(cpf: str) -> tuple[int, int]:
+    """(propostas, vendas) ligadas a este CPF/CNPJ - so os digitos contam, como em buscar_por_cpf."""
+    alvo = apenas_digitos(cpf)
+    if not alvo:
+        return 0, 0
+    propostas = bd.ler_propostas(CAMINHO_XLSX)["CPF"].map(apenas_digitos)
+    vendas = bd.ler_vendas(CAMINHO_XLSX)["CPF"].map(apenas_digitos)
+    return int((propostas == alvo).sum()), int((vendas == alvo).sum())
+
+
+def atualizar_cliente(cpf_original: str, campos: dict) -> ResultadoTrocaCpf:
+    """Grava a edicao do cliente. Se o CPF/CNPJ mudou (alem da pontuacao), as propostas e vendas dele vao junto,
+    com backup antes e numa gravacao so (tudo ou nada): so mudar o cadastro deixaria as propostas e vendas
+    no CPF antigo, sumidas da ficha."""
     sessao_mod.exigir_admin()
     campos = dict(campos)
     campos["CPF/CNPJ"] = (campos.get("CPF/CNPJ") or "").strip()
@@ -235,7 +266,25 @@ def atualizar_cliente(cpf_original: str, campos: dict) -> None:
             continue  # nunca muda a data de cadastro original
         if col in campos:
             df.loc[indices[0], col] = campos[col]
-    bd.escrever_clientes(CAMINHO_XLSX, df)
+
+    cpf_novo = campos["CPF/CNPJ"]
+    n_propostas, n_vendas = contar_vinculos_do_cpf(cpf_original) if apenas_digitos(cpf_novo) != alvo else (0, 0)
+    if not n_propostas and not n_vendas:
+        bd.escrever_clientes(CAMINHO_XLSX, df)
+        return ResultadoTrocaCpf()
+
+    backup = backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_CPF, CAMINHO_XLSX)
+    propostas = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS].copy()
+    vendas = bd.ler_vendas(CAMINHO_XLSX)
+    propostas.loc[propostas["CPF"].map(apenas_digitos) == alvo, "CPF"] = cpf_novo
+    vendas.loc[vendas["CPF"].map(apenas_digitos) == alvo, "CPF"] = cpf_novo
+    bd.escrever_vendas_e_propostas(
+        CAMINHO_XLSX,
+        clientes=df,
+        propostas=propostas if n_propostas else None,
+        vendas=vendas if n_vendas else None,
+    )
+    return ResultadoTrocaCpf(propostas=n_propostas, vendas=n_vendas, backup=backup)
 
 
 def remover_cliente(cpf: str) -> None:
