@@ -7,7 +7,6 @@ aparecem (busca e filtros).
 
 "+ Nova venda" abre o card "Nova venda" no topo da lista (cliente, equipamentos, observacoes - sem janela); criada, o
 card dela fica aberto com o formulario do primeiro banco.
-Propostas de antes das vendas, ainda nao juntadas, aparecem num aviso com o "Juntar em vendas...".
 So o ADMIN ve esta tela (a do VENDEDOR, so leitura, ainda nao existe).
 """
 
@@ -30,7 +29,6 @@ from PySide6.QtWidgets import (
 from core import propostas as propostas_mod
 from core import vendas as vendas_mod
 from core.validators import apenas_digitos
-from desktop.dialogs import organizar_vendas_dialog
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.lista_de_vendas import FaixaDeAviso, ListaDeVendas, resumo_por_status
@@ -90,19 +88,6 @@ class VendasScreen(QWidget):
         self.botao_nova.clicked.connect(lambda: self.nova_venda())
         cabecalho.addWidget(self.botao_nova)
 
-        self.aviso_sem_venda = QFrame()
-        self.aviso_sem_venda.setProperty("role", "chip_filtro")
-        linha_aviso = QHBoxLayout(self.aviso_sem_venda)
-        linha_aviso.setContentsMargins(12, 6, 8, 6)
-        self.texto_sem_venda = QLabel("")
-        self.texto_sem_venda.setWordWrap(True)
-        linha_aviso.addWidget(self.texto_sem_venda, stretch=1)
-        juntar = QPushButton("Juntar em vendas…")
-        juntar.clicked.connect(self._juntar_em_vendas)
-        linha_aviso.addWidget(juntar)
-        self.aviso_sem_venda.setVisible(False)
-        layout.addWidget(self.aviso_sem_venda)
-
         filtros = QHBoxLayout()
         layout.addLayout(filtros)
         self.busca = QLineEdit()
@@ -147,14 +132,9 @@ class VendasScreen(QWidget):
         self._vigia.registrar_leitura()
         try:
             self._vendas = vendas_mod.listar_vendas()
-            sem_venda = vendas_mod.contar_propostas_sem_venda()
         except Exception as exc:  # nunca falhar em silencio
             QMessageBox.critical(self, "Erro ao carregar as vendas", f"{type(exc).__name__}: {exc}")
             return False
-        self.texto_sem_venda.setText(
-            f"{sem_venda} proposta(s) de antes das vendas ainda não estão em nenhuma venda e não aparecem aqui."
-        )
-        self.aviso_sem_venda.setVisible(sem_venda > 0)
         self._mostrar()
         return True
 
@@ -227,6 +207,3 @@ class VendasScreen(QWidget):
         self.lista.rolar_ate_o_aberto()
         return True
 
-    def _juntar_em_vendas(self) -> None:
-        if organizar_vendas_dialog.organizar(self):
-            self._depois_de_gravar()

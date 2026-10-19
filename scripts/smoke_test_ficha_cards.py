@@ -16,6 +16,7 @@ import os
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -413,7 +414,22 @@ def _em_aberto(tela: FichaClienteScreen) -> dict[str, bool]:
 
 
 def _cards_antigos(tela: FichaClienteScreen) -> list[CardDaProposta]:
-    return [c for c in tela.lista_antigas.cards if isinstance(c, CardDaProposta)]
+    """Os cards do historico da Ficha (so o VENDEDOR tem: o ADMIN ve as propostas dentro das vendas)."""
+    return [c for c in tela.lista_historico.cards if isinstance(c, CardDaProposta)]
+
+
+@contextmanager
+def _como_vendedor(nome: str, arquivo: Path):
+    """Entra como VENDEDOR `nome` (le da copia ficticia, filtrando como o app filtra) e, ao sair, volta ao ADMIN."""
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario=nome))
+    fontes = (clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa)
+    clientes_mod._ler_da_fonte_ativa = lambda: sessao_mod.filtrar_por_vendedor_logado(bd.ler_clientes(arquivo))  # sem rede
+    propostas_mod._ler_da_fonte_ativa = lambda: sessao_mod.filtrar_por_vendedor_logado(bd.ler_propostas(arquivo))
+    try:
+        yield
+    finally:
+        clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa = fontes
+        sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
 
 
 def _ponto_no_topo(card: CardDaProposta) -> QPoint:
@@ -484,20 +500,18 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
     tela.show()
     _ciclos(app)
     try:
-        # editar a unica proposta aberta da ALFA pra Efetivado: a bolinha some
+        # editar a unica proposta aberta da ALFA pra Efetivado: a bolinha some. (O ADMIN nao tem cards de proposta solta na
+        # ficha: o status muda pelo core e a ficha recebe o mesmo sinal de "gravou" que os cards das vendas emitem.)
         tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
-        assert [c.banco.text() for c in _cards_antigos(tela)] == ["PORTOBANK", "SANTANDER"], "a mais recente primeiro"
-        aberta = next(c.item for c in _cards_antigos(tela) if c.item.proposta.status == "Em Análise")
-        assert tela.lista_antigas.abrir_proposta(aberta)  # os dois cliques: o formulario ali, em edicao
-        formulario = tela.lista_antigas.card_aberto().formulario
-        formulario._status.setCurrentText("Efetivado")
-        formulario._salvar()
+        assert tela.lista_historico.total() == 0 and tela.lista_historico.isHidden(), "o ADMIN nao tem o historico de propostas"
+        alvo = propostas_mod.historico_por_cpf(cpfs["alfa"])
+        alvo = int(alvo[alvo["STATUS"] == "Em Análise"].index[0])
+        propostas_mod.atualizar_proposta(alvo, {"STATUS": "Efetivado"})
+        tela.lista_vendas.gravou.emit("")
         _ciclos(app)
         assert _em_aberto(tela)["ALFA CLIENTE"] is False, "sem proposta aberta a bolinha some, sem refazer a lista"
         assert tela._lista.linha_atual() == 0 and tela._cpf_selecionado == cpfs["alfa"], "a lista e a seleção seguem onde estavam"
-        editado = next(c for c in _cards_antigos(tela) if c.item.proposta.indice == aberta.proposta.indice)
-        assert editado.pilula.text() == "Efetivado" and tela.lista_antigas.aberta is None, "gravou: o card fecha, com o status novo"
 
         # lancar uma proposta nova (aberta) na GAMA: a bolinha aparece
         tela._selecionar_por_cpf(cpfs["gama"])
@@ -518,7 +532,7 @@ def testar_tela(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
         nova._salvar()
         _ciclos(app)
         assert _em_aberto(tela)["GAMA SEM PROPOSTA"] is True
-        assert [p.banco for p in tela.lista_vendas.cards[0].venda.propostas] == ["Banco Novo"] and tela.lista_antigas.total() == 0
+        assert [p.banco for p in tela.lista_vendas.cards[0].venda.propostas] == ["Banco Novo"] and tela.lista_historico.total() == 0
         print("OK: efetivar a única proposta aberta apaga a bolinha; lançar uma nova acende - sem refazer a lista nem perder a seleção.")
 
         # erro ao ler as propostas: avisa (uma vez) e a lista segue funcionando sem a marca
@@ -550,8 +564,14 @@ def _item_de_teste(status: str, banco: str = "B", equipamento: str = "E", valor=
     return vendas_mod.PropostaNaLista(proposta, None, _cpf(9), "CLIENTE", "ANA")
 
 
-def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
-    linha("6) Propostas antigas no card de proposta: banco em destaque, cliente e equipamento, condições, cor do status")
+def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arquivo: Path) -> None:
+    """O historico da Ficha e so do VENDEDOR (que nao tem as vendas): os testes abaixo entram como o vendedor da BETA."""
+    with _como_vendedor("BIA", arquivo):
+        _historico_em_cards(app, stubs, cpfs)
+
+
+def _historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, str]) -> None:
+    linha("6) Histórico no card de proposta (VENDEDOR): banco em destaque, cliente e equipamento, condições, cor do status")
     original_obter = settings_mod.obter_tema
     tela = None
     try:
@@ -569,9 +589,9 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
                 ("MOVA HTM", "BETA AVALISTA · CADEIRA", "R$ 900 · 12x", "Negado"), card0.condicoes.text()
             assert (card1.banco.text(), card1.cliente.text(), card1.pilula.text()) == ("SMART", "BETA AVALISTA · LASER", "Efetivado")
             assert card1.condicoes.text() == "R$ 1.500,50 · 12x", card1.condicoes.text()
-            assert card0.sem_venda is not None and card0.espera is None, "de antes das vendas; encerrada não espera resposta"
+            assert card0.espera is None, "negada não espera resposta"
             assert not card0.pilula.clicavel and not card0.controles["bolinhas"] and card0.controles["anel"] is None, \
-                "sem venda: a etiqueta só mostra o status (muda pelo formulário)"
+                "sem venda: a etiqueta só mostra o status"
 
             # a faixa de cada card tem a mesma cor do status (a mesma tabela de Todas as Propostas e do card da venda)
             for card, chave in ((card0, "negado"), (card1, "efetivado")):
@@ -579,8 +599,7 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
                 assert pixel.rgb() == QColor(CORES_STATUS[tema][chave]["faixa"]).rgb(), f"{tema}: faixa de {card.banco.text()} ({pixel.name()})"
             tela.close()
             tela = None
-        print("OK (escuro e claro): o card mostra o banco em destaque, 'BETA AVALISTA · CADEIRA', 'R$ 900 · 12x' e a etiqueta "
-              "'sem venda'; a faixa tem a cor do status (a mesma de Todas as Propostas).")
+        print("OK (escuro e claro): o card mostra o banco em destaque, 'BETA AVALISTA · CADEIRA' e 'R$ 900 · 12x'; a faixa tem a cor do status (a mesma de Todas as Propostas).")
     finally:
         if tela is not None:
             tela.close()
@@ -597,7 +616,7 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
     vazio.deleteLater()
     print("OK: cada status tem a mesma cor em toda tela; banco/equipamento/valor em branco não quebram o card.")
 
-    linha("6b) Propostas antigas: dois cliques abrem o formulário no próprio card; dois cliques no topo fecham")
+    linha("6b) Histórico: dois cliques abrem o formulário (só leitura) no próprio card; dois cliques no topo fecham")
     tela = FichaClienteScreen()
     tela.resize(1250, 800)
     tela.show()
@@ -608,35 +627,36 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
     card = _cards_antigos(tela)[0]
     QTest.mouseClick(card, Qt.MouseButton.LeftButton, pos=_ponto_no_topo(card))
     _ciclos(app)
-    assert tela.lista_antigas.aberta is None, "1 clique não abre"
+    assert tela.lista_historico.aberta is None, "1 clique não abre"
     _duplo_clique(card, _ponto_no_topo(card))
     _ciclos(app)
-    aberto = tela.lista_antigas.card_aberto()
+    aberto = tela.lista_historico.card_aberto()
     assert aberto is not None and aberto.aberto and aberto.item.proposta.banco == "MOVA HTM", "dois cliques abrem a própria"
     formulario = aberto.formulario
-    assert not formulario._modo_leitura and formulario._banco.currentText() == "MOVA HTM"
-    assert formulario._equipamento.currentText() == "CADEIRA" and formulario._valor.value() == 900
+    assert formulario._modo_leitura and formulario._botao_editar.isHidden(), "o vendedor só lê"
+    assert formulario._valor.value() == 900
     assert formulario._observacoes.toPlainText() == "obs CADEIRA", "meses/observações estão no formulário"
-    assert aberto.botao_excluir is not None and aberto.ver_na_venda is None and aberto.abrir_ficha is None, \
-        "excluir só ali dentro; sem venda (nem 'Ver na venda'); na própria ficha, sem 'Abrir a ficha'"
+    assert aberto.botao_excluir is None and aberto.ver_na_venda is None and aberto.abrir_ficha is None, \
+        "sem excluir; sem venda (nem 'Ver na venda'); na própria ficha, sem 'Abrir a ficha'"
     _duplo_clique(aberto, _ponto_no_topo(aberto))
     _ciclos(app)
-    assert tela.lista_antigas.aberta is None, "dois cliques no topo do card aberto fecham"
-    print("OK: 1 clique não abre; dois cliques abrem o formulário ali (com meses/observações e o 'Excluir esta proposta…'); "
+    assert tela.lista_historico.aberta is None, "dois cliques no topo do card aberto fecham"
+    print("OK: 1 clique não abre; dois cliques abrem o formulário ali (só leitura, com meses/observações); "
           "dois cliques no topo fecham.")
 
     # trocar de cliente fecha o card; recarregar o mesmo cliente o mantem aberto
-    tela.lista_antigas.abrir_proposta(_cards_antigos(tela)[1].item)
-    tela._selecionar_por_cpf(cpfs["alfa"])
-    assert tela.lista_antigas.aberta is None, "outro cliente: nenhum card aberto"
-    tela.lista_antigas.abrir_proposta(_cards_antigos(tela)[1].item)
-    escolhido = tela.lista_antigas.aberta
+    tela.lista_historico.abrir_proposta(_cards_antigos(tela)[1].item)
+    tela._selecionar_por_cpf(cpfs["delta"])
+    assert tela.lista_historico.aberta is None, "outro cliente: nenhum card aberto"
+    tela._selecionar_por_cpf(cpfs["beta"])
+    tela.lista_historico.abrir_proposta(_cards_antigos(tela)[1].item)
+    escolhido = tela.lista_historico.aberta
     tela._recarregar_ficha_atual()
-    assert escolhido is not None and tela.lista_antigas.aberta == escolhido, "recarregar o mesmo cliente mantém o card aberto"
-    tela.lista_antigas.descartar()
+    assert escolhido is not None and tela.lista_historico.aberta == escolhido, "recarregar o mesmo cliente mantém o card aberto"
+    tela.lista_historico.descartar()
     print("OK: abrir outro cliente fecha o card; recarregar o mesmo cliente o mantém aberto.")
 
-    linha("6c) Propostas antigas: alinhadas com o cartão de dados, sem barra própria, a roda rola o painel")
+    linha("6c) Histórico: alinhado com o cartão de dados, sem barra própria, a roda rola o painel")
     tela._selecionar_por_cpf(cpfs["beta"])
     cartao = tela._campo_nome.parentWidget()
     direita = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
@@ -645,7 +665,7 @@ def testar_historico_em_cards(app: QApplication, stubs: _Stubs, cpfs: dict[str, 
         _ciclos(app, 8)
         for card in _cards_antigos(tela):
             assert abs(direita(card) - direita(cartao)) <= 3, f"{largura}px: card termina em {direita(card)}, o cartão em {direita(cartao)}"
-        assert {tela.lista_antigas.coluna_do_card(c) for c in _cards_antigos(tela)} == {0}, "na ficha, uma coluna só"
+        assert {tela.lista_historico.coluna_do_card(c) for c in _cards_antigos(tela)} == {0}, "na ficha, uma coluna só"
     print("OK: em 3 larguras (até 2600 px), cada card termina na borda do cartão de dados (±3 px), numa coluna só.")
 
     tela.setMinimumSize(100, 100)
@@ -691,13 +711,14 @@ def testar_vendedor(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arqu
         assert tela.lista_vendas.isHidden() and tela._titulo_vendas.isHidden(), "o vendedor não vê os cards de venda (são de edição)"
         tela._selecionar_por_cpf(cpfs["alfa"])
         _ciclos(app)
+        assert tela._titulo_historico.text() == "Histórico de propostas" and not tela._titulo_historico.isHidden()
         cards = _cards_antigos(tela)
         assert len(cards) == 2 and all(not c.pilula.clicavel and not c.controles["bolinhas"] for c in cards), "sem ações"
         QTest.mouseClick(cards[0], Qt.MouseButton.LeftButton, pos=_ponto_no_topo(cards[0]))
-        assert tela.lista_antigas.aberta is None, "1 clique não abre"
+        assert tela.lista_historico.aberta is None, "1 clique não abre"
         _duplo_clique(cards[0], _ponto_no_topo(cards[0]))
         _ciclos(app)
-        aberto = tela.lista_antigas.card_aberto()
+        aberto = tela.lista_historico.card_aberto()
         assert aberto is not None, "dois cliques abrem a proposta pro vendedor também"
         formulario = aberto.formulario
         assert formulario._modo_leitura and formulario._botao_editar.isHidden(), \
@@ -706,7 +727,7 @@ def testar_vendedor(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arqu
         assert formulario._valor.value() > 0 and formulario._observacoes.toPlainText().startswith("obs "), "vê meses/observações pela leitura"
         formulario._botao_recolher.click()
         _ciclos(app)
-        assert tela.lista_antigas.aberta is None, "'Recolher' fecha o card"
+        assert tela.lista_historico.aberta is None, "'Recolher' fecha o card"
     finally:
         if tela is not None:
             tela.close()
@@ -733,7 +754,7 @@ def main() -> None:
         cpfs = _cadastrar(arquivo)
         with _Stubs() as stubs:
             testar_tela(app, stubs, cpfs)
-            testar_historico_em_cards(app, stubs, cpfs)
+            testar_historico_em_cards(app, stubs, cpfs, arquivo)
             # o teste da tela editou/lancou propostas: o vendedor ve o estado de agora
             testar_vendedor(app, stubs, cpfs, arquivo)
         linha("TUDO OK")

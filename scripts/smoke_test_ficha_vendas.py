@@ -1,6 +1,6 @@
 """Testa a Ficha de Cliente com as vendas (passo 2): "Vendas do cliente" com os mesmos cards da tela Vendas, "+ Nova
-venda" ja com o cliente, o resumo contando vendas, as propostas de antes das vendas a parte, um formulario aberto por
-vez na ficha, gravar numa venda sem mexer nos dados do cliente em edicao, e o VENDEDOR vendo o historico de sempre.
+venda" ja com o cliente, o resumo contando vendas (sem a secao das propostas de antes das vendas, que saiu no plano
+1.3), gravar numa venda sem mexer nos dados do cliente em edicao, e o VENDEDOR vendo o historico de sempre.
 
 Planilha 100% ficticia em pasta temporaria, preferencias isoladas e o Google desligado (qualquer acesso derruba).
 
@@ -114,7 +114,7 @@ def main() -> None:
             v.efetivar_proposta(pb)
             id_j, _ = v.criar_venda(fx.CPF_JOAO, ["Mesa Exemplo"], _pedido(b2, 10000))  # de outro cliente
 
-            linha("1) A ficha mostra as vendas do cliente e, à parte, só as propostas de antes das vendas")
+            linha("1) A ficha mostra as vendas do cliente (e nenhuma seção de propostas de antes das vendas)")
             tela = FichaClienteScreen()
             soltas.esperadas = (tela,)
             app.installEventFilter(soltas)
@@ -126,36 +126,34 @@ def main() -> None:
             assert sorted(c.venda.id for c in tela.lista_vendas.cards) == sorted([id_a, id_b]), "só as vendas da MARIA"
             historico = propostas_mod.historico_por_cpf(fx.CPF_MARIA)
             nas_vendas = {p.indice for c in tela.lista_vendas.cards for p in c.venda.propostas}
-            antigas = [p.proposta.indice for p in tela.lista_antigas.propostas()]
-            assert antigas and not nas_vendas & set(antigas), "proposta de venda não aparece entre as antigas"
-            assert sorted(antigas) == sorted(set(historico.index) - nas_vendas), "e toda antiga aparece"
-            for parte in (tela._titulo_vendas, tela.lista_vendas, tela._titulo_historico, tela._dica_antigas,
-                          tela.lista_antigas, tela._botao_nova_venda):
+            soltas_da_maria = set(historico.index) - nas_vendas
+            assert soltas_da_maria, "a fixture ainda tem propostas soltas (sem venda) da MARIA: a ficha não as mostra"
+            for parte in (tela._titulo_vendas, tela.lista_vendas, tela._botao_nova_venda):
                 assert not parte.isHidden(), parte
-            assert tela._historico_vazio.isHidden() and tela._titulo_historico.text() == "Propostas de antes das vendas"
+            for parte in (tela._titulo_historico, tela.lista_historico, tela._historico_vazio):
+                assert parte.isHidden(), f"o ADMIN não tem a seção de propostas de antes das vendas: {parte}"
+            assert tela.lista_historico.total() == 0
             esperado = (f"2 vendas (1 aguardando bancos, 1 efetivada) · {formatar_reais(30000)} efetivado · "
-                        f"{len(antigas)} propostas de antes das vendas · última atividade hoje")
+                        "última atividade hoje")
             assert tela._resumo_label.text() == esperado, tela._resumo_label.text()
-            print(f"OK: 2 vendas da MARIA (a do JOÃO fica de fora), {len(antigas)} propostas antigas à parte; "
+            print(f"OK: 2 vendas da MARIA (a do JOÃO fica de fora), sem seção de propostas antigas; "
                   f"resumo: {tela._resumo_label.text()!r}")
 
             linha("2) O resumo contando vendas")
             vendas_maria = v.vendas_do_cliente(fx.CPF_MARIA)
             so_a = [x for x in vendas_maria if x.id == id_a]
             vazio = historico.iloc[0:0]
-            assert _resumo_com_vendas([], vazio, 0) == "Nenhuma venda registrada ainda."
-            assert _resumo_com_vendas(so_a, vazio, 0) == "1 venda aguardando bancos · última atividade hoje"
-            assert _resumo_com_vendas([], vazio, 1).startswith("nenhuma venda ainda · 1 proposta de antes das vendas · ")
-            assert "efetivado" not in _resumo_com_vendas(so_a, vazio, 0), "sem nada efetivado, sem o valor"
+            assert _resumo_com_vendas([], vazio) == "Nenhuma venda registrada ainda."
+            assert _resumo_com_vendas(so_a, vazio) == "1 venda aguardando bancos · última atividade hoje"
+            assert "efetivado" not in _resumo_com_vendas(so_a, vazio), "sem nada efetivado, sem o valor"
             faixa = FaixaDeAviso(tela)
             faixa.avisar("")
-            assert faixa.isHidden(), "gravar sem aviso (ex.: 'Juntar em vendas') não mostra uma faixa vazia"
+            assert faixa.isHidden(), "gravar sem aviso não mostra uma faixa vazia"
             faixa.avisar("Gravado.")
             faixa.avisar("")
             assert not faixa.isHidden() and faixa.texto.text() == "Gravado.", "nem apaga o aviso que está à vista"
             faixa.deleteLater()
-            print("OK: nenhuma venda / 1 venda (sem o '1 1') / só antigas (singular) / valor efetivado só quando há; "
-                  "aviso vazio não aparece.")
+            print("OK: nenhuma venda / 1 venda (sem o '1 1') / valor efetivado só quando há; aviso vazio não aparece.")
 
             linha("3) O card aberto na ficha: na largura toda e sem 'Abrir a ficha' (já se está nela)")
             assert tela.lista_vendas.abrir_venda(_card(tela, id_a).venda)
@@ -217,16 +215,7 @@ def main() -> None:
             print("OK: a bolinha grava, o card e o aviso mostram o status novo, e o nome em edição continua lá.")
 
             linha("5) '+ Nova venda' abre o card novo na lista de vendas, já com o cliente da ficha")
-            # um formulario por vez na ficha: com algo digitado numa proposta antiga, pergunta antes
-            assert tela.lista_antigas.abrir_proposta(tela.lista_antigas.propostas()[0])
-            antiga = tela.lista_antigas.card_aberto().formulario
-            antiga._observacoes.setPlainText("digitando na antiga")
             msgs.limpar()
-            msgs.resposta_pergunta = NAO
-            tela._botao_nova_venda.click()
-            assert msgs.ultima()[1] == "Alterações não salvas" and tela.lista_vendas.card_da_nova_venda() is None
-            assert tela.lista_antigas.card_aberto().formulario is antiga, "'Não': segue na antiga"
-            msgs.resposta_pergunta = SIM
             tela._botao_nova_venda.click()
             _processar()
             novo = tela.lista_vendas.card_da_nova_venda()
@@ -247,36 +236,6 @@ def main() -> None:
             assert tela.lista_vendas.liberar() and tela.lista_vendas.editando is None, "o primeiro banco pode esperar"
             id_nova = nova.venda.id
             print("OK: o card 'Nova venda' vem com a MARIA; criada, aparece aberta com o primeiro banco, e o resumo conta 3.")
-
-            linha("6) Um formulário aberto por vez na ficha (o da proposta antiga e o do card de venda)")
-            antiga = tela.lista_antigas.propostas()[0]
-            assert tela.lista_antigas.abrir_proposta(antiga)  # os dois cliques numa antiga
-            f = tela.lista_antigas.card_aberto().formulario
-            assert f is not None and not f._modo_leitura, "o ADMIN abre a antiga direto no formulário"
-            f._observacoes.setPlainText("digitando na antiga")
-            msgs.limpar()
-            msgs.resposta_pergunta = NAO
-            assert not tela.lista_vendas.editar_proposta(_card(tela, id_nova).venda, None)
-            assert msgs.ultima()[1] == "Alterações não salvas" and tela.lista_antigas.card_aberto().formulario is f
-            assert tela.lista_vendas.editando is None, "'Não': segue na antiga, e o da venda não abre"
-            msgs.resposta_pergunta = SIM
-            assert tela.lista_vendas.editar_proposta(_card(tela, id_nova).venda, None)
-            _processar()
-            assert tela.lista_antigas.aberta is None and tela.lista_vendas.editando == NOVA
-            tela.lista_vendas.card_aberto().formulario._valor.setValue(777)
-            assert tela.tem_edicao_pendente()
-            msgs.limpar()
-            msgs.resposta_pergunta = NAO
-            assert not tela.lista_antigas.abrir_proposta(antiga)
-            assert msgs.ultima()[1] == "Alterações não salvas" and tela.lista_antigas.aberta is None
-            assert tela.lista_vendas.card_aberto().formulario._valor.value() == 777, "'Não': o digitado na venda fica"
-            msgs.resposta_pergunta = SIM
-            assert tela.lista_antigas.abrir_proposta(antiga)
-            _processar()
-            assert tela.lista_antigas.aberta is not None and tela.lista_vendas.editando is None
-            assert not tela.tem_edicao_pendente()
-            tela.lista_antigas.descartar()
-            print("OK: abrir um formulário com outro em edição pergunta antes ('Não' mantém o que estava sendo digitado).")
 
             linha("7) Recarregar com algo digitado no card da venda pergunta antes")
             tela.lista_vendas.editar_proposta(_card(tela, id_nova).venda, None)
@@ -352,19 +311,19 @@ def main() -> None:
             tela_v.show()
             tela_v._selecionar_por_cpf(fx.CPF_MARIA)
             _processar()
-            for parte in (tela_v._titulo_vendas, tela_v.lista_vendas, tela_v._dica_antigas, tela_v._botao_nova_venda):
+            for parte in (tela_v._titulo_vendas, tela_v.lista_vendas, tela_v._botao_nova_venda):
                 assert parte.isHidden(), parte
             assert tela_v._titulo_historico.text() == "Histórico de propostas"
             todas = propostas_mod.historico_por_cpf(fx.CPF_MARIA)
-            assert tela_v.lista_antigas.total() == len(todas) > len(antigas), "as de venda também, como antes"
+            assert tela_v.lista_historico.total() == len(todas) > len(soltas_da_maria), "as de venda também, como antes"
             assert all(not c.pilula.clicavel and not c.controles["bolinhas"] and c.controles["anel"] is None
-                       for c in tela_v.lista_antigas.cards), "o vendedor só lê: nenhuma ação nos cards"
-            tela_v.lista_antigas.abrir_proposta(tela_v.lista_antigas.propostas()[0])
+                       for c in tela_v.lista_historico.cards), "o vendedor só lê: nenhuma ação nos cards"
+            tela_v.lista_historico.abrir_proposta(tela_v.lista_historico.propostas()[0])
             _processar()
-            aberto = tela_v.lista_antigas.card_aberto()
+            aberto = tela_v.lista_historico.card_aberto()
             assert aberto.formulario._modo_leitura and aberto.botao_excluir is None, "abre só para ler (sem excluir)"
             assert aberto.formulario._botao_editar.isHidden()
-            tela_v.lista_antigas.descartar()
+            tela_v.lista_historico.descartar()
             assert "propostas" in tela_v._resumo_label.text() and "venda" not in tela_v._resumo_label.text()
             tela_v.close()
             print(f"OK: o vendedor vê as {len(todas)} propostas da MARIA no histórico, sem os cards de venda.")

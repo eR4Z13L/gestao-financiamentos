@@ -46,7 +46,7 @@ def _percentual(numerador: float, denominador: float) -> float:
     return (numerador / denominador * 100) if denominador else 0.0
 
 
-def _nao_efetivadas(status: pd.Series) -> tuple[int, int, float]:
+def _nao_efetivadas(status: pd.Series, fora_do_fluxo: pd.Series | None = None) -> tuple[int, int, float]:
     """(efetivadas, aprovadas nao efetivadas, % nao efetivadas) de uma serie
     de STATUS. A porcentagem e sobre Aprovado + Efetivado - "de tudo que foi
     aprovado, quanto ainda nao virou venda"; 0.0 se nao ha nenhuma das duas.
@@ -60,7 +60,10 @@ def _nao_efetivadas(status: pd.Series) -> tuple[int, int, float]:
     # serie vazia SEM tipo booleano - de texto, quando o STATUS e texto - e a soma dela e ""
     # em vez de 0 (o int("") derrubava o Dashboard, e com ele a janela inteira, pra esse vendedor)
     efetivadas = int(status.map(eh_efetivado).astype(bool).sum())
-    nao_efetivadas = int(status.map(eh_aprovado_nao_efetivado).astype(bool).sum())
+    pendentes = status.map(eh_aprovado_nao_efetivado).astype(bool)
+    if fora_do_fluxo is not None:  # a proposta numa venda ja resolvida (Efetivada, Perdida...) nao esta "a efetivar"
+        pendentes = pendentes & ~fora_do_fluxo
+    nao_efetivadas = int(pendentes.sum())
     return efetivadas, nao_efetivadas, _percentual(nao_efetivadas, nao_efetivadas + efetivadas)
 
 
@@ -88,7 +91,7 @@ def totais_gerais(propostas: pd.DataFrame | None = None) -> dict:
     # aprovado" pode estar subestimado (nao esta errado, so incompleto).
     aprovadas_sem_valor = int(((categoria == "Aprovado") & df["VALOR (R$)"].isna()).sum())
     valor_aprovado = float(df.loc[categoria == "Aprovado", "VALOR (R$)"].sum())
-    efetivadas, aprovadas_nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(df["STATUS"])
+    efetivadas, aprovadas_nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(df["STATUS"], propostas_mod.fora_do_fluxo(df))
 
     return {
         "total_propostas": total,
@@ -174,7 +177,7 @@ def por_vendedor(propostas: pd.DataFrame | None = None) -> pd.DataFrame:
         em_analise = int((grupo["_categoria"] == "Em Análise").sum())
         nao_contabilizado = len(grupo) - aprovadas - negadas - em_analise
         decididas = aprovadas + negadas
-        _, nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(grupo["STATUS"])
+        _, nao_efetivadas, pct_nao_efetivadas = _nao_efetivadas(grupo["STATUS"], propostas_mod.fora_do_fluxo(grupo))
         linhas.append(
             {
                 "Vendedor": vendedor,
@@ -325,7 +328,7 @@ def indicadores_do_topo(propostas: pd.DataFrame) -> dict:
             "com_valor": int(valores[em_analise].notna().sum()),
         },
         "a_efetivar": {
-            "quantidade": int((etapas == ETAPA_APROVADO).sum()),
+            "quantidade": int(((etapas == ETAPA_APROVADO) & ~propostas_mod.fora_do_fluxo(propostas)).sum()),
             "efetivadas": efetivadas_qtd,
         },
         "taxa_aprovacao": {
@@ -442,19 +445,21 @@ def _indices_de_atencao(propostas: pd.DataFrame, chave: str, dias: int, hoje: da
     if propostas.empty:
         return []
     if chave == ATENCAO_PARADAS:
-        em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool)
+        # (a proposta numa venda ja resolvida nao entra: a venda diz o que falta - o mesmo do selo da barra lateral)
+        em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool) & ~propostas_mod.fora_do_fluxo(propostas)
         dias_parada = pd.to_numeric(propostas["TEMPO"].map(dias_do_tempo), errors="coerce")
         return _indices(propostas, em_aberto & (dias_parada > dias))
     if chave == ATENCAO_A_EFETIVAR:
-        return _indices(propostas, propostas["STATUS"].map(etapa_status) == ETAPA_APROVADO)
+        return _indices(propostas, (propostas["STATUS"].map(etapa_status) == ETAPA_APROVADO) & ~propostas_mod.fora_do_fluxo(propostas))
     if chave == ATENCAO_MESMA_VENDA:
         # propostas AINDA em aberto de um cliente+equipamento onde OUTRA proposta ja foi
         # efetivada (a mesma venda, fechada por outro banco) - candidatas a "Encerrada"
         # que ninguem encerrou ainda (a pergunta ao efetivar foi respondida "não", ou a
-        # proposta nem existia naquele momento). Nunca mexe sozinho: so sinaliza.
+        # proposta nem existia naquele momento). Nunca mexe sozinho: so sinaliza. So vale para a proposta SEM venda: numa
+        # venda, quem resolve isso e a propria venda (os bancos fechados dela).
         cpf = propostas["CPF"].map(apenas_digitos)
         equipamento = _texto_normalizado(propostas["EQUIPAMENTO"])
-        em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool)
+        em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool) & ~propostas_mod.numa_venda(propostas)
         efetivada = propostas["STATUS"].map(eh_efetivado).astype(bool)
         valido = (cpf != "") & (equipamento != "")
         tem_efetivada_no_grupo = efetivada.groupby([cpf, equipamento]).transform("any")

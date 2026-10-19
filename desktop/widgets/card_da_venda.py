@@ -310,7 +310,7 @@ def por_anel(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda, proposta
 def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda | None,
                             proposta: vendas_mod.PropostaNaVenda, parent: QWidget, itens: dict) -> None:
     """A ↩, a etiqueta e as bolinhas de uma proposta, nessa ordem, em `linha`; os widgets vao para `itens` ("voltar",
-    "pilula", "bolinhas"). Sem `venda` (ou sem ID_PROPOSTA: as de antes das vendas, ou o VENDEDOR), so a etiqueta,
+    "pilula", "bolinhas"). Sem `venda` (ou sem ID_PROPOSTA: o VENDEDOR, ou dado de uma versao antiga), so a etiqueta,
     que so mostra - o status dessas muda pelo formulario (decidido em 05/10/2026)."""
     acoes = venda is not None and bool(proposta.id)
     itens.setdefault("voltar", None)

@@ -193,7 +193,7 @@ class ListaDeVendas(ListaEmColunas):
             return True
         if not self.pode_descartar():
             return False
-        # na Ficha ha outro formulario (o das propostas de antes das vendas): um por vez na tela
+        # na Ficha ha outro formulario (o do historico do VENDEDOR): um por vez na tela
         if editando is not None and self.antes_de_editar is not None and not self.antes_de_editar():
             return False
         self.aberta, self.editando, self.rascunho = venda.id, editando, None

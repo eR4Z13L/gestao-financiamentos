@@ -287,7 +287,7 @@ def main() -> None:
             # a propria gravacao da tela nao pode parecer "mudanca por fora" 2 s depois
             propostas_mod.adicionar_proposta({"CPF": cpf_novo, "STATUS": propostas_mod.STATUS_EM_ANALISE, "BANCO": "Banco Exemplo",
                                               "EQUIPAMENTO": "Equipamento Modelo X", "VALOR (R$)": 321})
-            ficha.lista_antigas.gravou.emit("")  # o sinal real que a Ficha recebe depois de gravar uma proposta
+            ficha.lista_vendas.gravou.emit("")  # o sinal real que a Ficha recebe depois de gravar uma proposta
             assert not ficha._vigia.mudou_desde_a_leitura(), "depois da propria gravacao, a impressao ja esta em dia"
             print("OK: depois de a Ficha gravar uma proposta, a impressao fica em dia (sem releitura 2 s depois).")
 

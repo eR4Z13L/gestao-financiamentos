@@ -37,6 +37,7 @@ from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -392,10 +393,10 @@ def testar_dados_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     assert misto.count("mailto:") == 2 and "+55 77 9208-1246" in misto and "mailto:+55" not in misto
     print("OK: um trecho que não é e-mail (ex.: telefone colado junto) vira texto puro intacto, sem virar mailto: nem se fragmentar.")
 
-    # resumo contando vendas: sem venda ainda, as propostas de antes das vendas entram na conta
+    # resumo contando vendas: sem venda ainda (a proposta solta, sem venda, nao entra na conta nem aparece na ficha)
     resumo = tela._resumo_label.text()
-    assert resumo.startswith("nenhuma venda ainda · ") and "de antes das vendas" in resumo and "aprovad" not in resumo, resumo
-    print(f"OK: resumo contando vendas (e as propostas de antes delas): {resumo!r}")
+    assert resumo == "Nenhuma venda registrada ainda.", resumo
+    print(f"OK: resumo contando vendas: {resumo!r}")
     tela.close()
 
 
@@ -521,7 +522,7 @@ def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
     assert tela._cpf_selecionado is None and tela._modo_novo_cliente
     assert tela._campo_nome.text() == "" and tela._campo_cpf.text() == ""
     assert tela._resumo_label.text() == "Nenhuma venda registrada ainda."
-    assert not tela._botao_nova_venda.isVisible() and not tela.lista_antigas.isVisible()
+    assert not tela._botao_nova_venda.isVisible() and not tela.lista_historico.isVisible()
     assert not hasattr(tela, "_botao_excluir_proposta"), "excluir proposta so de dentro do card aberto"
     assert tela.lista_vendas.vazio.text() == "Salve o cliente para lançar a primeira venda."
     assert not tela._botao_novo_cliente.isEnabled(), "nao pode abrir um segundo rascunho ao mesmo tempo"
@@ -550,7 +551,7 @@ def testar_novo_cliente_inline(app: QApplication, msgs: _Mensagens) -> None:
     assert not tela._modo_novo_cliente and tela._modo_leitura_cliente
     assert apenas_digitos(tela._cpf_selecionado) == apenas_digitos(cpf_novo)
     assert tela._campo_nome.text() == "BEATRIZ NOVA" and tela._painel_stack.currentIndex() == 1
-    assert tela._botao_nova_venda.isVisible() and tela.lista_antigas.isHidden(), "sem propostas antigas, sem a lista delas"
+    assert tela._botao_nova_venda.isVisible() and tela.lista_historico.isHidden(), "sem propostas antigas, sem a lista delas"
     assert "+ Nova venda" in tela.lista_vendas.vazio.text()
     assert tela._botao_novo_cliente.isEnabled()
     gravado = clientes_mod.buscar_por_cpf(cpf_novo)
@@ -821,14 +822,16 @@ def _rotulos_espremidos(tela: FichaClienteScreen) -> list[tuple[str, int, int]]:
 
 def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
     linha("6) Painel do cliente com barra de rolagem: campos com espaço normal (sem espremer)")
-    for n in range(5):  # 5 propostas pro cliente completo, 1 pro parcial (a lista de cards acompanha o numero)
-        propostas_mod.adicionar_proposta(
-            {"CPF": cpfs["completo"], "DATA": pd.Timestamp(2026, 3, 1 + n), "VALOR (R$)": 1000 * (n + 1), "MESES": 12,
-             "EQUIPAMENTO": f"Laser {n}", "BANCO": "Banco Teste", "STATUS": "Em Análise", "OBSERVAÇÕES": f"obs {n}"}
+    sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
+    for n in range(5):  # 5 vendas pro cliente completo, 1 pro parcial (a lista de cards acompanha o numero)
+        vendas_mod.criar_venda(
+            cpfs["completo"], [f"Laser {n}"],
+            {"DATA": pd.Timestamp(2026, 3, 1 + n), "VALOR (R$)": 1000 * (n + 1), "MESES": 12, "BANCO": "Banco Teste",
+             "STATUS": "Em Análise", "OBSERVAÇÕES": f"obs {n}"},
         )
-    propostas_mod.adicionar_proposta(
-        {"CPF": cpfs["parcial"], "DATA": pd.Timestamp(2026, 3, 9), "VALOR (R$)": 500, "MESES": 6, "EQUIPAMENTO": "Mesa",
-         "BANCO": "Banco Teste", "STATUS": "Negado", "OBSERVAÇÕES": ""}
+    vendas_mod.criar_venda(
+        cpfs["parcial"], ["Mesa"],
+        {"DATA": pd.Timestamp(2026, 3, 9), "VALOR (R$)": 500, "MESES": 6, "BANCO": "Banco Teste", "STATUS": "Negado"},
     )
 
     original_obter = settings_mod.obter_tema
@@ -861,8 +864,8 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         barra.setValue(barra.maximum())
         app.processEvents()
         viewport = rolagem.viewport()
-        fim_historico = tela.lista_antigas.mapTo(viewport, QPoint(0, tela.lista_antigas.height())).y()
-        assert fim_historico <= viewport.height() + 1, "rolado até o fim, o histórico de propostas aparece inteiro"
+        fim_vendas = tela.lista_vendas.mapTo(viewport, QPoint(0, tela.lista_vendas.height())).y()
+        assert fim_vendas <= viewport.height() + 1, "rolado até o fim, as vendas do cliente aparecem inteiras"
         topo_cartao = tela._campo_nome.mapTo(viewport, QPoint(0, 0)).y()
         assert topo_cartao < 0, "e o topo do cartão saiu pra cima (rolou de verdade)"
 
@@ -871,15 +874,15 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         barra.setValue(0)
         app.processEvents()
         assert tela._botao_nova_venda.mapTo(tela, QPoint(0, 0)).y() == y_botao, "o botão não rola"
-        assert tela._botao_nova_venda.isVisible() and tela.lista_antigas.isVisible()
+        assert tela._botao_nova_venda.isVisible() and tela.lista_vendas.isVisible()
         assert y_botao + tela._botao_nova_venda.height() <= tela.height()
-        print("OK: rolar até o fim mostra as propostas antigas inteiras; '+ Nova venda' fica fixo embaixo.")
+        print("OK: rolar até o fim mostra as vendas inteiras; '+ Nova venda' fica fixo embaixo.")
 
         # alinhados com o cartao, com e sem a barra de rolagem
         cartao = tela._campo_nome.parentWidget()
         borda = lambda w: w.mapTo(tela, QPoint(w.width(), 0)).x()  # noqa: E731
         assert abs(borda(cartao) - borda(tela._botao_nova_venda)) <= 1, (borda(cartao), borda(tela._botao_nova_venda))
-        tela.resize(1150, 1300)
+        tela.resize(1150, 2600)  # (as 5 vendas em cards pedem mais altura que as 5 propostas de antes)
         for _ in range(6):
             app.processEvents()
         assert barra.maximum() == 0 and not barra.isVisible(), "janela alta: cabe tudo, sem barra"
@@ -891,9 +894,9 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         assert abs(borda(cartao) - borda(tela._botao_nova_venda)) <= 1, "com a barra de volta, alinhados de novo"
         print("OK: os botões de baixo ficam alinhados com o cartão com a barra de rolagem e sem ela.")
 
-        # as propostas antigas: os cards numa coluna so (a Ficha), a lista na altura deles (sem barra de rolagem
+        # as vendas: os cards numa coluna so (a Ficha), a lista na altura deles (sem barra de rolagem
         # propria: quem rola e o painel)
-        lista = tela.lista_antigas
+        lista = tela.lista_vendas
         altura_5 = lista.height()
         assert len(lista.cards) == 5 and {lista.coluna_do_card(c) for c in lista.cards} == {0}, "uma coluna só"
         assert altura_5 >= sum(c.height() for c in lista.cards), (altura_5, [c.height() for c in lista.cards])
@@ -903,10 +906,10 @@ def testar_rolagem(app: QApplication, cpfs: dict[str, str]) -> None:
         assert len(lista.cards) == 1 and altura_1 < altura_5, (altura_1, altura_5)
         tela._selecionar_por_cpf(cpfs["vazio"])
         app.processEvents()
-        assert not lista.isVisible() and not tela._titulo_historico.isVisible()
+        assert not tela._titulo_historico.isVisible() and not tela.lista_historico.isVisible()
         assert not tela._historico_vazio.isVisible() and tela.lista_vendas.vazio.isVisible()
-        print(f"OK: as propostas antigas em cards (uma coluna) têm {altura_5} px com 5 propostas e {altura_1} px com 1; "
-              "sem proposta nenhuma, só o aviso de 'nenhuma venda'.")
+        print(f"OK: as vendas em cards (uma coluna) têm {altura_5} px com 5 vendas e {altura_1} px com 1; "
+              "sem venda nenhuma, só o aviso de 'nenhuma venda'.")
 
         # outro cliente: o painel volta pro topo
         tela._selecionar_por_cpf(cpfs["completo"])

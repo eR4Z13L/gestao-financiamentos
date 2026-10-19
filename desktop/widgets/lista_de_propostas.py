@@ -1,4 +1,4 @@
-"""A lista de cards de proposta (um por pedido a um banco): Todas as Propostas e, na Ficha, as de antes das vendas.
+"""A lista de cards de proposta (um por pedido a um banco): Todas as Propostas e, na Ficha do VENDEDOR, o historico.
 
 Os cards ficam em colunas que encaixam (desktop/widgets/colunas_que_encaixam.py, a mesma peca da lista de vendas);
 esta lista cuida de qual esta ABERTO (um por vez: ele so cresce para baixo, na propria coluna), do formulario dentro
@@ -22,8 +22,6 @@ from core import vendas as vendas_mod
 from desktop.widgets.card_da_proposta import CardDaProposta, CardNovaProposta
 from desktop.widgets.card_da_venda import LARGURA_CARD, ControleDasVendas
 from desktop.widgets.colunas_que_encaixam import ListaEmColunas
-from desktop.widgets.encerrar_propostas_da_venda import perguntar_e_encerrar
-from desktop.widgets.exclusao_proposta import excluir_proposta_com_confirmacao
 from desktop.widgets.formulario_proposta import FormularioProposta
 
 NOVA = "nova"  # a chave do card "Nova proposta"
@@ -33,7 +31,7 @@ LinhaDaProposta = Callable[[int], "dict | None"]
 
 
 def chave_da_proposta(item: vendas_mod.PropostaNaLista) -> str:
-    """O ID_PROPOSTA; as de antes das vendas, sem ID, pela posicao no arquivo."""
+    """O ID_PROPOSTA; sem ID (o VENDEDOR, ou dado de uma versao antiga), pela posicao no arquivo."""
     return item.proposta.id or f"#{item.proposta.indice}"
 
 
@@ -54,7 +52,6 @@ class ListaDePropostas(ListaEmColunas):
         self.rascunho: dict | None = None  # o card "Nova proposta": {"cpf", "nome", "base", "escolher_venda"}
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre (na Ficha, o outro formulario)
         self.controle = ControleDasVendas(self, self.gravou.emit)
-        self._linha_aberta: dict | None = None  # a proposta como o formulario aberto a abriu (o excluir confere)
 
     # -- propostas ----------------------------------------------------------------------------------
 
@@ -198,10 +195,11 @@ class ListaDePropostas(ListaEmColunas):
     def _por_formulario(self, card: CardDaProposta) -> None:
         item = card.item
         admin = sessao_mod.eh_admin()
+        # excluir so de uma proposta numa venda (o caminho do card da venda); sem venda, nao ha o que excluir aqui
+        excluir = (lambda: self._excluir(item)) if admin and item.venda is not None and item.proposta.id else None
         guardado = self._formulario_guardado(chave_da_proposta(item))
         if guardado is not None:  # o mesmo de antes da montagem, com o que ja foi digitado
-            linha = self._linha_aberta
-            card.mostrar_formulario(guardado, (lambda: self._excluir(item, linha)) if admin else None)
+            card.mostrar_formulario(guardado, excluir)
             return
         linha = self._linha_da_proposta(item.proposta.indice)
         if linha is None:  # nunca falhar em silencio (ex.: a proposta sumiu entre a leitura e o clique)
@@ -225,9 +223,7 @@ class ListaDePropostas(ListaEmColunas):
         formulario.gravada.connect(self._ao_gravar_formulario)
         formulario.cancelada.connect(self._ao_cancelar)
         formulario.recolher_pedido.connect(self._ao_cancelar)
-        formulario.efetivada_agora.connect(self._ao_efetivar)
-        self._linha_aberta = linha
-        card.mostrar_formulario(formulario, (lambda: self._excluir(item, linha)) if admin else None)
+        card.mostrar_formulario(formulario, excluir)
         QTimer.singleShot(0, formulario.dar_foco_inicial)
 
     def _ao_gravar_formulario(self) -> None:
@@ -238,17 +234,6 @@ class ListaDePropostas(ListaEmColunas):
         self.aberta, self.rascunho = None, None
         QTimer.singleShot(0, self._remontar)
 
-    def _ao_efetivar(self, cpf: str, equipamento: str, indice: int) -> None:
-        """Uma proposta de antes das vendas virou Efetivado no formulario: oferece encerrar as outras em aberto do mesmo
-        cliente+equipamento (como sempre). Chega ANTES de `gravada`: o pai do dialogo e a lista, que sobrevive."""
-        perguntar_e_encerrar(self, cpf, equipamento, indice)
-
-    def _excluir(self, item: vendas_mod.PropostaNaLista, linha: dict) -> None:
-        """O "Excluir esta proposta…" do formulario aberto, com confirmacao: numa venda, pelo mesmo caminho do card da
-        venda; as de antes das vendas, pela posicao, conferindo que a linha ainda e a mesma."""
-        if item.venda is not None and item.proposta.id:
-            self.controle.excluir_proposta(item.venda, item.proposta)  # confirma, grava e avisa `gravou`
-            return
-        if excluir_proposta_com_confirmacao(self, item.proposta.indice, item.cliente or item.cpf, linha):
-            self.aberta = None
-            self.gravou.emit(f"{item.cliente or item.cpf}: proposta do {item.proposta.banco or 'banco'} excluída.")
+    def _excluir(self, item: vendas_mod.PropostaNaLista) -> None:
+        """O "Excluir esta proposta…" do formulario aberto, com confirmacao: pelo mesmo caminho do card da venda."""
+        self.controle.excluir_proposta(item.venda, item.proposta)  # confirma, grava e avisa `gravou`

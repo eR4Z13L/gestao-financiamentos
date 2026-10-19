@@ -31,9 +31,6 @@ from core import migracao_vendas as mig
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import vendas as v
-from PySide6.QtWidgets import QApplication
-from ambiente_de_teste import Mensagens
-from desktop.dialogs.organizar_vendas_dialog import OrganizarVendasDialog
 
 HOJE = date(2026, 9, 1)
 
@@ -96,20 +93,10 @@ def main() -> None:
         assert caminho.read_bytes() == antes and not backup_mod.listar_backups()
         print("OK: com dúvida sem resposta, recusa e não grava nem faz backup.")
 
-        linha("3) Pela janela: só aplica com tudo respondido; Maria junta, João fica separado")
+        linha("3) Com tudo respondido: Maria junta, João fica separado")
         decisoes = {tipos[mig.DUVIDA_VARIOS_EQUIPAMENTOS].chave: True, tipos[mig.DUVIDA_ESPACADA].chave: False}
-        app = QApplication.instance() or QApplication(sys.argv)
-        with Mensagens() as msgs:
-            janela = OrganizarVendasDialog(plano)
-            assert not janela.botao_aplicar.isEnabled() and "Falta responder 2" in janela.falta.text(), "nada marcado de início"
-            janela.respostas[tipos[mig.DUVIDA_VARIOS_EQUIPAMENTOS].chave].button(1).click()
-            assert not janela.botao_aplicar.isEnabled()
-            janela.respostas[tipos[mig.DUVIDA_ESPACADA].chave].button(0).click()
-            assert janela.botao_aplicar.isEnabled() and janela.decisoes() == decisoes
-            janela.botao_aplicar.click()
-            assert msgs.ultima()[1] == "Propostas juntadas em vendas" and "viraram 5 vendas" in msgs.ultima()[2]
-        resumo = janela.resultado
-        print("OK: a janela começa sem nada marcado, só libera 'Juntar em vendas' com tudo respondido e mostra o resumo.")
+        resumo = mig.aplicar(plano, decisoes)
+        print("OK: com todas as dúvidas respondidas, grava e devolve o resumo.")
         assert resumo["vendas"] == 5 and resumo["propostas"] == 9
         assert [b.motivo for b in backup_mod.listar_backups()] == [backup_mod.MOTIVO_PRE_VENDAS], "backup antes de gravar"
         propostas = bd.ler_propostas(caminho)
@@ -152,26 +139,7 @@ def main() -> None:
         assert mig.planejar().resumo["propostas"] == 0, "proposta criada já como venda não entra no plano"
         print("OK: rodar de novo não acha nada; plano feito antes é recusado; propostas novas já nascem em vendas.")
 
-        linha("5) Só junta com este computador em dia com a nuvem")
-        from core import sincronizacao as sinc
-        from desktop.dialogs import organizar_vendas_dialog as dialogo_mod
-        original_verificar = sinc.verificar_ao_abrir
-        config.SINCRONIZACAO_GOOGLE_ATIVADA = True  # so a CONFERENCIA roda (simulada): nada e enviado nem lido de verdade
-        try:
-            with Mensagens() as msgs:
-                for tipo, trecho in ((sinc.SITUACAO_NUVEM_MAIS_NOVA, "Baixe da nuvem"), (sinc.SITUACAO_SEM_REDE, "internet"),
-                                     (sinc.SITUACAO_LOCAL_PENDENTE, "Espere"), (sinc.SITUACAO_CONFLITO, "Resolva")):
-                    sinc.verificar_ao_abrir = lambda tipo=tipo: sinc.SituacaoAoAbrir(tipo)
-                    assert dialogo_mod.em_dia_com_a_nuvem(None) is False and trecho in msgs.ultima()[2], (tipo, msgs.ultima())
-                sinc.verificar_ao_abrir = lambda: sinc.SituacaoAoAbrir(sinc.SITUACAO_EM_DIA)
-                msgs.limpar()
-                assert dialogo_mod.em_dia_com_a_nuvem(None) is True and not msgs.registro
-        finally:
-            sinc.verificar_ao_abrir = original_verificar
-            config.SINCRONIZACAO_GOOGLE_ATIVADA = False
-        print("OK: nuvem mais nova, sem internet, envio pendente ou conflito: explica o que fazer e não deixa juntar; em dia: deixa.")
-
-        linha("6) Só o Administrador aplica")
+        linha("5) Só o Administrador aplica")
         sessao_mod.encerrar()
         try:
             mig.aplicar(mig.planejar(), {})

@@ -85,11 +85,10 @@ def _df(statuses: list[str], vendedores: list[str] | None = None) -> pd.DataFram
 
 def testar_regras() -> None:
     linha("1) Lista de status e categorias")
-    assert propostas_mod.STATUS_OPCOES == [
-        "Em Análise", "Pré-aprovado", "Aprovado", "Nota Fiscal Anexada", "Garantia Assinada", "Efetivado",
-        "Não efetivado", "Encerrada", "Negado",
-    ], propostas_mod.STATUS_OPCOES
-    assert propostas_mod.STATUS_OPCOES.index("Efetivado") > propostas_mod.STATUS_OPCOES.index("Aprovado"), "vem DEPOIS de Aprovado"
+    assert propostas_mod.STATUS_OFICIAIS == [
+        "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "Nota fiscal enviada", "Efetivado",
+    ], propostas_mod.STATUS_OFICIAIS
+    assert propostas_mod.STATUS_OFICIAIS.index("Efetivado") > propostas_mod.STATUS_OFICIAIS.index("Aprovado"), "vem DEPOIS de Aprovado"
     for s in ("Efetivado", "EFETIVADO", " efetivada "):
         assert propostas_mod.categoria_status(s) == "Aprovado", s
         assert propostas_mod.eh_efetivado(s) and not propostas_mod.eh_aprovado_nao_efetivado(s)
@@ -215,13 +214,15 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
         dialogo = FormularioProposta(_cpf(0), "CLIENTE ANA", proposta=bd.ler_propostas(arquivo).loc[indice].to_dict(), indice=indice)
         gravou: list[str] = []  # a funcao ligada ao sinal captura so a lista, nunca o formulario (ciclo de referencias)
         dialogo.gravada.connect(lambda: gravou.append("gravada"))
-        assert [dialogo._status.itemText(i) for i in range(dialogo._status.count())] == propostas_mod.STATUS_OPCOES
-        assert dialogo._status.findText("Efetivado") > dialogo._status.findText("Garantia Assinada")
+        # o formulario so oferece as 4 respostas do banco (o andamento depois do fechamento e do banco fechado, na venda)
+        assert [dialogo._status.itemText(i) for i in range(dialogo._status.count())] == vendas_mod.STATUS_DA_PROPOSTA
         dialogo._habilitar_edicao()
-        dialogo._status.setCurrentText("Efetivado")
+        dialogo._observacoes.setPlainText("so uma observacao")
         dialogo._salvar()
         assert gravou == ["gravada"], stubs.textos
-    print("OK: proposta nova só com os 4 status do banco; na edição 'Efetivado' está na lista (depois de Garantia Assinada) e grava.")
+        propostas_mod.atualizar_proposta(indice, {"STATUS": "Aprovado"})
+        propostas_mod.atualizar_proposta(indice, {"STATUS": "Efetivado"})  # (pelo core: a tela so efetiva um banco fechado)
+    print("OK: proposta nova e existente só com os 4 status do banco no formulário; 'Efetivado' grava pelo core.")
 
     # cenario do dashboard: ANA: Aprovado x2, Efetivado x1 (a de cima), NF x1 ; BIA: Efetivado x2, Em Analise x1
     def _add(cpf: str, status: str, valor: int) -> None:

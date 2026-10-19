@@ -167,13 +167,6 @@ class FormularioProposta(QWidget):
     gravada = Signal()
     recolher_pedido = Signal()
     cancelada = Signal()
-    # emitido ANTES de `gravada`, so quando o status acabou de virar "Efetivado" (nao
-    # quando ja estava): (cpf, equipamento, indice_gravado). Quem escuta (a lista de propostas)
-    # oferece encerrar as outras propostas em aberto da mesma venda - ver
-    # desktop/widgets/encerrar_propostas_da_venda.py. Emitido ANTES de `gravada` de
-    # proposito: depois dela o card e recarregado/recriado, e este `self` pode nao
-    # continuar valido.
-    efetivada_agora = Signal(str, str, int)
 
     def __init__(
         self,
@@ -293,17 +286,12 @@ class FormularioProposta(QWidget):
 
         self._status = ComboTravavel()
         _combo_flexivel(self._status)
-        # proposta nova so nasce com uma resposta de banco; o andamento do negocio fica na venda (core/vendas.py)
-        # proposta numa venda: so as 4 respostas do banco (o andamento do negocio fica na venda); as de antes das vendas
-        # ainda tem a lista antiga ate a limpeza dos status antigos
-        na_venda = bool((proposta or {}).get("ID_PROPOSTA")) or not self._existente
-        opcoes_status = list(vendas_mod.STATUS_DA_PROPOSTA if na_venda else propostas_mod.STATUS_OPCOES)
+        # so as 4 respostas do banco (o andamento do negocio fica na venda, core/vendas.py)
+        opcoes_status = list(vendas_mod.STATUS_DA_PROPOSTA)
         status_atual = (origem.get("STATUS") if origem else "") or ""
         if status_atual and status_atual not in opcoes_status:
-            # dados antigos tem status em CAIXA ALTA ("APROVADO", "NEGADO")
-            # que nao batem com a lista oficial ("Aprovado", "Negado") - sem
-            # isso, editar uma proposta assim mudaria o status dela pra "Em
-            # Análise" (o primeiro item) sem o usuario perceber.
+            # o status de agora fica na lista (um banco fechado em Assinado, ou dado de uma versao antiga em CAIXA
+            # ALTA): sem isso, editar mudaria o status dela pra "Em Análise" (o primeiro item) sem o usuario perceber.
             opcoes_status.insert(0, status_atual)
         self._status.addItems(opcoes_status)
 
@@ -774,10 +762,4 @@ class FormularioProposta(QWidget):
 
         if todas_negadas:  # a ultima resposta negou: a venda esta Perdida? (pergunta; nunca decide sozinho)
             perguntar_se_perdida(self, self._proposta_original["ID_VENDA"], self._nome_cliente or cpf)
-        status_anterior = (self._proposta_original or {}).get("STATUS") or ""
-        if propostas_mod.eh_efetivado(status) and not propostas_mod.eh_efetivado(status_anterior):
-            # o status ACABOU de virar Efetivado (nao ja estava): pode haver outras
-            # propostas em aberto da mesma venda (mesmo cliente+equipamento) em outro
-            # banco - emite ANTES de `gravada` (ver o comentario do sinal)
-            self.efetivada_agora.emit(cpf, campos["EQUIPAMENTO"], self.indice_gravado)
         self.gravada.emit()

@@ -77,6 +77,7 @@ class ControladorDaJanela:
         self.janela = janela
         janela.sair_solicitado.connect(self.trocar_de_usuario)
         janela.show()
+        janela.avisar_dados_antigos()  # so o ADMIN: proposta sem venda ou com status antigo na planilha
         janela.iniciar_sincronizacao_da_nuvem()  # so o ADMIN, e so com a sincronizacao ligada
         return True
 

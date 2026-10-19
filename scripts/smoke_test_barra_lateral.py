@@ -309,24 +309,25 @@ def testar_selo(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     print("OK: trocar de tela recalcula o selo (1 -> sem selo).")
 
     # (c) DEPOIS DE GRAVAR na Ficha de Cliente
-    novo = propostas_mod.adicionar_proposta(
+    id_venda_nova, id_proposta_nova = vendas_mod.criar_venda(
+        fx.CPF_ANA, ["Equipamento Modelo Y"],
         {
-            "CPF": fx.CPF_ANA,
             "DATA": pd.Timestamp(date.today() - timedelta(days=15)),
             "STATUS": propostas_mod.STATUS_EM_ANALISE,
             "BANCO": "Banco Exemplo",
-            "EQUIPAMENTO": "Equipamento Modelo Y",
             "VALOR (R$)": 41000,
             "MESES": 24,
-        }
+        },
     )
     assert menu.selo(PAGINA_PROPOSTAS) is None
     ficha = janela._tela_ficha
     ficha._selecionar_por_cpf(fx.CPF_ANA)
 
     def _abrir_na_ficha():
-        ficha.lista_antigas.abrir_proposta(next(c.item for c in ficha.lista_antigas.cards if c.item.proposta.indice == novo))
-        return ficha.lista_antigas.card_aberto()
+        # a proposta vive numa venda: o formulario abre dentro do card da venda, na Ficha
+        venda = next(c.venda for c in ficha.lista_vendas.cards if c.venda.id == id_venda_nova)
+        ficha.lista_vendas.editar_proposta(venda, next(p for p in venda.propostas if p.id == id_proposta_nova))
+        return ficha.lista_vendas.card_aberto()
 
     formulario = _abrir_na_ficha().formulario
     formulario._observacoes.setPlainText("editado no teste")

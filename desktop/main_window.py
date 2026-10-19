@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 import config
 from core import data_store_sheets as leitura_sheets
+from core import migracao_legado
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
@@ -438,6 +439,24 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Falha na sincronização", descricao.detalhe)
         else:
             QMessageBox.information(self, "Sincronização com o Google Sheets", descricao.detalhe)
+
+    # -- dados do jeito antigo -----------------------------------------------------------------
+
+    def avisar_dados_antigos(self) -> bool:
+        """Ao abrir como ADMIN: se a planilha ainda tem proposta sem venda ou com status fora da lista do app (dado de
+        uma versao antiga), avisa quantas sao e que falta rodar a conversao. O app abre assim mesmo. True se avisou."""
+        if sessao_mod.eh_vendedor():  # o VENDEDOR le da nuvem, sem o arquivo local
+            return False
+        try:
+            antigos = migracao_legado.contar_dados_antigos(propostas_mod.CAMINHO_XLSX)
+        except Exception as exc:  # nunca falhar em silencio (e nunca impedir o app de abrir)
+            _logger.warning("Nao foi possivel conferir se ha dados antigos.", exc_info=True)
+            QMessageBox.warning(self, "Não foi possível conferir os dados", f"{type(exc).__name__}: {exc}")
+            return False
+        if not antigos:
+            return False
+        QMessageBox.warning(self, "Dados de uma versão antiga", antigos.texto())
+        return True
 
     # -- nuvem: dois computadores -------------------------------------------------------------
 

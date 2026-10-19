@@ -1,6 +1,6 @@
 """Tela Todas as Propostas: TODAS as propostas, um card por pedido a um banco (desenhado com o usuario em 04/10/2026).
 
-Os cards sao os de desktop/widgets/lista_de_propostas.py (o mesmo da Ficha, nas propostas de antes das vendas), em
+Os cards sao os de desktop/widgets/lista_de_propostas.py (o mesmo do historico da Ficha do VENDEDOR), em
 colunas que encaixam, como na tela Vendas: fechados, mostram o banco, o status com as mesmas acoes rapidas do card da
 venda, o cliente, as condicoes e ha quanto tempo esperam a resposta; dois cliques abrem a propria proposta ali (o
 formulario, "Ver na venda →" e "Abrir a ficha"). Excluir so de dentro do formulario, com confirmacao.
@@ -55,15 +55,19 @@ _FRASE_CONTAGEM = {
     propostas_mod.ETAPA_EM_ANALISE: ("em análise", "em análise"),
     propostas_mod.ETAPA_PRE_APROVADO: ("pré-aprovada", "pré-aprovadas"),
     propostas_mod.ETAPA_APROVADO: ("aprovada", "aprovadas"),
-    propostas_mod.ETAPA_NF_ANEXADA: ("com nota fiscal anexada", "com nota fiscal anexada"),
-    propostas_mod.ETAPA_GARANTIA_ASSINADA: ("com garantia assinada", "com garantia assinada"),
     propostas_mod.ETAPA_EFETIVADO: ("efetivada", "efetivadas"),
-    propostas_mod.ETAPA_NAO_EFETIVADO: ("não efetivada", "não efetivadas"),
-    propostas_mod.ETAPA_PROPOSTA_ENCERRADA: ("encerrada", "encerradas"),
     propostas_mod.ETAPA_NEGADO: ("negada", "negadas"),
     propostas_mod.ETAPA_DESCONHECIDA: ("com status não reconhecido", "com status não reconhecido"),
     propostas_mod.ETAPA_SEM_STATUS: ("sem status", "sem status"),
 }
+
+
+def etapa_para_contar(status: str) -> str:
+    """A etapa de um status na contagem do topo. Fora da lista oficial (dado de uma versao antiga, que a conversao
+    ainda nao trocou) conta como "status nao reconhecido" - nunca como uma etapa que o app nao oferece mais."""
+    if status and status not in propostas_mod.STATUS_OFICIAIS:
+        return propostas_mod.ETAPA_DESCONHECIDA
+    return propostas_mod.etapa_status(status)
 
 
 def resumo_por_etapa(contagem: Mapping[str, int]) -> str:
@@ -305,7 +309,7 @@ class PropostasScreen(QWidget):
             return
 
         status_antes = self._filtro_status.currentText() if self._filtro_status.count() else _FILTRO_TODOS
-        opcoes_status = [_FILTRO_TODOS] + sorted({s for s in self._todas["STATUS"] if s})
+        opcoes_status = [_FILTRO_TODOS, *propostas_mod.STATUS_OFICIAIS]  # so os oficiais, nao os valores crus da planilha
         self._filtro_status.blockSignals(True)
         self._filtro_status.clear()
         self._filtro_status.addItems(opcoes_status)
@@ -462,7 +466,7 @@ class PropostasScreen(QWidget):
 
         itens = [self._itens[indice] for indice in df.index if indice in self._itens]
         # a contagem e o resumo por status sao SO do resultado filtrado
-        resumo = resumo_por_etapa(Counter(propostas_mod.etapa_status(i.proposta.status) for i in itens))
+        resumo = resumo_por_etapa(Counter(etapa_para_contar(i.proposta.status) for i in itens))
         contador = f"{len(itens)} proposta(s)" + (f" · {resumo}" if resumo else "")
         if avisos:
             contador += " — " + "; ".join(avisos)

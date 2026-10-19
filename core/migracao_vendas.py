@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -70,8 +72,11 @@ def _data_curta(momento) -> str:
     return pd.Timestamp(momento).strftime("%d/%m/%Y") if pd.notna(momento) else "sem data"
 
 
-def planejar() -> Plano:
-    propostas = bd.ler_propostas(CAMINHO_XLSX)
+def planejar(caminho: Path | None = None, propostas: pd.DataFrame | None = None) -> Plano:
+    """`caminho`: o arquivo a ler (padrao: o do app); o conversor dos dados antigos passa o dele. `propostas`: ja lidas
+    (como bd.ler_propostas devolve), se quem chama quer decidir quais entram (o conversor tira o ID_VENDA das orfas)."""
+    if propostas is None:
+        propostas = bd.ler_propostas(caminho or CAMINHO_XLSX)
     sem_venda = propostas[propostas["ID_VENDA"] == ""].copy()
     sem_venda["_cpf"] = sem_venda["CPF"].map(apenas_digitos)
     sem_venda["_equip"] = sem_venda["EQUIPAMENTO"].fillna("").str.strip()
@@ -166,23 +171,18 @@ def _juntar(plano: Plano, decisoes: dict[str, bool]) -> list[list[Grupo]]:
     return list(finais.values())
 
 
-def aplicar(plano: Plano, decisoes: dict[str, bool]) -> dict:
-    """Grava as vendas do plano. `decisoes`: chave da duvida -> True (juntar) / False (separar); duvida sem resposta
-    fica separada. Recusa se as propostas mudaram desde o plano. Devolve um resumo do que foi feito."""
-    sessao_mod.exigir_admin()
-    faltando = [d.chave for d in plano.duvidas if d.chave not in decisoes]
-    if faltando:
-        raise vendas_mod.ErroVenda(f"Responda todas as dúvidas antes ({len(faltando)} sem resposta).")
-    propostas = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS].copy()
-    if [int(i) for i in propostas.index[propostas["ID_VENDA"] == ""]] != plano.indices_sem_venda:
-        raise vendas_mod.ErroVenda("As propostas mudaram desde que o plano foi feito. Abra de novo para refazer o plano.")
-    vendas = bd.ler_vendas(CAMINHO_XLSX)
-    backup = backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_VENDAS, CAMINHO_XLSX)
-
+def montar(plano: Plano, decisoes: dict[str, bool], propostas: pd.DataFrame, vendas: pd.DataFrame,
+           quando: Callable[[pd.Timestamp], datetime] | None = None) -> dict:
+    """Monta, SEM gravar, o resultado de juntar: `propostas` (so as colunas editaveis) ganham ID_PROPOSTA/ID_VENDA e
+    as vendas novas saem prontas, com o historico de cada uma. `propostas` e alterada no lugar (passe uma copia).
+    `quando`: o QUANDO do historico de cada venda nova, a partir da DATA_CRIACAO dela (padrao: agora).
+    Devolve {"propostas", "vendas", "historico", "por_status", "vendas_novas"}."""
     novas, historico, contagem = [], [], {}
     agora = datetime.now().replace(microsecond=0)
     for grupos in _juntar(plano, decisoes):
         indices = sorted(i for g in grupos for i in g.indices)
+        if not indices:  # grupo esvaziado (o conversor tira propostas de um grupo): nao ha venda para ele
+            continue
         id_venda = vendas_mod.novo_id("V")
         for i in indices:
             if not propostas.at[i, "ID_PROPOSTA"]:
@@ -209,13 +209,29 @@ def aplicar(plano: Plano, decisoes: dict[str, bool]) -> dict:
         novas.append({"ID_VENDA": id_venda, "CPF": propostas.at[indices[0], "CPF"], "EQUIPAMENTOS": " + ".join(equipamentos),
                       "STATUS": status, "BANCO_ESCOLHIDO": escolhido, "MOTIVO": motivo,
                       "DATA_CRIACAO": datas.min(), "OBSERVAÇÕES": ""})
-        historico.append({"QUANDO": agora, "TIPO": vendas_mod.TIPO_VENDA, "ID": id_venda, "DE": "", "PARA": status,
+        momento = quando(datas.min()) if quando is not None else agora
+        historico.append({"QUANDO": momento, "TIPO": vendas_mod.TIPO_VENDA, "ID": id_venda, "DE": "", "PARA": status,
                           "MOTIVO": motivo, "COMPUTADOR": vendas_mod.sheets_sync.nome_desta_maquina()})
         contagem[status] = contagem.get(status, 0) + 1
+    return {"propostas": propostas, "historico": historico, "por_status": contagem, "vendas_novas": len(novas),
+            "vendas": pd.concat([vendas, pd.DataFrame(novas, columns=bd.VENDAS_COLUNAS)], ignore_index=True)}
 
+
+def aplicar(plano: Plano, decisoes: dict[str, bool]) -> dict:
+    """Grava as vendas do plano. `decisoes`: chave da duvida -> True (juntar) / False (separar); duvida sem resposta
+    fica separada. Recusa se as propostas mudaram desde o plano. Devolve um resumo do que foi feito."""
+    sessao_mod.exigir_admin()
+    faltando = [d.chave for d in plano.duvidas if d.chave not in decisoes]
+    if faltando:
+        raise vendas_mod.ErroVenda(f"Responda todas as dúvidas antes ({len(faltando)} sem resposta).")
+    propostas = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS].copy()
+    if [int(i) for i in propostas.index[propostas["ID_VENDA"] == ""]] != plano.indices_sem_venda:
+        raise vendas_mod.ErroVenda("As propostas mudaram desde que o plano foi feito. Abra de novo para refazer o plano.")
+    vendas = bd.ler_vendas(CAMINHO_XLSX)
+    backup = backup_mod.fazer_backup(backup_mod.MOTIVO_PRE_VENDAS, CAMINHO_XLSX)
+    montado = montar(plano, decisoes, propostas, vendas)
     bd.escrever_vendas_e_propostas(
-        CAMINHO_XLSX, propostas=propostas,
-        vendas=pd.concat([vendas, pd.DataFrame(novas, columns=bd.VENDAS_COLUNAS)], ignore_index=True),
-        historico_novo=historico,
+        CAMINHO_XLSX, propostas=montado["propostas"], vendas=montado["vendas"], historico_novo=montado["historico"],
     )
-    return {"vendas": len(novas), "propostas": len(plano.indices_sem_venda), "por_status": contagem, "backup": backup}
+    return {"vendas": montado["vendas_novas"], "propostas": len(plano.indices_sem_venda),
+            "por_status": montado["por_status"], "backup": backup}

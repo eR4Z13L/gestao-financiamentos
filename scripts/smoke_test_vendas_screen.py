@@ -157,17 +157,17 @@ def main() -> None:
             for nome in ("Cadeira Exemplo", "Laser Exemplo", "Mesa Exemplo", "Mesa Exemplo Nova"):
                 equipamentos_mod.cadastrar({"EQUIPAMENTO": nome})  # a lista fechada do campo Equipamento
 
-            linha("1) Sem vendas: aviso das propostas antigas e a lista vazia")
+            linha("1) Sem vendas: a lista vazia (e nenhum aviso de propostas antigas: saiu no plano 1.3)")
             tela = tela_mod.VendasScreen()
             soltas.esperadas = (tela,)
             app.installEventFilter(soltas)
             tela.resize(1100, 760)
             tela.show()
             _processar()
-            sem_venda = len(bd.ler_propostas(caminho))
-            assert not tela.aviso_sem_venda.isHidden() and f"{sem_venda} proposta(s)" in tela.texto_sem_venda.text()
+            assert bd.ler_propostas(caminho)["ID_VENDA"].eq("").all(), "a fixture tem propostas sem venda"
+            assert not hasattr(tela, "aviso_sem_venda") and not hasattr(tela, "_juntar_em_vendas"), "a tela Vendas não junta mais"
             assert tela.lista.cards == [] and "Nenhuma venda ainda" in tela.lista.vazio.text() and not tela.lista.vazio.isHidden()
-            print(f"OK: {sem_venda} propostas antigas aparecem no aviso (com o 'Juntar em vendas…'); nenhuma venda ainda.")
+            print("OK: sem vendas, a lista vazia e nenhum aviso nem botão 'Juntar em vendas…'.")
 
             linha("2) Nova venda: um card no topo da lista (sem janela); criada, o card dela abre com o primeiro banco")
             tela.botao_nova.click()

@@ -52,7 +52,7 @@ def testar_cores() -> None:
     }
     for status, chave in esperado.items():
         assert chave_cor_status(status) == chave, (status, chave_cor_status(status))
-    for status in propostas_mod.STATUS_OPCOES:
+    for status in propostas_mod.STATUS_OFICIAIS:
         assert chave_cor_status(status) != "neutro", f"status oficial sem cor propria: {status}"
     print("OK: cada status oficial tem cor própria (grafias antigas em CAIXA ALTA incluídas); vazio/desconhecido = cinza.")
 

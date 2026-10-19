@@ -175,7 +175,7 @@ PALAVRAS_STATUS_NAO_EFETIVADO = {"NÃO EFETIVADO", "NAO EFETIVADO"}
 # "Encerrada" = a proposta parou de fazer sentido porque OUTRA proposta do mesmo
 # cliente + equipamento (a mesma venda, em outro banco) ja foi efetivada - nao e erro
 # do banco (nao e Negado) nem desistencia do cliente (nao e Nao efetivado): so "nao foi
-# por ali". Ver core.propostas.propostas_em_aberto_da_mesma_venda/encerrar_propostas.
+# por ali". Status de antes das vendas: o app nao o oferece mais (core/migracao_legado.py converte).
 PALAVRAS_STATUS_ENCERRADA = {"ENCERRADA"}
 
 # Status que fazem uma proposta parar de contar "N dias" e virar "Encerrado"

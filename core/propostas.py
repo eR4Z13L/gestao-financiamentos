@@ -36,27 +36,21 @@ STATUS_NOTA_ENVIADA = "Nota fiscal enviada"
 # processo JA acabou sem virar venda.
 STATUS_NAO_EFETIVADO = "Não efetivado"
 # "Encerrada": a proposta parou de fazer sentido porque OUTRA proposta do mesmo
-# cliente + equipamento (a mesma venda, em outro banco) ja foi efetivada. Normalmente
-# gravada pelo fluxo de "perguntar_e_encerrar" (desktop/widgets/encerrar_propostas_da_venda.py),
-# mas pode ser escolhida a mao tambem (ex.: o admin sabe de outro motivo pra fechar).
+# cliente + equipamento (a mesma venda, em outro banco) ja foi efetivada. Status de antes das
+# vendas: o app nao o oferece mais, e a conversao dos dados antigos pergunta a resposta de cada banco.
 STATUS_PROPOSTA_ENCERRADA = "Encerrada"
 STATUS_NEGADO = "Negado"
 
-# Ordem sugerida nos formularios/dropdowns (funil aproximado da proposta).
-# "Efetivado" (compra concluida) e a ultima etapa do lado positivo: vem depois
-# de "Aprovado" (e das etapas de nota fiscal/garantia); "Não efetivado" e
-# "Encerrada" sao os outros dois jeitos de uma proposta aprovada nao virar
-# venda, e ficam antes do "Negado" (que nunca foi aprovado).
-STATUS_OPCOES = [
+# Os unicos status que uma proposta pode ter depois da conversao dos dados antigos (plano 1.3). Qualquer outro e dado
+# de uma versao antiga: o app avisa ao abrir (core/migracao_legado.py converte).
+STATUS_OFICIAIS = [
     STATUS_EM_ANALISE,
     STATUS_PRE_APROVADO,
     STATUS_APROVADO,
-    STATUS_NF_ANEXADA,
-    STATUS_GARANTIA_ASSINADA,
-    STATUS_EFETIVADO,
-    STATUS_NAO_EFETIVADO,
-    STATUS_PROPOSTA_ENCERRADA,
     STATUS_NEGADO,
+    STATUS_ASSINADO,
+    STATUS_NOTA_ENVIADA,
+    STATUS_EFETIVADO,
 ]
 
 # Reaproveita as mesmas listas de "palavras" usadas pro calculo de TEMPO em
@@ -216,6 +210,34 @@ def esta_em_aberto(status: str) -> bool:
 DIAS_PROPOSTA_PARADA = 7
 
 
+COLUNA_VENDA_RESOLVIDA = "VENDA_RESOLVIDA"  # acrescentada por listar_propostas (so o ADMIN, que tem as vendas)
+
+
+def fora_do_fluxo(propostas: pd.DataFrame) -> pd.Series:
+    """Quais propostas estao numa venda ja resolvida (core.vendas.VENDAS_RESOLVIDAS): nao entram nos avisos de
+    "em aberto", "a efetivar" e no selo. Sem a coluna (o VENDEDOR, que nao le as vendas; tabelas de teste), nenhuma."""
+    if COLUNA_VENDA_RESOLVIDA not in propostas.columns:
+        return pd.Series(False, index=propostas.index)
+    return propostas[COLUNA_VENDA_RESOLVIDA].fillna(False).astype(bool)
+
+
+def numa_venda(propostas: pd.DataFrame) -> pd.Series:
+    """Quais propostas tem venda (ID_VENDA preenchido). Sem a coluna, nenhuma."""
+    if "ID_VENDA" not in propostas.columns:
+        return pd.Series(False, index=propostas.index)
+    return propostas["ID_VENDA"].fillna("").astype(str).str.strip() != ""
+
+
+def _marcar_vendas_resolvidas(propostas: pd.DataFrame) -> pd.DataFrame:
+    from core import vendas as vendas_mod  # import tardio: vendas.py importa este modulo
+
+    vendas = bd.ler_vendas(CAMINHO_XLSX)
+    resolvidas = set(vendas.loc[vendas["STATUS"].isin(vendas_mod.VENDAS_RESOLVIDAS), "ID_VENDA"])
+    marcado = propostas.copy()
+    marcado[COLUNA_VENDA_RESOLVIDA] = (marcado["ID_VENDA"].isin(resolvidas) if "ID_VENDA" in marcado.columns else False)
+    return marcado
+
+
 def contar_paradas(propostas: pd.DataFrame, dias: int | None = None) -> int:
     """Quantas das `propostas` (como listar_propostas devolve, com STATUS e TEMPO) estao em
     aberto ha mais de `dias` dias (padrao: DIAS_PROPOSTA_PARADA, lido na hora da chamada).
@@ -225,7 +247,7 @@ def contar_paradas(propostas: pd.DataFrame, dias: int | None = None) -> int:
         dias = DIAS_PROPOSTA_PARADA
     if propostas.empty:
         return 0
-    em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool)
+    em_aberto = propostas["STATUS"].map(esta_em_aberto).astype(bool) & ~fora_do_fluxo(propostas)
     dias_parada = pd.to_numeric(propostas["TEMPO"].map(dias_do_tempo), errors="coerce")
     return int((em_aberto & (dias_parada > dias)).sum())
 
@@ -283,6 +305,8 @@ def listar_propostas() -> pd.DataFrame:
     funcoes de escrita), esse indice nunca chega a ser usado pra editar.
     """
     df = _ler_da_fonte_ativa()
+    if not sessao_mod.eh_vendedor():  # o VENDEDOR le da nuvem, sem as vendas
+        df = _marcar_vendas_resolvidas(df)
     return _ordenar_por_data_desc(df)
 
 
@@ -672,56 +696,3 @@ def remover_proposta(indice: int, esperado: Mapping | None = None) -> None:
         # a venda ficaria contando com um banco que nao existe mais
         raise ErroProposta("Este banco está marcado como fechado numa venda. Desmarque o anel antes de excluir a proposta.")
     bd.escrever_propostas(CAMINHO_XLSX, df.drop(index=indice).reset_index(drop=True))
-
-
-# -- mesma venda em bancos diferentes ----------------------------------------------------
-# E comum lancar a MESMA venda (mesmo cliente + mesmo equipamento) em varios bancos ao
-# mesmo tempo. Quando uma delas efetiva, as outras que ainda estavam em aberto (em
-# analise, ou ate ja aprovadas por outro banco) deixam de fazer sentido - mas o app NUNCA
-# decide isso sozinho: so pergunta (ver desktop/widgets/encerrar_propostas_da_venda.py).
-
-
-def propostas_da_mesma_venda(cpf: str, equipamento: str, ignorar_indice: int | None = None) -> pd.DataFrame:
-    """Outras propostas do MESMO cliente (CPF, so os digitos) e do MESMO equipamento
-    (sem diferenciar maiusculas/espacos) - candidatas a serem a mesma venda em bancos
-    diferentes. Sempre le a planilha local inteira (so ADMIN grava, e e quem chama isto).
-    `ignorar_indice`: nunca inclui essa posicao (normalmente a proposta que acabou de ser
-    efetivada)."""
-    df = bd.ler_propostas(CAMINHO_XLSX)
-    alvo = apenas_digitos(cpf)
-    mesmo_cliente = df["CPF"].map(apenas_digitos) == alvo
-    mesmo_equipamento = _mesmo_texto(df["EQUIPAMENTO"], equipamento) if equipamento else pd.Series(False, index=df.index)
-    resultado = df[mesmo_cliente & mesmo_equipamento]
-    if ignorar_indice is not None:
-        resultado = resultado[resultado.index != ignorar_indice]
-    return resultado
-
-
-def propostas_em_aberto_da_mesma_venda(cpf: str, equipamento: str, ignorar_indice: int | None = None) -> pd.DataFrame:
-    """Como propostas_da_mesma_venda, so as que AINDA estao em aberto (esta_em_aberto) -
-    as candidatas reais a virar "Encerrada" quando uma delas acabou de ser efetivada. Uma
-    proposta ja Negada/Efetivada/Não efetivado/Encerrada nunca entra aqui."""
-    outras = propostas_da_mesma_venda(cpf, equipamento, ignorar_indice)
-    if outras.empty:
-        return outras
-    return outras[outras["STATUS"].map(esta_em_aberto)]
-
-
-def encerrar_propostas(indices: list[int]) -> int:
-    """Marca cada proposta de `indices` como STATUS_PROPOSTA_ENCERRADA, numa unica escrita.
-    So usada depois de perguntar (nunca automatico) - ver propostas_em_aberto_da_mesma_venda.
-    Pula (sem erro) indices que sumiram ou que ja nao estao mais em aberto nesse meio-tempo -
-    nunca sobrescreve um desfecho que outra tela ja deu a proposta. Devolve quantas mudaram."""
-    sessao_mod.exigir_admin()
-    if not indices:
-        return 0
-    df = bd.ler_propostas(CAMINHO_XLSX)[bd.PROPOSTAS_COLUNAS_EDITAVEIS]
-    alteradas = 0
-    for indice in indices:
-        if indice not in df.index or not esta_em_aberto(df.loc[indice, "STATUS"]):
-            continue
-        df.loc[indice, "STATUS"] = STATUS_PROPOSTA_ENCERRADA
-        alteradas += 1
-    if alteradas:
-        bd.escrever_propostas(CAMINHO_XLSX, df)
-    return alteradas

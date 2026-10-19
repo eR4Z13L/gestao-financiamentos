@@ -9,6 +9,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_filtros_propostas.py
 
 from __future__ import annotations
 
+from collections import Counter
 import os
 import sys
 import tempfile
@@ -41,7 +42,7 @@ from core.propostas import (
     ordenar,
     valores_distintos,
 )
-from desktop.screens.propostas_screen import PropostasScreen, resumo_por_etapa
+from desktop.screens.propostas_screen import PropostasScreen, etapa_para_contar, resumo_por_etapa
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 
 NAN = float("nan")
@@ -254,7 +255,17 @@ def testar_resumo_por_etapa() -> None:
     assert resumo_por_etapa({"negado": 1, "aprovado": 1, "efetivado": 1, "em_analise": 1}) ==         "1 em análise · 1 aprovada · 1 efetivada · 1 negada"
     assert resumo_por_etapa({"em_analise": 0, "negado": 2}) == "2 negadas", "zeros não aparecem"
     assert resumo_por_etapa({}) == ""
-    assert resumo_por_etapa({"garantia": 2, "nota_fiscal": 1, "desconhecida": 1, "": 3}) ==         "1 com nota fiscal anexada · 2 com garantia assinada · 1 com status não reconhecido · 3 sem status", "ordem do funil"
+    assert resumo_por_etapa({"desconhecida": 1, "": 3, "aprovado": 2}) == "2 aprovadas · 1 com status não reconhecido · 3 sem status", "ordem do funil"
+    # os status de antes (Garantia assinada, Nota fiscal anexada, Não efetivado, Encerrada) nao tem mais frase propria: contam
+    # como "status não reconhecido" ate a conversao (nunca somem da contagem)
+    for antigo in ("Garantia Assinada", "Nota Fiscal Anexada", "Não efetivado", "Encerrada", "APROVADO", "Texto solto"):
+        assert etapa_para_contar(antigo) == "desconhecida", antigo
+    for oficial, etapa in (("Em Análise", "em_analise"), ("Pré-aprovado", "pre_aprovado"), ("Aprovado", "aprovado"),
+                           ("Negado", "negado"), ("Assinado", "aprovado"), ("Nota fiscal enviada", "aprovado"),
+                           ("Efetivado", "efetivado"), ("", "")):
+        assert etapa_para_contar(oficial) == etapa, oficial
+    contagem = Counter(etapa_para_contar(s) for s in ("Aprovado", "Encerrada", "Garantia Assinada", "", "Negado"))
+    assert resumo_por_etapa(contagem) == "1 aprovada · 1 negada · 2 com status não reconhecido · 1 sem status", resumo_por_etapa(contagem)
     print("OK: '12 em análise · 5 aprovadas · 30 negadas' (singular/plural, na ordem do funil, sem zeros).")
 
 
@@ -423,6 +434,8 @@ def testar_filtros_na_tela(app: QApplication, ctx: _Contexto, tela: PropostasScr
     linha("5) A tela: filtros, contagem e 'Limpar filtros' (Lista)")
     total = "11 proposta(s) · 5 em análise · 2 aprovadas · 1 efetivada · 2 negadas · 1 sem status"
     assert tela._contador.text() == total, tela._contador.text()
+    opcoes = [tela._filtro_status.itemText(i) for i in range(tela._filtro_status.count())]
+    assert opcoes == ["Todos", "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "Nota fiscal enviada", "Efetivado"],         "o filtro Resposta oferece só os status oficiais, não os valores crus da planilha"
 
     _escolher(tela._filtro_vendedor, "ANA")
     assert _na_lista(tela) == [10, 1, 0, 4, 8, 6]

@@ -1,10 +1,10 @@
-"""O card de UMA proposta (um pedido a um banco): Todas as Propostas e, na Ficha, as propostas de antes das vendas.
+"""O card de UMA proposta (um pedido a um banco): Todas as Propostas e, na Ficha do VENDEDOR, o historico.
 
 Fechado (desenhado com o usuario em 04/10/2026): o BANCO em destaque; a etiqueta de status e as mesmas acoes rapidas
 do card da venda (bolinhas Aprovado/Negado, o anel de "fechou com este banco", o "Efetivado…" de um banco fechado e
 a ↩) - as mesmas pecas (ver card_da_venda.por_controles_de_status); o cliente e o equipamento; as condicoes; e ha
 quanto tempo a proposta espera a resposta do banco (destacado quando parada). Faixa colorida pela cor do status.
-A proposta de antes das vendas (sem venda) leva a etiqueta "sem venda", sem anel nem acoes: o status dela muda pelo
+Sem venda (o VENDEDOR, ou dado de uma versao antiga), o card nao tem anel nem acoes: o status dela muda pelo
 formulario.
 
 Aberto (dois cliques, ou a setinha ⌄ do canto): cresce para baixo com o formulario da proposta (o mesmo
@@ -115,12 +115,6 @@ class CardDaProposta(QFrame):
         self.cliente = QLabel(" · ".join(p for p in (cliente, proposta.equipamento) if p), self)
         self.cliente.setWordWrap(True)
         detalhe.addWidget(self.cliente, stretch=1)
-        self.sem_venda: QLabel | None = None
-        if venda is None and not proposta.id:
-            self.sem_venda = QLabel("sem venda", self)
-            self.sem_venda.setProperty("role", "secundario")
-            self.sem_venda.setToolTip("Proposta de antes das vendas: ainda não está em nenhuma venda")
-            detalhe.addWidget(self.sem_venda, alignment=Qt.AlignmentFlag.AlignTop)
         self._layout.addLayout(detalhe)
 
         # a ultima linha: as condicoes, ha quanto tempo espera e, fechado, o ⌄ (numa linha so: o card fica baixo)
@@ -206,7 +200,7 @@ class CardDaProposta(QFrame):
 
 
 class CardNovaProposta(QFrame):
-    """O card "Nova proposta" no topo da lista (o "Duplicar" do Dashboard, de uma proposta de antes das vendas): so o
+    """O card "Nova proposta" no topo da lista (o "Duplicar" do Dashboard): so o
     titulo e o formulario, ja em edicao. Gravar cria a venda junto (FormularioProposta)."""
 
     def __init__(self, nome_cliente: str, formulario: FormularioProposta, parent: QWidget | None = None):

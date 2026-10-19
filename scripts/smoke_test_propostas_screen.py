@@ -26,9 +26,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 import fixture_ficticia as fx
+from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core.validators import apenas_digitos
 from desktop import settings as settings_mod
 from desktop.main_window import MainWindow
@@ -190,10 +192,21 @@ def testar_propostas_screen(app: QApplication) -> None:
             assert depois.loc[indice_real, "OBSERVAÇÕES"] == "editado via tela todas propostas"
             print(f"OK: editar pela tela 'Todas as Propostas' funcionou (posição real {indice_real}).")
 
-            # excluir: so de dentro do formulario do card aberto (com confirmacao) - nao ha mais seleciona + Excluir
+            # excluir: so de dentro do formulario do card aberto (com confirmacao) - nao ha mais seleciona + Excluir.
+            # Uma proposta SEM venda (dado de uma versao antiga) abre, mas nao tem o excluir (plano 1.3)
             assert not hasattr(tela, "_botao_excluir") and not hasattr(tela, "_excluir_selecionada")
-            total_antes_excluir = tela.lista.total()
             item = next(i for i in tela.propostas_visiveis() if i.proposta.indice == indice_real)
+            assert item.venda is None
+            tela.lista.abrir_proposta(item)
+            assert tela.lista.card_aberto().botao_excluir is None, "sem venda: nada de excluir ali"
+            tela.lista.fechar_proposta()
+            id_venda, id_proposta = vendas_mod.criar_venda(
+                propostas_completo.iloc[0]["CPF"], ["Equipamento Modelo X"],
+                {"BANCO": bancos_mod.nomes_ativos()[0], "VALOR (R$)": 1000, "MESES": 12})
+            tela._ao_recarregar()
+            app.processEvents()
+            total_antes_excluir = tela.lista.total()
+            item = next(i for i in tela.propostas_visiveis() if i.proposta.id == id_proposta)
             tela.lista.abrir_proposta(item)
             card = tela.lista.card_aberto()
             assert card.botao_excluir is not None

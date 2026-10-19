@@ -51,6 +51,9 @@ VENDA_MANUAL = {VENDA_PENDENTE_ENTREGA, *DESFECHOS_DA_VENDA}  # o recalculo pelo
 # Pendente de entrega NAO e finalizada: a venda ja saiu do banco mas ainda falta entregar, e isso entra nos alertas
 # e nas listas "em andamento" (so nao recebe pedido novo - ver VENDA_EM_ABERTO)
 VENDA_FINALIZADA = {VENDA_EFETIVADA, *DESFECHOS_DA_VENDA}
+# a venda ja esta resolvida (efetivou, desistiu, perdeu ou so falta entregar): as propostas dela saem de "Precisa de
+# atencao", de "A efetivar", de "Em aberto ha mais de N dias" e do selo da barra lateral (a venda ja diz o que falta)
+VENDAS_RESOLVIDAS = {*VENDA_FINALIZADA, VENDA_PENDENTE_ENTREGA}
 
 # a resposta do banco (o que a lista e as bolinhas oferecem para qualquer proposta)
 STATUS_DA_PROPOSTA = [
@@ -74,6 +77,7 @@ MOTIVOS_DE_PERDA = ["Desistiu", "Comprou à vista", "Foi com outro correspondent
 TIPO_VENDA = "venda"
 TIPO_PROPOSTA = "proposta"
 TIPO_FECHAMENTO = "fechamento"  # marcar/desmarcar um banco como fechado (nao e troca de status)
+TIPO_CONVERSAO = "conversao"  # a conversao dos dados antigos (core/migracao_legado.py): a pilha do "voltar" a ignora
 FECHADA = "Fechada"
 _SEPARADOR_DE_FECHADAS = ";"
 _SEPARADOR_DE_EQUIPAMENTOS = "+"
@@ -662,7 +666,7 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
 
 @dataclass(frozen=True)
 class PropostaNaLista:
-    """Uma proposta como Todas as Propostas (e a Ficha, nas de antes das vendas) a mostra: um card por pedido a um
+    """Uma proposta como Todas as Propostas (e a Ficha do VENDEDOR) a mostra: um card por pedido a um
     banco, com a venda dele para as acoes do card (as mesmas do card da venda)."""
     proposta: PropostaNaVenda
     venda: ResumoDaVenda | None  # None: de antes das vendas (ou a leitura do VENDEDOR, que ainda nao tem as vendas)
@@ -722,13 +726,6 @@ def rotulo_da_venda(venda: ResumoDaVenda) -> str:
     bancos = len(venda.propostas)
     quantos = "nenhum banco" if not bancos else f"{bancos} banco{'s' if bancos > 1 else ''}"
     return " · ".join(p for p in (quando, venda.equipamentos, venda.status, quantos) if p)
-
-
-def contar_propostas_sem_venda() -> int:
-    """Propostas que nao estao em nenhuma venda (as de antes das vendas, ainda nao juntadas)."""
-    propostas = bd.ler_propostas(_caminho())
-    existentes = set(bd.ler_vendas(_caminho())["ID_VENDA"])
-    return int((~propostas["ID_VENDA"].isin(existentes)).sum())
 
 
 def indice_da_proposta(id_proposta: str) -> int:

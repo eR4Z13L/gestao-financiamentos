@@ -60,3 +60,7 @@ installer/saida/
 # Preferencias locais do editor/IDE, se houver
 .vscode/
 .idea/
+
+# saida do conversor de dados antigos (tem dados reais; o conversor ja recusa rodar dentro do projeto)
+relatorio_conversao.md
+duvidas_conversao.json

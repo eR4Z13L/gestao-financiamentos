@@ -144,7 +144,7 @@ def testar_cards_e_ordem(tela, dados: dict) -> None:
     assert (a1.banco.text(), a1.pilula.text()) == ("Santander", "Em Análise")
     assert a1.cliente.text() == f"{a1.item.cliente} · Cadeira Exemplo" and a1.item.cliente, a1.cliente.text()
     assert a2.condicoes.text() == "R$ 42.000 · 48x · 1ª em 60 dias · parcela R$ 1.200,50", a2.condicoes.text()
-    assert a1.sem_venda is None and a1.pilula.clicavel and len(a1.controles["bolinhas"]) == 2, "na venda: as ações rápidas"
+    assert a1.pilula.clicavel and len(a1.controles["bolinhas"]) == 2, "na venda: as ações rápidas"
     assert b.controles["anel"] is not None and not b.controles["anel"].fechado, "aprovada: o anel para marcar como fechado"
     assert a1.espera.text() == texto_da_espera(0) == "esperando desde hoje", "a espera conta do HISTÓRICO (enviada hoje)"
     assert a1.espera.property("role") == "secundario", "esperando há pouco: sem destaque"
@@ -278,7 +278,7 @@ def testar_gravar_por_cima_e_excluir(tela, dados: dict, msgs: Mensagens) -> None
     chave = f"#{antiga}"
     tela.lista.abrir_proposta(_item(tela, chave))
     card = tela.lista.card_aberto()
-    assert card.sem_venda is not None and card.ver_na_venda is None, "de antes das vendas: sem 'Ver na venda'"
+    assert card.ver_na_venda is None, "sem venda (dado de uma versão antiga): sem 'Ver na venda'"
     formulario = card.formulario
     formulario._observacoes.setPlainText("o que eu digitei")
     propostas_mod.atualizar_proposta(antiga, {"OBSERVAÇÕES": "mudou em outra tela"})  # "outra tela" mexeu
@@ -304,25 +304,24 @@ def testar_gravar_por_cima_e_excluir(tela, dados: dict, msgs: Mensagens) -> None
 
     assert not hasattr(tela, "_botao_excluir") and not hasattr(tela, "_excluir_selecionada")
     total = len(propostas_mod.listar_propostas())
+    # sem venda (dado de uma versao antiga): abre, mas nao ha o que excluir ali (plano 1.3)
     tela.lista.abrir_proposta(_item(tela, chave))
+    assert tela.lista.card_aberto().botao_excluir is None
+    tela.lista.descartar()
+    # numa venda: o caminho do card da venda (pelo ID), com confirmacao
+    tela.lista.abrir_proposta(_item(tela, dados["pa2"]))
     msgs.limpar()
     msgs.resposta_pergunta = NAO
     tela.lista.card_aberto().botao_excluir.click()
     _processar()
-    assert msgs.ultima()[1] == "Excluir proposta" and len(propostas_mod.listar_propostas()) == total, "'Não' não exclui"
+    assert dados["pa2"] in set(bd.ler_propostas(v._caminho())["ID_PROPOSTA"]), "'Não' não exclui"
     msgs.resposta_pergunta = SIM
     tela.lista.card_aberto().botao_excluir.click()
     _processar()
-    assert len(propostas_mod.listar_propostas()) == total - 1 and tela.lista.aberta is None
-    assert "excluída" in tela.faixa_aviso.texto.text()
-    # numa venda: o mesmo caminho do card da venda (pelo ID)
-    tela.lista.abrir_proposta(_item(tela, dados["pa2"]))
-    tela.lista.card_aberto().botao_excluir.click()
-    _processar()
-    assert dados["pa2"] not in set(bd.ler_propostas(v._caminho())["ID_PROPOSTA"]), "a da venda também"
-    assert len(propostas_mod.listar_propostas()) == total - 2
-    print("OK: excluir só pelo 'Excluir esta proposta…' do card aberto, com confirmação ('Não' não exclui), de antes "
-          "das vendas e de uma venda.")
+    assert dados["pa2"] not in set(bd.ler_propostas(v._caminho())["ID_PROPOSTA"]), "'Sim' exclui"
+    assert len(propostas_mod.listar_propostas()) == total - 1
+    print("OK: excluir só pelo 'Excluir esta proposta…' do card aberto, com confirmação ('Não' não exclui), numa venda; "
+          "sem venda não há o botão.")
 
 
 def testar_roda(tela, dados: dict) -> None:
