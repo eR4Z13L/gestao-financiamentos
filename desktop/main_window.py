@@ -119,7 +119,6 @@ class MainWindow(QMainWindow):
             self._tela_vendas.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
             self._tela_vendas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
             self._tela_propostas.venda_pedida.connect(self.abrir_venda)
-            self._tela_propostas.nova_venda_pedida.connect(self.nova_venda)
         self._tela_propostas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
@@ -229,13 +228,11 @@ class MainWindow(QMainWindow):
         self._tela_vendas.mostrar_venda(id_venda, id_proposta)
 
     def nova_venda(self) -> None:
-        """"+ Nova venda" (a barra lateral e Todas as Propostas): o dialogo de nova venda e, criada, a tela Vendas com o
-        card dela aberto, pronto pro primeiro banco. Cancelar o dialogo deixa tudo como estava."""
+        """"+ Nova venda" da barra lateral: a tela Vendas com o card "Nova venda" no topo da lista (sem janela)."""
         if not sessao_mod.eh_admin() or not self._confirmar_descartar_edicoes():
             return
-        if self._tela_vendas.nova_venda():
-            self.ir_para(PAGINA_VENDAS)
-            self._tela_vendas.lista.rolar_ate_o_aberto()
+        self.ir_para(PAGINA_VENDAS)
+        self._tela_vendas.nova_venda()
 
     def abrir_nova_proposta_duplicada(self, cpf: str, indice_da_proposta: int) -> None:
         """A Ficha do cliente com o card "Nova proposta" ja preenchido a partir da proposta `indice_da_proposta`."""

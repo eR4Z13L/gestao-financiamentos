@@ -5,7 +5,8 @@ colunas que encaixam: fechados, servem pra ver e trocar status; um por vez fica 
 canto), crescendo para baixo na propria coluna, pra editar as propostas ali dentro. Esta tela cuida de QUAIS vendas
 aparecem (busca e filtros).
 
-"+ Nova venda" cria so a venda (cliente, equipamentos); os bancos entram depois pelo "+ Adicionar proposta" do card.
+"+ Nova venda" abre o card "Nova venda" no topo da lista (cliente, equipamentos, observacoes - sem janela); criada, o
+card dela fica aberto com o formulario do primeiro banco.
 Propostas de antes das vendas, ainda nao juntadas, aparecem num aviso com o "Juntar em vendas...".
 So o ADMIN ve esta tela (a do VENDEDOR, so leitura, ainda nao existe).
 """
@@ -201,17 +202,9 @@ class VendasScreen(QWidget):
         self.faixa_aviso.avisar(texto)
 
     def nova_venda(self, cpf: str | None = None) -> bool:
-        """Cria a venda (so cliente e equipamentos) e ja deixa o card dela aberto, pronto pro primeiro banco."""
-        if not self.lista.nova_venda(cpf):
-            return False
-        for controle, limpar in ((self.busca, self.busca.clear),
-                                 (self.filtro, lambda: self.filtro.setCurrentText(FILTRO_EM_ANDAMENTO))):
-            controle.blockSignals(True)  # sem remontar a lista velha: o _depois_de_gravar ja rele tudo
-            limpar()
-            controle.blockSignals(False)
-        self._depois_de_gravar("Venda criada: agora é só adicionar as propostas dos bancos.")
-        self.lista.rolar_ate_o_aberto()
-        return True
+        """O card "Nova venda" no topo da lista (fica mesmo com a busca e o filtro: o digitado nao some). Criada, a
+        venda aparece aberta mesmo fora deles (ver vendas_visiveis)."""
+        return self.lista.nova_venda(cpf)
 
     def mostrar_venda(self, id_venda: str, id_proposta: str | None = None) -> bool:
         """Rele e deixa o card da venda `id_venda` aberto e a vista (o "Ver na venda →" de Todas as Propostas), com

@@ -98,7 +98,6 @@ class PropostasScreen(QWidget):
     dados_atualizados = Signal()
     ficha_pedida = Signal(str)  # cpf ("Abrir a ficha" de um card aberto)
     venda_pedida = Signal(str, str)  # (ID_VENDA, ID_PROPOSTA) ("Ver na venda →")
-    nova_venda_pedida = Signal()  # "+ Nova venda": a janela cria e mostra a venda na tela Vendas
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -120,10 +119,10 @@ class PropostasScreen(QWidget):
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
         cabecalho.addWidget(criar_botao_recarregar(self._ao_recarregar))
-        self._botao_nova = QPushButton("+ Nova venda")
+        self._botao_nova = QPushButton("+ Nova proposta")
         self._botao_nova.setProperty("role", "botao_primario")
-        self._botao_nova.setToolTip("Nova venda (cliente e equipamentos); os bancos entram depois, no card da venda")
-        self._botao_nova.clicked.connect(self.nova_venda_pedida)
+        self._botao_nova.setToolTip("Nova proposta: escolha o cliente e a venda (uma em aberto, ou uma venda nova)")
+        self._botao_nova.clicked.connect(lambda: self.lista.nova_proposta())
         cabecalho.addWidget(self._botao_nova)
         layout.addLayout(cabecalho)
 

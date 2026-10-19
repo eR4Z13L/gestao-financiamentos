@@ -35,7 +35,7 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import vendas as v
-from desktop.dialogs.venda_dialog import VendaDialog
+from desktop.widgets.campos_da_venda import FormularioDaVenda
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 from desktop.widgets.cadastro_equipamentos import CadastroEquipamentos, TrazerEquipamentosDialog
 
@@ -107,13 +107,14 @@ def main() -> None:
             _recusa("Já existe outro", eq.salvar, "Cadeira Exemplo", {"EQUIPAMENTO": "laser exemplo 3000"})
             eq.definir_ativo("Cadeira Exemplo", False)
             assert "Cadeira Exemplo" not in eq.nomes_ativos()
-            d = VendaDialog(None, venda=next(r for r in v.listar_vendas() if r.id == id_venda))
-            assert [c.currentText() for c in d._linhas_equipamento] == ["Laser Exemplo 3000", "Cadeira Exemplo"], \
+            d = FormularioDaVenda(venda=next(r for r in v.listar_vendas() if r.id == id_venda))
+            assert [c.currentText() for c in d.campos.equipamentos.linhas] == ["Laser Exemplo 3000", "Cadeira Exemplo"], \
                 "desativado: a venda que já o tem continua mostrando"
-            nova = VendaDialog(None)
-            nova._adicionar_equipamento("")
-            opcoes = [nova._linhas_equipamento[0].itemText(i) for i in range(nova._linhas_equipamento[0].count())]
-            assert "Cadeira Exemplo" not in opcoes and "Laser Exemplo 3000" in opcoes and not nova._linhas_equipamento[0].isEditable()
+            nova = FormularioDaVenda()
+            nova.campos.equipamentos.mais.click()
+            linhas = nova.campos.equipamentos.linhas
+            opcoes = [linhas[1].itemText(i) for i in range(linhas[1].count())]
+            assert "Cadeira Exemplo" not in opcoes and "Laser Exemplo 3000" in opcoes and not linhas[1].isEditable()
             eq.definir_ativo("Cadeira Exemplo", True)
             print("OK: renomear muda propostas e vendas (2 propostas); desativado sai da lista nova mas fica onde já está.")
 

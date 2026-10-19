@@ -56,12 +56,14 @@ from core import sessao as sessao_mod
 from core import vendas as vendas_mod
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
+from desktop.widgets.campos_da_venda import LinhasDeEquipamento
 from desktop.widgets.combo_travavel import ComboTravavel
 from desktop.widgets.perguntas_da_venda import perguntar_se_perdida
 
 _CARACTERES_MINIMOS_DO_COMBO = 8  # o combo encolhe ate isso; sem isto o mais largo dos nomes de equipamento decide
 _ESPACO_ENTRE_CAMPOS = 12
 _ALTURA_OBSERVACOES = 60
+VENDA_NOVA_COM_A_PROPOSTA = "+ Venda nova com esta proposta"
 
 
 def _combo_flexivel(combo: QComboBox) -> None:
@@ -127,6 +129,41 @@ class _CaixasDeEquipamento(QWidget):
         return getattr(self, "_travado", False)
 
 
+class _EquipamentoDaEscolha(QWidget):
+    """O equipamento da "Nova proposta" que escolhe a venda: as caixinhas da venda escolhida, ou - venda nova - as
+    linhas de equipamento (uma por equipamento, como no card "Nova venda"). Responde como os outros dois."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setProperty("role", "transparente")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._travado = False
+        self.atual: _CaixasDeEquipamento | LinhasDeEquipamento = LinhasDeEquipamento(self)
+        self._layout.addWidget(self.atual)
+
+    def trocar(self, equipamentos_da_venda: list[str]) -> None:
+        """As caixinhas destes equipamentos (os da venda escolhida); [] = venda nova: as linhas de equipamento."""
+        self.atual.hide()
+        self.atual.deleteLater()
+        self.atual = _CaixasDeEquipamento(equipamentos_da_venda, self) if equipamentos_da_venda else LinhasDeEquipamento(self)
+        self.atual.definir_travado(self._travado)
+        self._layout.addWidget(self.atual)
+
+    def currentText(self) -> str:
+        return self.atual.currentText()
+
+    def setCurrentText(self, texto: str) -> None:
+        self.atual.setCurrentText(texto)
+
+    def definir_travado(self, travar: bool) -> None:
+        self._travado = travar
+        self.atual.definir_travado(travar)
+
+    def travado(self) -> bool:
+        return self._travado
+
+
 class FormularioProposta(QWidget):
     gravada = Signal()
     recolher_pedido = Signal()
@@ -150,11 +187,14 @@ class FormularioProposta(QWidget):
         parent: QWidget | None = None,
         *,
         so_edicao: bool = False,
+        escolher_venda: bool = False,
     ):
         """`base`: valores iniciais de uma proposta NOVA (ver
         propostas_mod.dados_para_duplicar); ignorado se `proposta` existe. `so_edicao`: dentro do card da venda
         aberto - abre direto editando (a leitura e a propria linha do banco no card) e Cancel fecha o formulario
-        (avisa `cancelada`) em vez de voltar pra leitura."""
+        (avisa `cancelada`) em vez de voltar pra leitura. `escolher_venda` (proposta nova, cliente na busca): o
+        "+ Nova proposta" de Todas as Propostas - depois do cliente, a venda: uma em aberto dele (a proposta entra
+        nela) ou "+ Venda nova com esta proposta" (cria a venda junto)."""
         super().__init__(parent)
         self._so_edicao = so_edicao
         self._cpf = cpf
@@ -168,6 +208,10 @@ class FormularioProposta(QWidget):
         self._modo_leitura = False
         self._botoes_copiar: list[BotaoCopiar] = []
         self._clientes_por_rotulo: dict[str, str] = {}
+        self._escolher_venda = escolher_venda and proposta is None and cpf is None
+        self._venda_combo: ComboTravavel | None = None
+        self._vendas_em_aberto: dict[str, vendas_mod.ResumoDaVenda] = {}
+        self._cpf_das_vendas: str | None = None  # o cliente cujas vendas o combo da venda mostra
         self.indice_gravado: int | None = None  # a posicao real da proposta gravada (depois de `gravada`)
 
         origem = proposta if proposta is not None else base
@@ -199,6 +243,11 @@ class FormularioProposta(QWidget):
             raiz.addWidget(self._celula("Cliente *", self._cliente_combo, None))
         else:
             self._cliente_combo = None
+        if self._escolher_venda:
+            self._venda_combo = ComboTravavel()
+            _combo_flexivel(self._venda_combo)
+            self._venda_combo.installEventFilter(self._roda)
+            raiz.addWidget(self._celula("Venda *", self._venda_combo, None))
 
         self._data = CampoData(permitir_futuro=True)  # o mesmo campo do filtro de periodo: da pra apagar/selecionar tudo
         self._valor = QDoubleSpinBox()
@@ -225,7 +274,9 @@ class FormularioProposta(QWidget):
         # o equipamento sempre vem do cadastro (Cadastros > Equipamentos), nunca digitado: numa venda, as caixinhas com
         # os equipamentos dela; fora de uma venda, a lista fechada (como a do banco)
         equipamentos_da_venda = self._equipamentos_da_venda((origem or {}).get("ID_VENDA"))
-        if equipamentos_da_venda:
+        if self._escolher_venda:
+            self._equipamento = _EquipamentoDaEscolha()
+        elif equipamentos_da_venda:
             self._equipamento = _CaixasDeEquipamento(equipamentos_da_venda)
         else:
             self._equipamento = ComboTravavel()
@@ -233,7 +284,7 @@ class FormularioProposta(QWidget):
         # a lista de sugestoes so serve pra digitar/escolher (edicao). Vendedor
         # nunca edita e pode estar numa maquina sem o .xlsx local (le do Google
         # Sheets), onde ler as sugestoes falharia - abre a leitura sem elas.
-        if not sessao_mod.eh_vendedor() and not equipamentos_da_venda:
+        if not sessao_mod.eh_vendedor() and not equipamentos_da_venda and not self._escolher_venda:
             self._equipamento.addItems(equipamentos_mod.nomes_ativos())
 
         # lista FECHADA: os bancos ativos do cadastro (Administracao > Cadastros) + "Todos"
@@ -273,7 +324,13 @@ class FormularioProposta(QWidget):
         celula_meses = self._celula("Meses", self._meses, lambda c: str(c.value()) if c.value() else "", maximo=120)
         celula_carencia = self._celula("Carência (dias)", self._carencia, lambda c: c.currentText().strip(), maximo=140)
         celula_parcela = self._celula("Parcela", self._parcela, lambda c: c.cleanText() if c.value() else "", maximo=190)
-        celula_equipamento = self._celula("Equipamentos que este pedido cobre *" if equipamentos_da_venda else "Equipamento *",
+        if self._escolher_venda:
+            rotulo_equipamento = "Equipamento(s) *"
+        elif equipamentos_da_venda:
+            rotulo_equipamento = "Equipamentos que este pedido cobre *"
+        else:
+            rotulo_equipamento = "Equipamento *"
+        celula_equipamento = self._celula(rotulo_equipamento,
                                           self._equipamento, lambda c: c.currentText().strip(), alinhar_topo=True)
         celula_banco = self._celula("Banco/financeira *", self._banco, lambda c: c.currentText().strip(), maximo=260)
         celula_status = self._celula("Status", self._status, lambda c: c.currentText().strip(), maximo=250)
@@ -293,6 +350,10 @@ class FormularioProposta(QWidget):
             raiz.addLayout(linha)
         raiz.addWidget(celula_obs)
 
+        if self._escolher_venda:
+            self._atualizar_vendas()
+            self._cliente_combo.currentTextChanged.connect(lambda _t: self._atualizar_vendas())
+            self._venda_combo.currentIndexChanged.connect(lambda _i: self._ao_escolher_venda())
         self._preencher_campos(origem)
 
         # travados, data/valor/meses ganham a caixa dos combos (mais alta que o
@@ -395,6 +456,35 @@ class FormularioProposta(QWidget):
         self._observacoes.setPlainText(proposta.get("OBSERVAÇÕES", "") if proposta else "")
         self._estado_inicial = self._estado_atual()
 
+    # -- a escolha da venda ("+ Nova proposta" de Todas as Propostas) ----------------------------------
+
+    def _atualizar_vendas(self) -> None:
+        """As vendas em aberto do cliente escolhido, a mais recente marcada; sem nenhuma (ou sem cliente), a venda
+        nova. So refaz quando o cliente muda de verdade (digitar o nome nao rele a cada letra)."""
+        cpf = self._clientes_por_rotulo.get(self._cliente_combo.currentText().strip())
+        if cpf == self._cpf_das_vendas and self._venda_combo.count():
+            return
+        self._cpf_das_vendas = cpf
+        try:
+            vendas = vendas_mod.vendas_em_aberto_do_cliente(cpf) if cpf else []
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.warning(self, "Não foi possível ler as vendas do cliente", f"{type(exc).__name__}: {exc}")
+            vendas = []
+        self._vendas_em_aberto = {v.id: v for v in vendas}
+        self._venda_combo.blockSignals(True)
+        self._venda_combo.clear()
+        for venda in vendas:
+            self._venda_combo.addItem(vendas_mod.rotulo_da_venda(venda), venda.id)
+        self._venda_combo.addItem(VENDA_NOVA_COM_A_PROPOSTA, "")
+        self._venda_combo.setCurrentIndex(0)
+        self._venda_combo.blockSignals(False)
+        self._ao_escolher_venda()
+
+    def _ao_escolher_venda(self) -> None:
+        self._id_venda = self._venda_combo.currentData() or ""
+        venda = self._vendas_em_aberto.get(self._id_venda)
+        self._equipamento.trocar(equipamentos_mod.nomes_do_texto(venda.equipamentos) if venda is not None else [])
+
     @staticmethod
     def _equipamentos_da_venda(id_venda) -> list[str]:
         """Os equipamentos da venda da proposta ([] fora de uma venda, ou se a venda nao existe mais)."""
@@ -408,7 +498,7 @@ class FormularioProposta(QWidget):
         """Seleciona o que a proposta cita. Na lista fechada, um nome fora do cadastro (desativado, ou de antes dele)
         entra so para esta proposta - editar outra coisa nunca troca o equipamento sem a pessoa escolher."""
         texto = texto.strip() if isinstance(texto, str) else ""
-        if isinstance(self._equipamento, _CaixasDeEquipamento):
+        if not isinstance(self._equipamento, QComboBox):  # as caixinhas da venda, ou a escolha da venda
             self._equipamento.setCurrentText(texto)
             return
         if not texto:
@@ -606,6 +696,13 @@ class FormularioProposta(QWidget):
         if isinstance(self._equipamento, _CaixasDeEquipamento) and not self._equipamento.currentText():
             # sem nenhuma marcada, o pedido viraria "a venda toda" (o padrao de um pedido sem equipamento)
             QMessageBox.warning(self, "Nenhum equipamento marcado", "Marque pelo menos um equipamento que este pedido cobre.")
+            return
+        if isinstance(self._equipamento, _EquipamentoDaEscolha) and not self._equipamento.currentText():
+            if self._id_venda:
+                QMessageBox.warning(self, "Nenhum equipamento marcado",
+                                    "Marque pelo menos um equipamento que este pedido cobre.")
+            else:
+                QMessageBox.warning(self, "Equipamento em branco", "Informe pelo menos um equipamento da venda nova.")
             return
         banco = self._banco.currentText().strip()
         status = self._status.currentText().strip()

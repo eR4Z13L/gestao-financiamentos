@@ -32,7 +32,7 @@ import pandas as pd
 from PySide6.QtCore import QByteArray, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QShortcut
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QToolTip, QVBoxLayout, QWidget
 
 import config
 
@@ -58,7 +58,6 @@ from desktop.main_window import (
 )
 from desktop.theme import CORES_STATUS, PALETAS, TEMA_CLARO, TEMA_ESCURO
 from desktop.widgets import icones_linha
-from desktop.widgets import lista_de_vendas as lista_de_vendas_mod
 from desktop.widgets.identidade_usuario import IdentidadeUsuario
 from desktop.widgets.indicador_sincronizacao import descrever_leitura, descrever_sincronizacao
 from desktop.widgets.menu_lateral import texto_do_selo
@@ -709,50 +708,31 @@ def testar_ultima_tela_e_geometria(amb: Ambiente, msgs: Mensagens, tema: str) ->
     msgs.exigir_vazio("ultima tela")
 
 
-class _DialogoDeVendaFalso:
-    """No lugar do dialogo de nova venda (modal: travaria o teste). `aceitar`: cria a venda de verdade (na planilha
-    ficticia), como o OK do dialogo; senao, Cancelar."""
-
-    aceitar = True
-    abertos = 0
-
-    def __init__(self, *_args, **_kwargs):
-        self.id_venda = None
-
-    def exec(self):
-        _DialogoDeVendaFalso.abertos += 1
-        if not _DialogoDeVendaFalso.aceitar:
-            return QDialog.DialogCode.Rejected
-        self.id_venda, _ = vendas_mod.criar_venda(fx.CPF_ANA, ["Mesa Exemplo"])
-        return QDialog.DialogCode.Accepted
-
-
 def testar_nova_venda(amb: Ambiente, msgs: Mensagens, tema: str) -> None:
     linha(f"8) Botao '+ Nova venda' [{tema}]")
     amb.resetar_preferencias()
     janela = amb.nova_janela("admin", tema)
     janela.ir_para(PAGINA_DASHBOARD)
-    original = lista_de_vendas_mod.VendaDialog
-    lista_de_vendas_mod.VendaDialog = _DialogoDeVendaFalso
-    try:
-        _DialogoDeVendaFalso.aceitar, _DialogoDeVendaFalso.abertos = False, 0
-        janela._botao_nova_venda.click()
-        assert _DialogoDeVendaFalso.abertos == 1 and janela.chave_atual() == PAGINA_DASHBOARD, \
-            "cancelar o dialogo deixa a pessoa onde estava"
-        _DialogoDeVendaFalso.aceitar = True
-        janela._botao_nova_venda.click()
-        assert janela.chave_atual() == PAGINA_VENDAS, "criada a venda, leva a tela Vendas"
-        card = janela._tela_vendas.lista.card_aberto()
-        assert card is not None and card.venda.cpf == fx.CPF_ANA, "com o card da venda criada aberto"
-        print("OK: '+ Nova venda' abre o dialogo; cancelado, fica onde estava; criada, mostra a venda aberta na tela Vendas.")
+    janela._botao_nova_venda.click()
+    QApplication.processEvents()
+    assert janela.chave_atual() == PAGINA_VENDAS, "leva a tela Vendas"
+    lista = janela._tela_vendas.lista
+    novo = lista.card_da_nova_venda()
+    assert novo is not None and lista.cards[0] is novo, "com o card 'Nova venda' no topo da lista (sem janela)"
+    assert novo.formulario.campos.cliente is not None, "o cliente se escolhe no card"
+    novo.formulario.botao_cancelar.click()
+    QApplication.processEvents()
+    assert lista.card_da_nova_venda() is None and lista.rascunho is None and janela.chave_atual() == PAGINA_VENDAS
+    print("OK: '+ Nova venda' leva a tela Vendas com o card 'Nova venda' no topo; Cancelar tira o card.")
 
-        # o mesmo pelo "+ Nova venda" de Todas as Propostas
-        janela.ir_para(PAGINA_PROPOSTAS)
-        janela._tela_propostas._botao_nova.click()
-        assert janela.chave_atual() == PAGINA_VENDAS and _DialogoDeVendaFalso.abertos == 3
-        print("OK: o \"+ Nova venda\" de Todas as Propostas faz o mesmo.")
-    finally:
-        lista_de_vendas_mod.VendaDialog = original
+    # Todas as Propostas tem o "+ Nova proposta" (o "+ Nova venda" fica so aqui na barra)
+    janela.ir_para(PAGINA_PROPOSTAS)
+    assert janela._tela_propostas._botao_nova.text() == "+ Nova proposta"
+    janela._tela_propostas._botao_nova.click()
+    QApplication.processEvents()
+    assert janela.chave_atual() == PAGINA_PROPOSTAS and janela._tela_propostas.lista.rascunho is not None
+    janela._tela_propostas.lista.descartar()
+    print("OK: o '+ Nova proposta' de Todas as Propostas fica na propria tela.")
 
     janela._alternar_sidebar()
     assert janela._botao_nova_venda.text() == "+" and janela._botao_nova_venda.toolTip() == "Nova venda"

@@ -38,12 +38,13 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import vendas as v
-from desktop.dialogs.venda_dialog import VendaDialog
 from desktop.screens import vendas_screen as tela_mod
 from desktop.widgets import card_da_venda as card_mod
 from desktop.widgets.card_da_venda import NOVA
 from desktop.theme import TEMA_ESCURO, build_stylesheet
+from desktop.widgets.campos_da_venda import FormularioDaVenda
 from desktop.widgets.formulario_proposta import FormularioProposta
+from desktop.widgets.lista_de_vendas import AVISO_VENDA_CRIADA
 
 ADMIN = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador")
 
@@ -168,29 +169,53 @@ def main() -> None:
             assert tela.lista.cards == [] and "Nenhuma venda ainda" in tela.lista.vazio.text() and not tela.lista.vazio.isHidden()
             print(f"OK: {sem_venda} propostas antigas aparecem no aviso (com o 'Juntar em vendas…'); nenhuma venda ainda.")
 
-            linha("2) Nova venda: só cliente e equipamentos; o card nasce sem proposta")
-            d = VendaDialog(tela)
+            linha("2) Nova venda: um card no topo da lista (sem janela); criada, o card dela abre com o primeiro banco")
+            tela.botao_nova.click()
+            _processar()
+            novo = tela.lista.card_da_nova_venda()
+            assert novo is not None and tela.lista.cards[0] is novo and tela.lista.vazio.isHidden()
+            d = novo.formulario
+            assert isinstance(d, FormularioDaVenda) and d.botao_gravar.text() == "Criar venda"
             assert not hasattr(d, "_banco"), "a venda nasce sem pedido a banco"
-            d._gravar()
-            assert "Cliente não encontrado" in msgs.ultima()[1]
-            rotulo_maria = next(r for r in d._clientes_por_rotulo if d._clientes_por_rotulo[r] == fx.CPF_MARIA)
-            d._cliente.setCurrentText(rotulo_maria)
-            d._gravar()
-            assert "Equipamento em branco" in msgs.ultima()[1]
-            d._linhas_equipamento[0].setCurrentText("Cadeira Exemplo")
-            d._adicionar_equipamento("")
-            d._linhas_equipamento[1].setCurrentText("Laser Exemplo")
+            assert not d.gravar() and "Cliente não encontrado" in msgs.ultima()[1]
+            rotulo_maria = next(r for r, c in d.campos._clientes_por_rotulo.items() if c == fx.CPF_MARIA)
+            d.campos.cliente.setCurrentText(rotulo_maria)
+            assert not d.gravar() and "Equipamento em branco" in msgs.ultima()[1]
+            assert v.listar_vendas() == [], "recusada: nada gravado"
+            equipamentos = d.campos.equipamentos
+            assert equipamentos.linhas[0].currentIndex() == -1, "nenhum equipamento escolhido sozinho"
+            equipamentos.linhas[0].setCurrentText("Cadeira Exemplo")
+            equipamentos.mais.click()
+            equipamentos.linhas[1].setCurrentText("Laser Exemplo")
+            equipamentos.mais.click()
+            equipamentos.linhas[2].setCurrentText("Mesa Exemplo")
+            equipamentos.tirar(equipamentos.linhas[2])  # o ✕ tira
+            assert equipamentos.equipamentos() == ["Cadeira Exemplo", "Laser Exemplo"]
+            d.campos.observacoes.setPlainText("primeira visita")
             msgs.limpar()
-            d._gravar()
+            assert d.gravar()
+            _processar()
             msgs.exigir_vazio("nova venda válida")
-            assert d.result() == QDialog.DialogCode.Accepted and d.id_venda
-            id_maria = d.id_venda
+            id_maria = tela.lista.aberta
+            assert id_maria and tela.lista.rascunho is None and tela.lista.card_da_nova_venda() is None
             assert v.propostas_da_venda(id_maria).empty and _venda(id_maria)["STATUS"] == v.VENDA_AGUARDANDO
-            tela.carregar()
+            assert _venda(id_maria)["OBSERVAÇÕES"] == "primeira visita"
+            assert tela.texto_aviso.text() == AVISO_VENDA_CRIADA and not tela.faixa_aviso.isHidden()
+            card = _card(tela, "MARIA")
+            assert card.aberto and card.editando == NOVA and isinstance(card.formulario, FormularioProposta), (
+                "o card da venda nova abre com o formulário do primeiro banco")
+            assert card.formulario._equipamento.currentText() == "Cadeira Exemplo + Laser Exemplo"
+            card.formulario._cancelar_edicao()  # dá pra deixar a venda sem proposta
+            _processar()
+            card = _card(tela, "MARIA")
+            assert card.aberto and card.formulario is None and card.linhas_de_banco == [] and len(v.listar_vendas()) == 1
+            assert tela.lista.fechar_venda()
+            _processar()
             card = _card(tela, "MARIA")
             assert card.venda.equipamentos == "Cadeira Exemplo + Laser Exemplo" and card.linhas_de_banco == []
             assert card.adicionar_vazio is not None and not card.aberto
-            print("OK: sem cliente e sem equipamento recusa com o motivo; válida: o card nasce com 'Nenhuma proposta ainda'.")
+            print("OK: o card 'Nova venda' no topo; sem cliente e sem equipamento recusa com o motivo; criada, abre com o "
+                  "primeiro banco (cancelável: fica 'Nenhuma proposta ainda').")
 
             linha("3) + Adicionar proposta: o formulário de sempre, dentro do card aberto")
             card.adicionar_vazio.click()
@@ -566,19 +591,15 @@ def main() -> None:
             achar(id_x).botao_excluir.click()
             _processar()
             assert [p.id for p in achar(id_x).venda.propostas] == [px], "excluída (depois de confirmar)"
-            exec_original = VendaDialog.exec
-
-            def _edita(dialogo):
-                dialogo._linhas_equipamento[0].setCurrentText("Mesa Exemplo Nova")
-                dialogo._observacoes.setPlainText("cliente pediu urgência")
-                dialogo._gravar()
-                return dialogo.result()
-
-            VendaDialog.exec = _edita
-            try:
-                achar(id_x).editar_venda.click()
-            finally:
-                VendaDialog.exec = exec_original
+            achar(id_x).editar_venda.click()  # no próprio card, sem janela
+            _processar()
+            card = achar(id_x)
+            assert card.editando == card_mod.EDITAR_VENDA and isinstance(card.formulario, FormularioDaVenda)
+            assert card.editar_venda.isHidden() and card.formulario.campos.cliente is None, "o cliente não muda"
+            card.formulario.campos.equipamentos.linhas[0].setCurrentText("Mesa Exemplo Nova")
+            card.formulario.campos.observacoes.setPlainText("cliente pediu urgência")
+            assert card.formulario.gravar()
+            _processar()
             venda = _venda(id_x)
             assert venda["EQUIPAMENTOS"] == "Mesa Exemplo Nova" and venda["OBSERVAÇÕES"] == "cliente pediu urgência"
             card = achar(id_x)

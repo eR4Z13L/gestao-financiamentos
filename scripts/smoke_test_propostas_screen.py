@@ -225,14 +225,14 @@ def testar_propostas_screen(app: QApplication) -> None:
             assert len(propostas_mod.listar_propostas()) == total_antes_excluir - 1
             print(f"OK: exclusão de dentro do card aberto funcionou ({total_antes_excluir} -> {tela.lista.total()}).")
 
-            # no lugar do "+ Nova Proposta": "+ Nova venda" (a janela cria a venda e mostra na tela Vendas)
-            pedidos: list[str] = []
-            tela.nova_venda_pedida.connect(lambda: pedidos.append("nova venda"))
-            assert tela._botao_nova.text() == "+ Nova venda"
+            # "+ Nova proposta" (de novo, desde 06/10): o card no topo da lista, escolhendo o cliente e a venda
+            assert tela._botao_nova.text() == "+ Nova proposta"
             tela._botao_nova.click()
-            assert pedidos == ["nova venda"]
-            assert not hasattr(tela, "abrir_nova_proposta"), "a \"Nova proposta\" de Todas as Propostas deixou de existir"
-            print("OK: \"+ Nova venda\" no lugar do \"+ Nova Proposta\".")
+            app.processEvents()
+            assert tela.lista.rascunho is not None and tela.lista.rascunho["escolher_venda"]
+            assert not hasattr(tela, "nova_venda_pedida"), "o \"+ Nova venda\" fica só na barra lateral"
+            tela.lista.descartar()
+            print("OK: \"+ Nova proposta\" abre o card no topo da lista.")
 
             print("\nOK: PropostasScreen funciona de ponta a ponta.")
         finally:

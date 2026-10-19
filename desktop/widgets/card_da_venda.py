@@ -48,6 +48,7 @@ from core import vendas as vendas_mod
 from core.formatting import formatar_data, formatar_reais
 from desktop import settings as settings_mod
 from desktop.theme import CORES_STATUS, PALETAS
+from desktop.widgets.campos_da_venda import FormularioDaVenda
 from desktop.widgets.formulario_proposta import FormularioProposta
 from desktop.widgets.icones_linha import icone_de_linha
 from desktop.widgets.lista_cartoes import chave_cor_status
@@ -59,6 +60,7 @@ LARGURA_CARD = 500
 _FAIXA = 5
 _RAIO = 10
 NOVA = "nova"  # o que o card mostra no formulario quando e uma proposta nova (as demais: o ID_PROPOSTA)
+EDITAR_VENDA = "venda"  # no formulario do card aberto: o "Editar a venda" (equipamentos e observacoes)
 
 # as mesmas cores (ja conferidas nos dois temas) das etapas de proposta
 COR_DA_VENDA = {
@@ -364,8 +366,8 @@ class CardDaVenda(QFrame):
         super().__init__(parent)
         self.venda = venda
         self.aberto = aberto
-        self.formulario: FormularioProposta | None = None
-        self.editando: str | None = None  # o ID_PROPOSTA no formulario, NOVA, ou None
+        self.formulario: FormularioProposta | FormularioDaVenda | None = None
+        self.editando: str | None = None  # o ID_PROPOSTA no formulario, NOVA, EDITAR_VENDA ou None
         self.caixa_do_formulario: QFrame | None = None
         self.botao_excluir: QPushButton | None = None
         self.setProperty("role", "card")
@@ -534,7 +536,7 @@ class CardDaVenda(QFrame):
         self.linhas_de_banco.append(itens)
         return widget
 
-    def mostrar_formulario(self, editando: str, formulario: FormularioProposta,
+    def mostrar_formulario(self, editando: str, formulario: FormularioProposta | FormularioDaVenda,
                            ao_excluir: Callable[[], None] | None = None) -> None:
         """Poe o formulario embaixo do banco que esta sendo editado (ou, numa proposta nova, depois do ultimo banco)."""
         self.editando = editando
@@ -543,8 +545,8 @@ class CardDaVenda(QFrame):
         caixa.setProperty("role", "transparente")
         corpo = QVBoxLayout(caixa)
         corpo.setContentsMargins(AnelDoBanco.LADO + 8, 4, 0, 8)
-        if editando == NOVA:
-            titulo = QLabel("Nova proposta", caixa)
+        if editando in (NOVA, EDITAR_VENDA):
+            titulo = QLabel("Nova proposta" if editando == NOVA else "Editar a venda", caixa)
             titulo.setProperty("role", "rotulo_do_cartao")
             corpo.addWidget(titulo)
         formulario.setParent(caixa)
@@ -555,6 +557,13 @@ class CardDaVenda(QFrame):
             excluir.setProperty("perigo", True)  # vermelho (ver theme.py)
             corpo.addWidget(excluir, alignment=Qt.AlignmentFlag.AlignLeft)
             self.botao_excluir = excluir
+        if editando == EDITAR_VENDA:  # logo abaixo do que se edita (equipamentos e observacoes), antes dos bancos
+            corpo.setContentsMargins(0, 4, 0, 8)
+            self._layout.insertWidget(self._layout.indexOf(self._divisor), caixa)
+            self.caixa_do_formulario = caixa
+            if self.editar_venda is not None:
+                self.editar_venda.hide()
+            return
         posicao = None
         for itens in self.linhas_de_banco:
             if itens["proposta"].id == editando:
@@ -570,15 +579,48 @@ class CardDaVenda(QFrame):
 
     def paintEvent(self, evento) -> None:
         super().paintEvent(evento)
-        # a faixa colorida da lateral, na cor da etapa da venda (como os cards de Todas as Propostas)
-        tema = _tema()
-        cor = CORES_STATUS[tema][COR_DA_VENDA.get(self.venda.status, "neutro")]["faixa"]
-        pintor = QPainter(self)
-        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
-        contorno = QPainterPath()
-        contorno.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), _RAIO, _RAIO)
-        pintor.setClipPath(contorno)
-        pintor.fillRect(QRectF(0, 0, _FAIXA, self.height()), QColor(cor))
+        _pintar_faixa(self, COR_DA_VENDA.get(self.venda.status, "neutro"))
+
+
+def _pintar_faixa(card: QFrame, chave_da_cor: str) -> None:
+    """A faixa colorida da lateral, na cor da etapa da venda (como os cards de Todas as Propostas)."""
+    cor = CORES_STATUS[_tema()][chave_da_cor]["faixa"]
+    pintor = QPainter(card)
+    pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+    contorno = QPainterPath()
+    contorno.addRoundedRect(QRectF(card.rect()).adjusted(0.5, 0.5, -0.5, -0.5), _RAIO, _RAIO)
+    pintor.setClipPath(contorno)
+    pintor.fillRect(QRectF(0, 0, _FAIXA, card.height()), QColor(cor))
+
+
+class CardNovaVenda(QFrame):
+    """O card "Nova venda" no topo da lista de vendas (sem janela, decidido com o usuario em 05/10/2026): cliente,
+    equipamentos e observacoes, com "Criar venda" e "Cancelar". Criada, a lista mostra no lugar dele o card da venda,
+    aberto, com o formulario do primeiro banco."""
+
+    aberto = False  # (nao e o card de uma venda: a lista o trata a parte)
+
+    def __init__(self, formulario: FormularioDaVenda, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.formulario = formulario
+        self.setProperty("role", "card")
+        self.setProperty("aberto", True)
+        self.setMinimumWidth(LARGURA_CARD)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(_FAIXA + 14, 10, 12, 10)
+        titulo = QLabel("Nova venda", self)
+        titulo.setProperty("role", "rotulo_do_cartao")
+        layout.addWidget(titulo)
+        formulario.setParent(self)
+        layout.addWidget(formulario)
+        formulario.show()  # (um formulario guardado de outra montagem chega escondido)
+
+    def tem_alteracoes(self) -> bool:
+        return self.formulario.tem_alteracoes()
+
+    def paintEvent(self, evento) -> None:
+        super().paintEvent(evento)
+        _pintar_faixa(self, "neutro")
 
 
 class DesfechoDialog(QDialog):

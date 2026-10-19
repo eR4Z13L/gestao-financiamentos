@@ -616,6 +616,27 @@ def vendas_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]
     return [v for v in listar_vendas(hoje) if apenas_digitos(v.cpf) == alvo]
 
 
+VENDA_EM_ABERTO = {VENDA_AGUARDANDO, VENDA_EM_ANDAMENTO}
+
+
+def vendas_em_aberto_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]:
+    """As vendas do cliente que ainda aceitam mais um pedido a um banco (Aguardando bancos e Em andamento), a mais
+    recente primeiro: as que o "+ Nova proposta" oferece. Efetivada, Não efetivada e Perdida ficam de fora."""
+    em_aberto = [v for v in vendas_do_cliente(cpf, hoje) if v.status in VENDA_EM_ABERTO]
+    # a data de criacao nao tem hora: no mesmo dia, a criada por ultimo (mais embaixo no arquivo) vem primeiro - e a
+    # que o "+ Nova proposta" marca sozinho
+    return sorted(reversed(em_aberto), key=lambda v: v.data_criacao if v.data_criacao is not None else pd.Timestamp.min,
+                  reverse=True)
+
+
+def rotulo_da_venda(venda: ResumoDaVenda) -> str:
+    """"Venda de 02/10 · Cadeira X + Laser Y · Em andamento · 2 bancos": a venda na escolha do "+ Nova proposta"."""
+    quando = f"Venda de {venda.data_criacao:%d/%m}" if venda.data_criacao is not None else "Venda sem data"
+    bancos = len(venda.propostas)
+    quantos = "nenhum banco" if not bancos else f"{bancos} banco{'s' if bancos > 1 else ''}"
+    return " · ".join(p for p in (quando, venda.equipamentos, venda.status, quantos) if p)
+
+
 def contar_propostas_sem_venda() -> int:
     """Propostas que nao estao em nenhuma venda (as de antes das vendas, ainda nao juntadas)."""
     propostas = bd.ler_propostas(_caminho())

@@ -32,7 +32,7 @@ import pandas as pd
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
@@ -46,8 +46,7 @@ from core import propostas as propostas_mod
 from core import vendas as v
 from desktop.main_window import PAGINA_PROPOSTAS, PAGINA_VENDAS, MainWindow
 from desktop.theme import TEMA_ESCURO
-from desktop.widgets import lista_de_vendas as lista_de_vendas_mod
-from desktop.widgets.card_da_proposta import CardDaProposta, texto_da_espera
+from desktop.widgets.card_da_proposta import CardDaProposta, CardNovaProposta, texto_da_espera
 from desktop.widgets.card_da_venda import EFETIVAR, LARGURA_CARD
 from desktop.widgets.formulario_proposta import FormularioProposta
 from desktop.widgets.lista_de_propostas import chave_da_proposta
@@ -413,28 +412,19 @@ def testar_ver_na_venda_e_dashboard(janela: MainWindow, tela, dados: dict) -> No
     print("OK: 'Ver na venda →' leva à tela Vendas com o card da venda certa aberto, já com o formulário da proposta "
           "de origem logo embaixo da linha do banco dela (mesmo além da primeira página).")
 
-    # "+ Nova venda" de Todas as Propostas pede a janela (que cria e mostra na tela Vendas: smoke_test_barra_lateral)
-    pedidos: list[int] = []
-    tela.nova_venda_pedida.connect(lambda: pedidos.append(1))
-
-    class _DialogoCancelado:  # no lugar do dialogo de nova venda (modal: travaria o teste)
-        def __init__(self, *_a, **_k):
-            self.id_venda = None
-
-        def exec(self):
-            pedidos.append(2)
-            return QDialog.DialogCode.Rejected
-
-    original = lista_de_vendas_mod.VendaDialog
-    lista_de_vendas_mod.VendaDialog = _DialogoCancelado
-    try:
-        janela.ir_para(PAGINA_PROPOSTAS)
-        tela._botao_nova.click()
-    finally:
-        lista_de_vendas_mod.VendaDialog = original
-    assert sorted(pedidos) == [1, 2] and tela._botao_nova.text() == "+ Nova venda", pedidos  # o pedido e o dialogo da janela
-    assert janela.chave_atual() == PAGINA_PROPOSTAS, "cancelado o diálogo, fica onde estava"
-    print("OK: '+ Nova venda' (no lugar do '+ Nova Proposta') pede a nova venda.")
+    # "+ Nova proposta" (no lugar do "+ Nova venda"): o card no topo, na propria tela (os detalhes:
+    # smoke_test_venda_num_card.py)
+    janela.ir_para(PAGINA_PROPOSTAS)
+    assert tela._botao_nova.text() == "+ Nova proposta"
+    tela._botao_nova.click()
+    _processar()
+    novo = tela.lista.card_aberto()
+    assert isinstance(novo, CardNovaProposta) and tela.lista.cards[0] is novo and janela.chave_atual() == PAGINA_PROPOSTAS
+    assert novo.formulario._cliente_combo is not None and novo.formulario._venda_combo is not None
+    novo.formulario._cancelar_edicao()
+    _processar()
+    assert tela.lista.rascunho is None and not any(isinstance(c, CardNovaProposta) for c in tela.lista.cards)
+    print("OK: '+ Nova proposta' abre o card no topo (cliente e venda); Cancel tira o card.")
 
     filtro = dashboard_mod.FiltroDoDashboard(chave=dashboard_mod.FILTRO_ETAPA, rotulo="Em análise",
                                              parametro=propostas_mod.ETAPA_EM_ANALISE)

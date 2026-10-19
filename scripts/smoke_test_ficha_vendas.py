@@ -39,7 +39,6 @@ from core import sheets_sync
 from core import vendas as v
 from core.formatting import formatar_reais
 from core.validators import apenas_digitos
-from desktop.dialogs.venda_dialog import VendaDialog
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen, _resumo_com_vendas
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 from desktop.widgets import card_da_venda as card_mod
@@ -102,7 +101,6 @@ def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyleSheet(build_stylesheet(TEMA_ESCURO))
     soltas = JanelasSoltas()
-    exec_original = VendaDialog.exec
     fontes = (clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa)
     try:
         with Mensagens() as msgs:
@@ -219,26 +217,37 @@ def main() -> None:
             assert tela._modo_leitura_cliente and tela._campo_nome.text() != "MARIA EDITANDO"
             print("OK: a bolinha grava, o card e o aviso mostram o status novo, e o nome em edição continua lá.")
 
-            linha("5) '+ Nova venda' já vem com o cliente da ficha e abre o card novo")
-            recebidos: list[str] = []
-
-            def _cria(dialogo):
-                recebidos.append(dialogo._clientes_por_rotulo.get(dialogo._cliente.currentText()))
-                dialogo._linhas_equipamento[0].setCurrentText("Mesa Exemplo")
-                dialogo._gravar()
-                return dialogo.result()
-
-            VendaDialog.exec = _cria
+            linha("5) '+ Nova venda' abre o card novo na lista de vendas, já com o cliente da ficha")
+            # um formulario por vez na ficha: com algo digitado numa proposta antiga, pergunta antes
+            assert tela.lista_antigas.abrir_proposta(tela.lista_antigas.propostas()[0])
+            antiga = tela.lista_antigas.card_aberto().formulario
+            antiga._observacoes.setPlainText("digitando na antiga")
+            msgs.limpar()
+            msgs.resposta_pergunta = NAO
             tela._botao_nova_venda.click()
-            VendaDialog.exec = exec_original
+            assert msgs.ultima()[1] == "Alterações não salvas" and tela.lista_vendas.card_da_nova_venda() is None
+            assert tela.lista_antigas.card_aberto().formulario is antiga, "'Não': segue na antiga"
+            msgs.resposta_pergunta = SIM
+            tela._botao_nova_venda.click()
             _processar()
-            assert recebidos == [clientes_mod.buscar_por_cpf(fx.CPF_MARIA)["CPF/CNPJ"]], recebidos
+            novo = tela.lista_vendas.card_da_nova_venda()
+            assert novo is not None and tela.lista_vendas.cards[0] is novo and soltas.vistas == [], "no topo, sem janela"
+            campos = novo.formulario.campos
+            assert campos.cliente is None and campos.cpf() == clientes_mod.buscar_por_cpf(fx.CPF_MARIA)["CPF/CNPJ"]
+            assert "MARIA" in campos.rotulo_cliente.text(), "o cliente da ficha, sem escolher"
+            campos.equipamentos.linhas[0].setCurrentText("Mesa Exemplo")
+            msgs.limpar()
+            assert novo.formulario.gravar()
+            _processar()
+            msgs.exigir_sem_erros("nova venda na ficha")
             nova = tela.lista_vendas.card_aberto()
             assert nova is not None and nova.venda.equipamentos == "Mesa Exemplo" and nova.venda.propostas == ()
+            assert tela.lista_vendas.editando == NOVA and nova.formulario is not None, "já com o primeiro banco aberto"
             assert len(tela.lista_vendas.cards) == 3 and tela._resumo_label.text().startswith("3 vendas (")
             assert "Venda criada" in tela._faixa_aviso.texto.text()
+            assert tela.lista_vendas.liberar() and tela.lista_vendas.editando is None, "o primeiro banco pode esperar"
             id_nova = nova.venda.id
-            print("OK: o diálogo vem com a MARIA escolhida; a venda nova aparece aberta, e o resumo conta 3.")
+            print("OK: o card 'Nova venda' vem com a MARIA; criada, aparece aberta com o primeiro banco, e o resumo conta 3.")
 
             linha("6) Um formulário aberto por vez na ficha (o da proposta antiga e o do card de venda)")
             antiga = tela.lista_antigas.propostas()[0]
@@ -377,7 +386,6 @@ def main() -> None:
             print(f"OK: o vendedor vê as {len(todas)} propostas da MARIA no histórico, sem os cards de venda.")
         linha("TUDO OK")
     finally:
-        VendaDialog.exec = exec_original
         clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa = fontes
         app.removeEventFilter(soltas)
         nuvem._obter_cliente, sheets_sync._obter_cliente = rede_original

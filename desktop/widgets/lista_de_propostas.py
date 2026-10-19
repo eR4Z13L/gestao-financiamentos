@@ -2,7 +2,8 @@
 
 Os cards ficam em colunas que encaixam (desktop/widgets/colunas_que_encaixam.py, a mesma peca da lista de vendas);
 esta lista cuida de qual esta ABERTO (um por vez: ele so cresce para baixo, na propria coluna), do formulario dentro
-dele, do card "Nova proposta" (o Duplicar do Dashboard) e de nunca descartar algo digitado sem perguntar. Excluir so
+dele, do card "Nova proposta" (o "+ Nova proposta" do topo, que escolhe o cliente e a venda, e o Duplicar do
+Dashboard) e de nunca descartar algo digitado sem perguntar. Excluir so
 de dentro do formulario, com confirmacao - nada de selecionar varias para apagar. Quem mostra a lista decide QUAIS
 propostas aparecem (busca, filtros, o cliente da ficha) e rele depois de gravar: a lista avisa pelo sinal `gravou`.
 
@@ -51,7 +52,7 @@ class ListaDePropostas(ListaEmColunas):
         self._com_ficha = com_ficha
         self._propostas: list[vendas_mod.PropostaNaLista] = []
         self.aberta: str | None = None  # a chave (chave_da_proposta) do card aberto
-        self.rascunho: dict | None = None  # o card "Nova proposta": {"cpf", "nome", "base"}
+        self.rascunho: dict | None = None  # o card "Nova proposta": {"cpf", "nome", "base", "escolher_venda"}
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre (na Ficha, o outro formulario)
         self.controle = ControleDasVendas(self, self.gravou.emit)
         self._linha_aberta: dict | None = None  # a proposta como o formulario aberto a abriu (o excluir confere)
@@ -180,10 +181,29 @@ class ListaDePropostas(ListaEmColunas):
         self.rolar_ate(self.card_aberto())
         return True
 
+    def nova_proposta(self) -> bool:
+        """O "+ Nova proposta" de Todas as Propostas: o card "Nova proposta" no topo, com o cliente (busca) e a venda
+        (uma em aberto dele, ou uma venda nova junto). Se ja ha um, ele fica (com o que foi digitado)."""
+        if not sessao_mod.eh_admin():
+            return False
+        if self.rascunho is not None and self.rascunho.get("escolher_venda"):
+            self.rolar_ate(self.card_aberto())
+            return True
+        if not self.pode_descartar():
+            return False
+        if self.antes_de_editar is not None and not self.antes_de_editar():
+            return False
+        self.aberta = None
+        self.rascunho = {"cpf": None, "nome": "", "base": None, "escolher_venda": True}
+        self._remontar()
+        self.rolar_ate(self.card_aberto())
+        return True
+
     def _card_do_rascunho(self) -> CardNovaProposta:
         formulario = self._formulario_guardado(NOVA)
         if formulario is None:
-            formulario = FormularioProposta(self.rascunho["cpf"], self.rascunho["nome"], base=self.rascunho["base"])
+            formulario = FormularioProposta(self.rascunho["cpf"], self.rascunho["nome"], base=self.rascunho["base"],
+                                            escolher_venda=self.rascunho.get("escolher_venda", False))
             formulario.gravada.connect(self._ao_gravar_formulario)
             formulario.cancelada.connect(self._ao_cancelar)
             QTimer.singleShot(0, formulario.dar_foco_inicial)

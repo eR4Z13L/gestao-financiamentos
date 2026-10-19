@@ -1,8 +1,9 @@
 """A lista de cards de venda, a mesma na tela Vendas e na Ficha de Cliente.
 
 Os cards ficam em colunas que encaixam (desktop/widgets/colunas_que_encaixam.py, a mesma peca da lista de propostas);
-esta lista cuida de qual esta ABERTO (um por vez: ele so cresce para baixo, na propria coluna), do formulario da
-proposta dentro dele e de nunca descartar algo digitado sem perguntar. Quem mostra a lista decide QUAIS vendas
+esta lista cuida de qual esta ABERTO (um por vez: ele so cresce para baixo, na propria coluna), do formulario dentro
+dele (o de uma proposta, ou o "Editar a venda"), do card "Nova venda" no topo e de nunca descartar algo digitado sem
+perguntar. Quem mostra a lista decide QUAIS vendas
 aparecem (busca, filtros, o cliente da ficha) e rele depois de gravar: a lista avisa pelo sinal `gravou`.
 """
 
@@ -12,15 +13,25 @@ from collections import Counter
 from typing import Callable
 
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QScrollArea, QWidget
 
 from core import sessao as sessao_mod
 from core import vendas as vendas_mod
-from desktop.dialogs.venda_dialog import VendaDialog
-from desktop.widgets.card_da_venda import LARGURA_CARD, NOVA, CardDaVenda, ControleDasVendas, proposta_por_id
+from desktop.widgets.campos_da_venda import FormularioDaVenda
+from desktop.widgets.card_da_venda import (
+    EDITAR_VENDA,
+    LARGURA_CARD,
+    NOVA,
+    CardDaVenda,
+    CardNovaVenda,
+    ControleDasVendas,
+    proposta_por_id,
+)
 from desktop.widgets.colunas_que_encaixam import ListaEmColunas
 
 SEGUNDOS_DO_AVISO = 8
+NOVA_VENDA = "nova_venda"  # o item (e a chave) do card "Nova venda" no topo
+AVISO_VENDA_CRIADA = "Venda criada: agora é só adicionar as propostas dos bancos."
 
 _FRASE_STATUS = {  # (singular, plural) nas contagens
     vendas_mod.VENDA_AGUARDANDO: ("aguardando bancos", "aguardando bancos"),
@@ -68,6 +79,7 @@ class FaixaDeAviso(QFrame):
 class ListaDeVendas(ListaEmColunas):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
     ficha_pedida = Signal(str)  # cpf
+    venda_criada = Signal(str)  # ID_VENDA, logo ANTES do `gravou`: quem mostra a lista garante que ela apareca
 
     def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
                  uma_coluna: bool = False):
@@ -76,7 +88,9 @@ class ListaDeVendas(ListaEmColunas):
         super().__init__(rolagem, parent, largura_card=LARGURA_CARD, uma_coluna=uma_coluna)
         self._com_ficha = com_ficha
         self.aberta: str | None = None  # o ID_VENDA do card aberto
-        self.editando: str | None = None  # no card aberto: o ID_PROPOSTA no formulario, NOVA, ou None
+        self.editando: str | None = None  # no card aberto: o ID_PROPOSTA no formulario, NOVA, EDITAR_VENDA ou None
+        self.rascunho: dict | None = None  # o card "Nova venda" no topo: {"cpf"} (None: o cliente se escolhe nele)
+        self._vendas: list[vendas_mod.ResumoDaVenda] = []
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre o formulario (ver abrir_venda)
         self.controle = ControleDasVendas(self, self.gravou.emit)
 
@@ -88,16 +102,28 @@ class ListaDeVendas(ListaEmColunas):
         a primeira pagina e nao devolve a rolagem; senao (releu depois de gravar) tudo fica onde estava."""
         if self.aberta not in {v.id for v in vendas}:
             self.aberta, self.editando = None, None
-        self._definir_itens(vendas, texto_vazio, voltar_ao_inicio)
+        self._vendas = list(vendas)
+        self._remontar(texto_vazio, voltar_ao_inicio)
 
-    def _chave(self, venda: vendas_mod.ResumoDaVenda) -> str:
-        return venda.id
+    def _remontar(self, texto_vazio: str | None = None, voltar_ao_inicio: bool = False) -> None:
+        itens = ([NOVA_VENDA] if self.rascunho is not None else []) + self._vendas
+        self._definir_itens(itens, self.vazio.text() if texto_vazio is None else texto_vazio, voltar_ao_inicio)
+
+    def total(self) -> int:
+        return len(self._vendas)
+
+    def _chave(self, item) -> str:
+        return NOVA_VENDA if item == NOVA_VENDA else item.id
 
     def _posicao_que_precisa_aparecer(self) -> int | None:
         """O card aberto nunca fica alem da pagina carregada (o "Ver na venda →" de Todas as Propostas): ele aparece."""
-        return next((i for i, v in enumerate(self._itens) if v.id == self.aberta), None) if self.aberta else None
+        if self.aberta is None:
+            return None
+        return next((i for i, v in enumerate(self._itens) if v != NOVA_VENDA and v.id == self.aberta), None)
 
-    def _criar_card(self, venda: vendas_mod.ResumoDaVenda) -> CardDaVenda:
+    def _criar_card(self, venda) -> CardDaVenda | CardNovaVenda:
+        if venda == NOVA_VENDA:
+            return self._card_do_rascunho()
         card = CardDaVenda(venda, self, aberto=venda.id == self.aberta)
         self.controle.conectar(card)
         card.abrir_pedido.connect(self.abrir_venda)
@@ -112,60 +138,66 @@ class ListaDeVendas(ListaEmColunas):
         return card
 
     def _formulario_aberto(self) -> tuple[str, QWidget] | None:
+        if self.rascunho is not None:
+            novo = self.card_da_nova_venda()
+            if novo is not None:
+                return NOVA_VENDA, novo.formulario
         card = self.card_aberto()
         if card is None or card.formulario is None or self.editando is None:
             return None
         return f"{card.venda.id}|{self.editando}", card.formulario
 
     def venda_por_id(self, id_venda: str) -> vendas_mod.ResumoDaVenda | None:
-        return next((v for v in self._itens if v.id == id_venda), None)
+        return next((v for v in self._vendas if v.id == id_venda), None)
 
     # -- card aberto e formulario -------------------------------------------------------------------
 
     def card_aberto(self) -> CardDaVenda | None:
         return next((c for c in self.cards if c.aberto), None)
 
+    def card_da_nova_venda(self) -> CardNovaVenda | None:
+        return next((c for c in self.cards if isinstance(c, CardNovaVenda)), None)
+
     def tem_edicao_pendente(self) -> bool:
-        card = self.card_aberto()
-        return card is not None and card.tem_alteracoes()
+        return any(c is not None and c.tem_alteracoes() for c in (self.card_aberto(), self.card_da_nova_venda()))
 
     def pode_descartar(self) -> bool:
         """Ha algo digitado no formulario aberto? Pergunta antes de descartar."""
         if not self.tem_edicao_pendente():
             return True
         resposta = QMessageBox.question(
-            self, "Alterações não salvas", "Há uma proposta com alterações que ainda não foram salvas. Descartar?",
+            self, "Alterações não salvas", "Há alterações que ainda não foram salvas. Descartar?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
         return resposta == QMessageBox.StandardButton.Yes
 
     def descartar(self) -> None:
         """Fecha o formulario sem perguntar (quem chama ja perguntou ou avisou)."""
-        if self.editando is not None or self.tem_edicao_pendente():
-            self.editando = None
-            self._montar()
+        if self.editando is not None or self.rascunho is not None or self.tem_edicao_pendente():
+            self.editando, self.rascunho = None, None
+            self._remontar()
 
     def liberar(self) -> bool:
         """Fecha o formulario (o card continua aberto), perguntando antes de descartar o digitado. False = a pessoa
         preferiu continuar editando (quem chamou nao segue)."""
-        if self.editando is None:
+        if self.editando is None and self.rascunho is None:
             return True
         if not self.pode_descartar():
             return False
-        self.editando = None
-        self._montar()
+        self.editando, self.rascunho = None, None
+        self._remontar()
         return True
 
     def abrir_venda(self, venda: vendas_mod.ResumoDaVenda, editando: str | None = None) -> bool:
-        if venda.id == self.aberta and editando == self.editando:
+        if venda.id == self.aberta and editando == self.editando and self.rascunho is None:
             return True
         if not self.pode_descartar():
             return False
         # na Ficha ha outro formulario (o das propostas de antes das vendas): um por vez na tela
         if editando is not None and self.antes_de_editar is not None and not self.antes_de_editar():
             return False
-        self.aberta, self.editando = venda.id, editando
-        self._montar()
+        self.aberta, self.editando, self.rascunho = venda.id, editando, None
+        self._remontar()
         self.rolar_ate_o_aberto()
         return True
 
@@ -175,8 +207,8 @@ class ListaDeVendas(ListaEmColunas):
     def fechar_venda(self) -> bool:
         if not self.pode_descartar():
             return False
-        self.aberta, self.editando = None, None
-        self._montar()
+        self.aberta, self.editando, self.rascunho = None, None, None
+        self._remontar()
         return True
 
     def editar_proposta(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda | None) -> bool:
@@ -184,6 +216,9 @@ class ListaDeVendas(ListaEmColunas):
         return self.abrir_venda(venda, NOVA if proposta is None else proposta.id)
 
     def _por_formulario(self, card: CardDaVenda) -> None:
+        if self.editando == EDITAR_VENDA:
+            self._por_edicao_da_venda(card)
+            return
         proposta = proposta_por_id(card.venda, self.editando)
         ao_excluir = (lambda: self._excluir(card.venda, proposta)) if proposta is not None else None  # noqa: E731
         guardado = self._formulario_guardado(f"{card.venda.id}|{self.editando}")
@@ -207,30 +242,71 @@ class ListaDeVendas(ListaEmColunas):
 
     def _ao_cancelar_formulario(self) -> None:
         self.editando = None
-        QTimer.singleShot(0, self._montar)
+        QTimer.singleShot(0, self._remontar)
 
     def _excluir(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> None:
         self.editando = None
         if not self.controle.excluir_proposta(venda, proposta):
             self.editando = proposta.id
 
+    # -- a venda: editar no card aberto, e o card "Nova venda" ---------------------------------------
+
     def editar_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
-        if not self.pode_descartar():
+        """O "Editar a venda": no proprio card aberto, os equipamentos e as observacoes viram campos (sem janela)."""
+        if not sessao_mod.eh_admin():
             return False
-        dialogo = VendaDialog(self, venda=venda)
-        if dialogo.exec() != QDialog.DialogCode.Accepted:
-            return False
+        return self.abrir_venda(venda, EDITAR_VENDA)
+
+    def _por_edicao_da_venda(self, card: CardDaVenda) -> None:
+        formulario = self._formulario_guardado(f"{card.venda.id}|{EDITAR_VENDA}")
+        if formulario is None:
+            formulario = FormularioDaVenda(venda=card.venda)
+            nome = ControleDasVendas.nome(card.venda)
+            formulario.gravada.connect(lambda _id: self._ao_gravar_venda(f"{nome}: venda alterada."))
+            formulario.cancelada.connect(self._ao_cancelar_formulario)
+            QTimer.singleShot(0, formulario.dar_foco_inicial)
+        card.mostrar_formulario(EDITAR_VENDA, formulario)
+
+    def _ao_gravar_venda(self, aviso: str) -> None:
         self.editando = None
-        self.gravou.emit(f"{ControleDasVendas.nome(venda)}: venda alterada.")
-        return True
+        QTimer.singleShot(0, lambda: self.gravou.emit(aviso))  # fora do sinal do formulario
 
     def nova_venda(self, cpf: str | None = None) -> bool:
-        """Cria a venda (so cliente e equipamentos; `cpf` ja escolhe o cliente) e deixa o card dela aberto, pronto
-        pro primeiro banco. Quem mostra a lista rele (o card novo so aparece ai)."""
-        if not sessao_mod.eh_admin() or not self.pode_descartar():
+        """O card "Nova venda" no topo (`cpf`: ja com o cliente, a Ficha). Um por vez: se ja ha um, ele fica (com o que
+        foi digitado). Criada a venda, o card dela fica aberto com o formulario do primeiro banco."""
+        if not sessao_mod.eh_admin():
             return False
-        dialogo = VendaDialog(self, cpf=cpf)
-        if dialogo.exec() != QDialog.DialogCode.Accepted:
+        if self.rascunho is not None and self.rascunho["cpf"] == cpf:
+            self.rolar_ate(self.card_da_nova_venda())
+            return True
+        if not self.pode_descartar():
             return False
-        self.aberta, self.editando = dialogo.id_venda, None
+        if self.antes_de_editar is not None and not self.antes_de_editar():  # na Ficha: o outro formulario
+            return False
+        self.aberta, self.editando, self.rascunho = None, None, {"cpf": cpf}
+        self._remontar()
+        self.rolar_ate(self.card_da_nova_venda())
         return True
+
+    def _card_do_rascunho(self) -> CardNovaVenda:
+        formulario = self._formulario_guardado(NOVA_VENDA)
+        if formulario is None:
+            formulario = FormularioDaVenda(cpf=self.rascunho["cpf"])
+            formulario.gravada.connect(self._ao_criar_venda)
+            formulario.cancelada.connect(self._ao_cancelar_nova_venda)
+            QTimer.singleShot(0, formulario.dar_foco_inicial)
+        return CardNovaVenda(formulario, self)
+
+    def _ao_criar_venda(self, id_venda: str) -> None:
+        # o card da venda nova, aberto, ja com o formulario do primeiro banco (da pra cancelar e deixar sem proposta)
+        self.aberta, self.editando, self.rascunho = id_venda, NOVA, None
+        QTimer.singleShot(0, lambda: self._avisar_criada(id_venda))  # fora do sinal do formulario
+
+    def _avisar_criada(self, id_venda: str) -> None:
+        self.venda_criada.emit(id_venda)
+        self.gravou.emit(AVISO_VENDA_CRIADA)
+        self.rolar_ate_o_aberto()
+
+    def _ao_cancelar_nova_venda(self) -> None:
+        self.rascunho = None
+        QTimer.singleShot(0, self._remontar)

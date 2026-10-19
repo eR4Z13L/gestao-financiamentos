@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import clientes as clientes_mod
+from core import consulta_externa as consulta_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
@@ -54,6 +55,7 @@ from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.cabecalho_retratil import CabecalhoRetratil
 from desktop.widgets.campo_data import CampoData, ler_periodo
 from desktop.widgets.campo_invalido import limpar_invalido, marcar_invalido
+from desktop.espera import rodar_esperando
 from desktop.widgets.combo_travavel import ComboTravavel
 from desktop.widgets.formatters import conectar_mascara, formatar_cep_parcial, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
 from desktop.widgets.identidade_usuario import _Avatar
@@ -487,8 +489,10 @@ class FichaClienteScreen(QWidget):
         self._campo_cpf.setReadOnly(True)
         self._campo_cpf.setMaximumWidth(170)
         conectar_mascara(self._campo_cpf, formatar_cpf_cnpj_parcial)
+        self._botao_buscar_cnpj = self._criar_botao_buscar(self._buscar_cnpj)
+        self._campo_cpf.textChanged.connect(self._atualizar_botoes_buscar)
         wrap_cpf, self._botao_copiar_cpf = self._criar_campo_com_widget(
-            "CPF/CNPJ", self._campo_cpf, lambda: self._cpf_selecionado or ""
+            "CPF/CNPJ", self._campo_cpf, lambda: self._cpf_selecionado or "", extras=[self._botao_buscar_cnpj]
         )
 
         self._campo_nascimento = CampoData()
@@ -655,8 +659,10 @@ class FichaClienteScreen(QWidget):
         self._campo_cep = QLineEdit()
         self._campo_cep.setPlaceholderText("00000-000")
         conectar_mascara(self._campo_cep, formatar_cep_parcial)
+        self._botao_buscar_cep = self._criar_botao_buscar(self._buscar_cep)
+        self._campo_cep.textChanged.connect(self._atualizar_botoes_buscar)
         wrap_cep, self._botao_copiar_cep = self._criar_campo_com_widget(
-            "CEP", self._campo_cep, lambda: self._campo_cep.text()
+            "CEP", self._campo_cep, lambda: self._campo_cep.text(), extras=[self._botao_buscar_cep]
         )
         grade_endereco.addWidget(wrap_cep, 0, 0)
 
@@ -1474,6 +1480,10 @@ class FichaClienteScreen(QWidget):
         ):
             botao.setVisible(leitura)
 
+        self._botao_buscar_cep.setVisible(not leitura)
+        self._botao_buscar_cnpj.setVisible(not leitura)
+        self._atualizar_botoes_buscar()
+
         self._botao_editar_cliente.setVisible(leitura)
         self._botao_ok_cliente.setVisible(not leitura)
         self._botao_cancelar_cliente.setVisible(not leitura)
@@ -1526,6 +1536,98 @@ class FichaClienteScreen(QWidget):
             self._aplicar_modo_edicao_cliente(leitura=True)
             return
         self._preencher_cliente(cliente)
+
+    # -- consulta de CEP e CNPJ (so ao clicar em "Buscar"; nada e gravado, o usuario revisa e salva) ----
+
+    @staticmethod
+    def _criar_botao_buscar(ao_clicar: Callable[[], None]) -> QPushButton:
+        botao = QPushButton("Buscar")
+        botao.setFixedWidth(64)
+        botao.clicked.connect(ao_clicar)
+        return botao
+
+    def _atualizar_botoes_buscar(self, *_args) -> None:
+        digitos_cep = apenas_digitos(self._campo_cep.text())
+        self._botao_buscar_cep.setEnabled(len(digitos_cep) == 8)
+        self._botao_buscar_cep.setToolTip(
+            "Preencher o endereço a partir do CEP" if len(digitos_cep) == 8 else "Digite os 8 números do CEP para buscar"
+        )
+        digitos_doc = apenas_digitos(self._campo_cpf.text())
+        self._botao_buscar_cnpj.setEnabled(len(digitos_doc) == 14)
+        self._botao_buscar_cnpj.setToolTip(
+            "Preencher nome e endereço a partir do CNPJ"
+            if len(digitos_doc) == 14
+            else "A busca vale só para CNPJ (14 números); o CPF nunca é consultado"
+        )
+
+    def _buscar_cep(self) -> None:
+        self._consultar_e_preencher("CEP", lambda: consulta_mod.consultar_cep(self._campo_cep.text()), {})
+
+    def _buscar_cnpj(self) -> None:
+        self._consultar_e_preencher(
+            "CNPJ", lambda: consulta_mod.consultar_cnpj(self._campo_cpf.text()), {"razao_social": ("Nome", self._campo_nome)}
+        )
+
+    def _campos_do_endereco_consultado(self) -> dict[str, tuple[str, QWidget]]:
+        return {
+            "cep": ("CEP", self._campo_cep),
+            "logradouro": ("Logradouro", self._campo_logradouro),
+            "numero": ("Número", self._campo_numero),
+            "complemento": ("Complemento", self._campo_complemento),
+            "bairro": ("Bairro", self._campo_bairro),
+            "cidade": ("Cidade", self._campo_cidade),
+            "uf": ("UF", self._campo_uf),
+        }
+
+    @staticmethod
+    def _texto_do_campo(campo: QWidget) -> str:
+        return (campo.currentText() if isinstance(campo, QComboBox) else campo.text()).strip()
+
+    def _colocar_no_campo(self, campo: QWidget, valor: str) -> None:
+        if campo is self._campo_uf:
+            self._definir_texto_uf(valor)
+        else:
+            campo.setText(valor)
+            campo.setCursorPosition(0)
+
+    def _consultar_e_preencher(
+        self, o_que: str, consultar: Callable[[], dict[str, str]], extras: dict[str, tuple[str, QWidget]]
+    ) -> None:
+        """Roda a consulta fora da thread da tela (janelinha "Aguarde") e preenche o formulario: campo vazio recebe
+        direto; campo com texto diferente so muda se o usuario confirmar. Falha = aviso e o formulario segue como estava."""
+        try:
+            achados = rodar_esperando(self, f"Consultando o {o_que}…", consultar, limite_s=consulta_mod.TIMEOUT_S * 2 + 2)
+        except consulta_mod.ErroConsultaExterna as exc:
+            QMessageBox.warning(self, f"Consulta de {o_que}", str(exc))
+            return
+        except TimeoutError:
+            QMessageBox.warning(self, f"Consulta de {o_que}", f"A consulta de {o_que} demorou demais. Tente de novo mais tarde.")
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self, f"Consulta de {o_que}", f"Erro inesperado na consulta de {o_que}: {exc}")
+            return
+        if self._modo_leitura_cliente:
+            QMessageBox.information(
+                self, f"Consulta de {o_que}",
+                "A ficha foi recarregada enquanto a consulta rodava. Clique em Editar e busque de novo.",
+            )
+            return
+        campos = {**self._campos_do_endereco_consultado(), **extras}
+        # a consulta do CEP nao devolve o proprio CEP, e a do CNPJ so o devolve junto do resto
+        achados = {chave: valor for chave, valor in achados.items() if chave in campos}
+        atuais = {chave: self._texto_do_campo(campos[chave][1]) for chave in achados}
+        vazios, conflitos = consulta_mod.separar_preenchimentos(atuais, achados)
+        substituir = False
+        if conflitos:
+            linhas = "\n".join(f"{campos[c][0]}:  \"{atuais[c]}\"  →  \"{novo}\"" for c, novo in conflitos.items())
+            resposta = QMessageBox.question(
+                self, f"Consulta de {o_que}",
+                f"Estes campos já têm outro texto. Substituir pelo que veio da consulta?\n\n{linhas}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+            )
+            substituir = resposta == QMessageBox.StandardButton.Yes
+        for chave, valor in {**vazios, **(conflitos if substituir else {})}.items():
+            self._colocar_no_campo(campos[chave][1], valor)
 
     def _validar_email_ao_vivo_cliente(self, texto: str) -> None:
         """So um aviso visual enquanto digita - quem realmente impede salvar com
@@ -1654,14 +1756,11 @@ class FichaClienteScreen(QWidget):
         return historico, [] if self._so_historico else vendas_mod.vendas_do_cliente(cpf)
 
     def _nova_venda(self) -> bool:
-        """"+ Nova venda" com o cliente da ficha: cria a venda e deixa o card dela aberto, pronto pro primeiro banco."""
-        if not self._cpf_selecionado or not self.lista_antigas.liberar():
+        """"+ Nova venda" com o cliente da ficha: o card "Nova venda" no topo da lista de vendas dele, ja com o
+        cliente; criada, o card dela fica aberto com o formulario do primeiro banco."""
+        if not self._cpf_selecionado:
             return False
-        if not self.lista_vendas.nova_venda(self._cpf_selecionado):
-            return False
-        self._depois_de_gravar_venda("Venda criada: agora é só adicionar as propostas dos bancos.")
-        self.lista_vendas.rolar_ate_o_aberto()
-        return True
+        return self.lista_vendas.nova_venda(self._cpf_selecionado)
 
     def _depois_de_gravar_venda(self, aviso: str = "") -> None:
         """Gravou algo num card de venda: rele as vendas e as propostas - os dados do cliente (talvez em edicao)
