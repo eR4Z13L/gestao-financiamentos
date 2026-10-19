@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -451,9 +452,10 @@ def _sincronizar_agora(nome_aba: str, df: pd.DataFrame) -> None:
         estado_mod.definir_revisao(nova)
 
 
-def sincronizar_em_background(nome_aba: str, df: pd.DataFrame) -> None:
+def sincronizar_em_background(nome_aba: str, df: pd.DataFrame | Callable[[], pd.DataFrame]) -> None:
     """Dispara a sincronizacao de `df` (o estado JA COMPUTADO/completo da
-    aba, do jeito que core.data_store.ler_* devolve) numa thread separada.
+    aba, do jeito que core.data_store.ler_* devolve) numa thread separada. `df` pode ser uma funcao sem argumentos
+    que le a aba: so e chamada (aqui, na thread de quem gravou) se a sincronizacao estiver ligada.
     Nunca bloqueia quem chamou nem propaga erro - so registra no log.
 
     Enquanto essa tentativa nao confirmar sucesso, a aba fica em _pendentes - se essa
@@ -466,6 +468,9 @@ def sincronizar_em_background(nome_aba: str, df: pd.DataFrame) -> None:
     marcada pendente): o envio so volta depois que a pessoa resolver."""
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         return
+
+    if callable(df):
+        df = df()
 
     try:
         estado_mod.marcar_pendente(nome_aba)

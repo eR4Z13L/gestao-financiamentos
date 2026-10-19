@@ -611,7 +611,7 @@ def _numero_ou_none(valor):
 _ESPERANDO_RESPOSTA = {propostas_mod.ETAPA_EM_ANALISE, propostas_mod.ETAPA_PRE_APROVADO}
 
 
-def _proposta_da_linha(indice, p: pd.Series, ultimas: dict, pilhas: dict, fechadas: list[str],
+def _proposta_da_linha(indice, p: pd.Series | dict, ultimas: dict, pilhas: dict, fechadas: list[str],
                        hoje: pd.Timestamp) -> PropostaNaVenda:
     """Uma linha da aba PROPOSTAS pronta pra tela. Os dias esperando resposta contam da ultima troca de status no
     HISTÓRICO e, sem ela (ou sem ID_PROPOSTA, nas de antes das vendas), da DATA da proposta."""
@@ -635,20 +635,28 @@ def _proposta_da_linha(indice, p: pd.Series, ultimas: dict, pilhas: dict, fechad
 def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     """Todas as vendas, prontas pra tela (a mais recente primeiro), cada uma com as suas propostas."""
     hoje = pd.Timestamp(hoje or date.today())
-    propostas = bd.ler_propostas(_caminho())
-    vendas = bd.ler_vendas(_caminho())
     clientes = bd.ler_clientes(_caminho())
+    propostas = bd.ler_propostas(_caminho(), clientes)  # o mesmo cadastro: nao le e normaliza os clientes duas vezes
+    vendas = bd.ler_vendas(_caminho())
     historico = bd.ler_historico(_caminho())
     ultimas = _ultimas_mudancas(historico)
     pilhas = _pilhas_de_anteriores(historico)
     por_cpf = {apenas_digitos(c): (nome, vendedor) for c, nome, vendedor
                in zip(clientes["CPF/CNPJ"], clientes["CLIENTE"], clientes["VENDEDOR"])}
 
+    # as propostas agrupadas por venda uma vez so (e nao uma busca na tabela inteira por venda); a ordenacao estavel
+    # pela DATA feita antes de agrupar deixa cada grupo na mesma ordem de ordenar cada um por separado
+    por_venda: dict[str, list[tuple]] = {}
+    ordenadas = propostas.sort_values("DATA", kind="stable")
+    for indice, registro in zip(ordenadas.index, ordenadas.to_dict("records")):
+        por_venda.setdefault(registro["ID_VENDA"], []).append((indice, registro))
+
     resultado = []
-    for _, v in vendas.iterrows():
-        da_venda = propostas[propostas["ID_VENDA"] == v["ID_VENDA"]].sort_values("DATA", kind="stable")
-        fechadas = [i for i in fechadas_da_venda(v["BANCO_ESCOLHIDO"]) if i in set(da_venda["ID_PROPOSTA"])]
-        itens = [_proposta_da_linha(indice, p, ultimas, pilhas, fechadas, hoje) for indice, p in da_venda.iterrows()]
+    for v in vendas.to_dict("records"):
+        da_venda = por_venda.get(v["ID_VENDA"], [])
+        ids_da_venda = {registro["ID_PROPOSTA"] for _, registro in da_venda}
+        fechadas = [i for i in fechadas_da_venda(v["BANCO_ESCOLHIDO"]) if i in ids_da_venda]
+        itens = [_proposta_da_linha(indice, registro, ultimas, pilhas, fechadas, hoje) for indice, registro in da_venda]
         nome, vendedor = por_cpf.get(apenas_digitos(v["CPF"]), ("", ""))
         criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None
         # o status vem dos bancos (uma venda gravada com etapas de antes - "Banco escolhido", "Nota fiscal" - le certo)

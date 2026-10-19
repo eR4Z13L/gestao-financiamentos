@@ -814,14 +814,16 @@ def escrever_vendas_e_propostas(
             for registro in historico_novo:
                 ws.append([_limpar_valor(registro.get(coluna)) for coluna in HISTORICO_COLUNAS])
         _salvar_planilha(wb, caminho_xlsx)
+    # a leitura de cada aba para o envio e adiada (passa-se a funcao): com a sincronizacao desligada ninguem a chama e
+    # o arquivo recem-gravado nao e relido a toa (cada uma custava abrir a planilha de novo)
     if clientes is not None:
-        sheets_sync.sincronizar_em_background(ABA_CLIENTES, ler_clientes(caminho_xlsx))
+        sheets_sync.sincronizar_em_background(ABA_CLIENTES, lambda: ler_clientes(caminho_xlsx))
     if propostas is not None:
-        sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, ler_propostas(caminho_xlsx))
+        sheets_sync.sincronizar_em_background(ABA_PROPOSTAS, lambda: ler_propostas(caminho_xlsx))
     if vendas is not None:
-        sheets_sync.sincronizar_em_background(ABA_VENDAS, ler_vendas(caminho_xlsx))
+        sheets_sync.sincronizar_em_background(ABA_VENDAS, lambda: ler_vendas(caminho_xlsx))
     if historico_novo:
-        sheets_sync.sincronizar_em_background(ABA_HISTORICO, ler_historico(caminho_xlsx))
+        sheets_sync.sincronizar_em_background(ABA_HISTORICO, lambda: ler_historico(caminho_xlsx))
 
 
 def escrever_propostas(caminho_xlsx: Path, df: pd.DataFrame) -> None:
