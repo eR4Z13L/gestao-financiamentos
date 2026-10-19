@@ -180,12 +180,6 @@ def eh_nao_efetivado(status: str) -> bool:
     return (status or "").strip().upper() in _PALAVRAS_NAO_EFETIVADO
 
 
-def eh_proposta_encerrada(status: str) -> bool:
-    """Status "Encerrada": fechada porque outra proposta do MESMO cliente +
-    equipamento ja foi efetivada em outro banco."""
-    return (status or "").strip().upper() in _PALAVRAS_ENCERRADA
-
-
 def eh_aprovado_nao_efetivado(status: str) -> bool:
     """Status exatamente "Aprovado" - aprovada pelo banco mas AINDA em aberto,
     podendo virar compra a qualquer momento. As etapas Pre-aprovado / Nota

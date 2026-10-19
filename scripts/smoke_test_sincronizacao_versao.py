@@ -243,7 +243,7 @@ class Maquina:
 
 
 def _normalizado(arquivo: Path) -> dict:
-    """As 4 abas de um arquivo, comparaveis (ausente vira None, data vira texto)."""
+    """Todas as abas de um arquivo, comparaveis (ausente vira None, data vira texto)."""
 
     def _n(v):
         if v is pd.NaT or v is None:
@@ -432,7 +432,7 @@ def testar_baixar_da_nuvem(a: Maquina, b: Maquina, nuvem: NuvemFalsa) -> None:
         _esperar_envios()
 
         assert _normalizado(b.arquivo) == _normalizado(a.arquivo), "o PC B ficou IGUAL ao PC A (incluindo os dados dificeis)"
-        print("OK: depois de baixar, as 4 abas do PC B sao identicas as do PC A (CNPJ com zeros, '=1+1', acentos, decimal, vazios).")
+        print("OK: depois de baixar, todas as abas do PC B sao identicas as do PC A (CNPJ com zeros, '=1+1', acentos, decimal, vazios).")
 
         assert resultado.backup.exists() and resultado.backup.parent.name == "backups"
         assert f".{backup_mod.MOTIVO_PRE_NUVEM}-" in resultado.backup.name
@@ -767,7 +767,7 @@ def _usar_nuvem(nuvem: NuvemFalsa) -> None:
 
 
 def testar_planilha_vazia(raiz: Path) -> None:
-    linha("14) Planilha vazia: 4 abas com os cabecalhos certos, e nunca por cima de um arquivo existente")
+    linha("14) Planilha vazia: todas as abas com os cabecalhos certos, e nunca por cima de um arquivo existente")
     pasta = raiz / "vazia"
     arquivo = pasta / "controle_financiamentos.dat"
     bd.criar_planilha_vazia(arquivo)
@@ -776,7 +776,7 @@ def testar_planilha_vazia(raiz: Path) -> None:
     assert len(bd.ler_equipamentos(arquivo)) == 0 and len(bd.ler_vendedores(arquivo)) == 0
     assert list(bd.ler_propostas(arquivo).columns) == bd.PROPOSTAS_COLUNAS and len(bd.ler_propostas(arquivo)) == 0
     bd.ler_aba(arquivo, bd.ABA_CLIENTES, bd.CLIENTES_COLUNAS, conferir_cabecalho=True)  # cabecalho no formato esperado
-    print("OK: a planilha nova le sem erro, com as 4 abas vazias e os cabecalhos que o app confere.")
+    print("OK: a planilha nova le sem erro, com todas as abas vazias e os cabecalhos que o app confere.")
 
     h = hashlib.sha256(arquivo.read_bytes()).hexdigest()
     try:

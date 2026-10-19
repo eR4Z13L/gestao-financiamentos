@@ -1792,35 +1792,6 @@ class FichaClienteScreen(QWidget):
         self._mostrar_cliente(cliente["CPF/CNPJ"])
         return self._cpf_selecionado == cliente["CPF/CNPJ"]
 
-    def abrir_nova_proposta_a_partir_de(self, cpf: str, indice_da_proposta: int) -> bool:
-        """Abre a ficha de `cpf` com o card "Nova proposta" ja preenchido a partir da proposta na posicao
-        `indice_da_proposta` do arquivo (o "Duplicar" do dashboard). Nao grava nada."""
-        if not self.abrir_ficha_do_cliente(cpf):
-            return False
-        if indice_da_proposta not in self._historico_atual.index:
-            QMessageBox.warning(
-                self, "Proposta não encontrada", "A proposta de onde duplicar não foi encontrada (a lista pode ter mudado). Recarregue o Dashboard."
-            )
-            return False
-        proposta = self._historico_atual.loc[indice_da_proposta].to_dict()
-        venda = next((v for v in self._vendas_do_cliente if v.id == proposta.get("ID_VENDA")), None)
-        if venda is not None:  # numa venda, "outro banco" e o "+ Adicionar proposta" do card dela
-            return self.lista_vendas.editar_proposta(venda, None)
-        if not self.lista_antigas.nova_a_partir_de(self._cpf_selecionado, self._campo_nome.text(), proposta):
-            return False
-        self._atualizar_visibilidade_do_historico()
-        return True
-
-    def _depois_de_mudar_propostas(self) -> None:
-        """Lancou, editou, duplicou ou excluiu uma proposta: recarrega a ficha aberta
-        (historico) e repinta a bolinha "Em aberto" - ela pode ter aparecido ou sumido."""
-        self._recarregar_ficha_atual()
-        self._invalidar_em_aberto()
-        # a lista tambem (mantem o cliente aberto): assim a "impressao" da planilha fica em dia e a propria
-        # gravacao desta tela nao parece, 2 s depois, uma mudanca feita por fora
-        self._atualizar_lista()
-        self.dados_atualizados.emit()
-
     def tem_edicao_pendente(self) -> bool:
         return self.lista_antigas.tem_edicao_pendente() or self.lista_vendas.tem_edicao_pendente()
 

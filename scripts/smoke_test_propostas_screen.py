@@ -1,9 +1,8 @@
 """Testa a tela Todas as Propostas (filtro, edicao e exclusao de dentro do card aberto, "+ Nova venda"), o modo
 "cliente avulso" do formulario de proposta, remover_proposta, e o menu retratil/seletor de tema da MainWindow.
 
-Os testes que mexem em dados usam copia temporaria do arquivo (nunca o
-real). O teste de tema/menu usa uma planilha 100% ficticia (scripts/fixture_ficticia.py) e as
-preferencias vao pra um .ini temporario (main() isola e, no fim, confere que o registro do
+Todos os testes usam uma planilha 100% ficticia numa pasta temporaria (scripts/fixture_ficticia.py; nunca a
+real) e as preferencias vao pra um .ini temporario (main() isola e, no fim, confere que o registro do
 Windows - onde o app de verdade guarda essas preferencias - ficou igual).
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_propostas_screen.py
@@ -24,16 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config import CAMINHO_XLSX
-
-
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
 import fixture_ficticia as fx
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from core import vendedores as vendedores_mod
 from core.validators import apenas_digitos
 from desktop import settings as settings_mod
 from desktop.main_window import MainWindow
@@ -91,10 +86,7 @@ class _StubMensagens:
 def testar_remover_proposta_core() -> None:
     linha("1) core.propostas.remover_proposta")
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_remover_proposta.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
+    fx.apontar_modulos_para(fx.criar(Path(tempfile.mkdtemp(prefix="remover_", dir=PASTA_TEMPORARIA))))
 
     try:
         antes = propostas_mod.listar_propostas()
@@ -110,21 +102,13 @@ def testar_remover_proposta_core() -> None:
         except propostas_mod.ErroProposta as exc:
             print(f"OK: remover indice inexistente rejeitado -> {exc}")
     finally:
-        # restaura o caminho real - senao o proximo teste desta mesma sessao
-        # Python herdaria o caminho temporario (ja apagado logo abaixo) e
-        # quebraria com FileNotFoundError ao tentar ler
-        clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        tmp_path.unlink(missing_ok=True)
+        fx.restaurar_modulos()
 
 
 def testar_dialogo_cliente_avulso(app: QApplication) -> None:
     linha("2) FormularioProposta em modo avulso (cpf=None)")
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_dialogo_avulso.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
+    fx.apontar_modulos_para(fx.criar(Path(tempfile.mkdtemp(prefix="avulso_", dir=PASTA_TEMPORARIA))))
 
     with _StubMensagens() as stub:
         try:
@@ -159,19 +143,13 @@ def testar_dialogo_cliente_avulso(app: QApplication) -> None:
             assert "cliente" in stub.mensagens[-1].lower()
             print(f"OK: sem selecionar cliente, salvar é recusado -> \"{stub.mensagens[-1]}\"")
         finally:
-            clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
-            propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
-            tmp_path.unlink(missing_ok=True)
+            fx.restaurar_modulos()
 
 
 def testar_propostas_screen(app: QApplication) -> None:
     linha("3) PropostasScreen - filtro, edição, exclusão e nova proposta")
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_propostas_screen.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    vendedores_mod.CAMINHO_XLSX = tmp_path  # a tela le o cadastro de vendedores pro filtro
+    fx.apontar_modulos_para(fx.criar(Path(tempfile.mkdtemp(prefix="tela_", dir=PASTA_TEMPORARIA))))
 
     with _StubMensagens():
         try:
@@ -236,10 +214,7 @@ def testar_propostas_screen(app: QApplication) -> None:
 
             print("\nOK: PropostasScreen funciona de ponta a ponta.")
         finally:
-            clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
-            propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
-            vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
-            tmp_path.unlink(missing_ok=True)
+            fx.restaurar_modulos()
 
 
 def testar_sidebar_e_tema(app: QApplication) -> None:

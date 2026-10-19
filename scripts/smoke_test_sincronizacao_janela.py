@@ -262,10 +262,12 @@ def main() -> None:
                 assert nuvem.escritas == [] and sheets_sync.estado_atual().conflito == sheets_sync.TIPO_SEM_CONTROLE
                 sheets_sync.limpar_conflito()
                 escolhas.responder(1)  # Enviar
+                msgs.limpar()
                 janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_SEM_CONTROLE, meta))
+                assert any(m[1] == "Envio iniciado" and "todas as abas" in m[2] for m in msgs.registro), msgs.registro
                 t._esperar_envios()
                 assert nuvem.revisao() >= 5 and t._normalizado(amb.caminho) is not None
-                print("OK: sem controle: 3 opcoes; 'Agora nao' nao escreve nada; 'Enviar' liga o controle e manda as 4 abas.")
+                print("OK: sem controle: 3 opcoes; 'Agora nao' nao escreve nada; 'Enviar' liga o controle e manda todas as abas.")
 
                 # 4c' sem controle, e a nuvem e que tem os dados certos: 'Baixar' traz os dados e liga o controle
                 repor_nuvem_do_dono()

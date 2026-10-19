@@ -112,6 +112,7 @@ class OrganizarVendasDialog(QDialog):
         self.falta.setProperty("role", "secundario")
         layout.addWidget(self.falta)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
         self.botao_aplicar = botoes.button(QDialogButtonBox.StandardButton.Ok)
         self.botao_aplicar.setText("Juntar em vendas")
         botoes.accepted.connect(self._aplicar)

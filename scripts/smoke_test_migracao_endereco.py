@@ -118,7 +118,7 @@ ENDERECO_COMPLEMENTO_ESTRANHO = "Rua Z, 9 C CS APTO C - Centro/Natal - RN"
 
 
 def _criar_planilha(caminho: Path, colunas: list[str], clientes: list[dict]) -> None:
-    """Monta uma planilha completa (4 abas) com a aba CLIENTES no formato `colunas`."""
+    """Monta uma planilha completa (todas as abas) com a aba CLIENTES no formato `colunas`."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = bd.ABA_CLIENTES

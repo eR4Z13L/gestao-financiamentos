@@ -79,7 +79,6 @@ class FaixaDeAviso(QFrame):
 class ListaDeVendas(ListaEmColunas):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
     ficha_pedida = Signal(str)  # cpf
-    venda_criada = Signal(str)  # ID_VENDA, logo ANTES do `gravou`: quem mostra a lista garante que ela apareca
 
     def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
                  uma_coluna: bool = False):
@@ -303,7 +302,6 @@ class ListaDeVendas(ListaEmColunas):
         QTimer.singleShot(0, lambda: self._avisar_criada(id_venda))  # fora do sinal do formulario
 
     def _avisar_criada(self, id_venda: str) -> None:
-        self.venda_criada.emit(id_venda)
         self.gravou.emit(AVISO_VENDA_CRIADA)
         self.rolar_ate_o_aberto()
 

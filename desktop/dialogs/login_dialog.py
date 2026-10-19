@@ -55,6 +55,7 @@ class CriarPinDialog(QDialog):
         form.addRow("Confirmar PIN", self._confirmar)
         layout.addLayout(form)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
         botoes.button(QDialogButtonBox.StandardButton.Ok).setText("Criar PIN")
         botoes.accepted.connect(self._criar)
         botoes.rejected.connect(self.reject)
@@ -133,6 +134,7 @@ class LoginDialog(QDialog):
             texto_ok = "Entrar com Google"
 
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
         botoes.button(QDialogButtonBox.StandardButton.Ok).setText(texto_ok)
         botoes.accepted.connect(self._confirmar)
         botoes.rejected.connect(self.reject)

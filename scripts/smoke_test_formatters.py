@@ -19,7 +19,7 @@ import math
 import pandas as pd
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from core.formatting import dias_do_tempo, formatar_data, formatar_endereco, formatar_meses, formatar_reais, formatar_tempo
+from core.formatting import dias_do_tempo, formatar_data, formatar_endereco, formatar_reais, formatar_tempo
 from core.validators import email_valido
 from desktop.theme import PALETA_CLARA, PALETA_ESCURA, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets.formatters import conectar_mascara, formatar_cpf_cnpj_parcial, formatar_telefone_parcial
@@ -107,11 +107,6 @@ def testar_formatacao_valor_ausente() -> None:
 
     assert formatar_reais(1234.5) == "R$ 1.234,50"
     print("OK: formatar_reais ainda formata valor normal corretamente (R$ 1.234,50).")
-
-    for meses_ausente in [float("nan"), None, pd.NA]:
-        assert formatar_meses(meses_ausente) == "—", f"formatar_meses({meses_ausente!r}) deveria ser '—'"
-    assert formatar_meses(36.0) == "36"
-    print("OK: formatar_meses(ausente) -> '—', e formatar_meses(36.0) -> '36' (sem casas decimais).")
 
     assert formatar_data(None) == "—"
     assert formatar_data(pd.NaT) == "—"

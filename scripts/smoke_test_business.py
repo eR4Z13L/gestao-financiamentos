@@ -116,9 +116,8 @@ def main() -> None:
 
         linha("2) EQUIPAMENTOS")
         equipamentos_mod.adicionar_equipamento({"FORNECEDOR": "TESTE", "EQUIPAMENTO": "Equip Smoke", "PARCELAS": 12, "VALOR PARCELA (R$)": 500})
-        nomes = equipamentos_mod.listar_nomes_equipamento()
-        assert "Equip Smoke" in nomes
-        print(f"adicionar_equipamento OK, {len(nomes)} nomes distintos disponiveis pra sugestao")
+        assert "Equip Smoke" in equipamentos_mod.listar_equipamentos()["EQUIPAMENTO"].tolist()
+        print("adicionar_equipamento OK, o equipamento novo aparece em listar_equipamentos()")
 
         linha("3) PROPOSTAS - validacao e cadastro")
         try:

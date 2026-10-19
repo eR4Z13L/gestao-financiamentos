@@ -17,7 +17,6 @@ from typing import Callable
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QMessageBox, QScrollArea, QWidget
 
-from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendas as vendas_mod
 from desktop.widgets.card_da_proposta import CardDaProposta, CardNovaProposta
@@ -166,19 +165,6 @@ class ListaDePropostas(ListaEmColunas):
             return False
         self.aberta = None
         self._remontar()
-        return True
-
-    def nova_a_partir_de(self, cpf: str, nome_cliente: str, proposta: dict) -> bool:
-        """O card "Nova proposta" no topo, em edicao, ja preenchido a partir de `proposta` pela regra do Duplicar
-        (mesmo cliente, equipamento e valor; data de hoje, sem banco, em analise). Gravar cria a venda junto."""
-        if not sessao_mod.eh_admin() or not self.pode_descartar():
-            return False
-        if self.antes_de_editar is not None and not self.antes_de_editar():
-            return False
-        self.aberta = None
-        self.rascunho = {"cpf": cpf, "nome": nome_cliente, "base": propostas_mod.dados_para_duplicar(proposta)}
-        self._remontar()
-        self.rolar_ate(self.card_aberto())
         return True
 
     def nova_proposta(self) -> bool:

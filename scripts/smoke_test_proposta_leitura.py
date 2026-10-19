@@ -1,5 +1,5 @@
 """Testa o FormularioProposta (o conteudo do card expandido): proposta existente abre travada,
-com botao de copiar em cada campo, e so vira formulario de edicao depois de "Editar"; Cancel
+com botao de copiar em cada campo, e so vira formulario de edicao depois de "Editar"; Cancelar
 volta pra leitura, so Recolher recolhe o card. Tambem: o campo de DATA (o mesmo dos filtros:
 da pra selecionar tudo, apagar tudo e digitar a data inteira), a deteccao de alteracoes nao
 salvas e a protecao contra gravar por cima de outra proposta - sem abrir janela de verdade e
@@ -92,7 +92,6 @@ def _registrar_eventos(dialogo: FormularioProposta) -> None:
     dialogo.gravada.connect(lambda: eventos.append("gravada"))
     dialogo.recolher_pedido.connect(lambda: eventos.append("recolher"))
     dialogo.cancelada.connect(lambda: eventos.append("cancelada"))
-    dialogo.duplicacao_pedida.connect(lambda: eventos.append("duplicar"))
 
 
 def _travados(dialogo: FormularioProposta) -> bool:
@@ -121,7 +120,6 @@ def _estado_leitura(dialogo: FormularioProposta) -> bool:
         and all(b.isVisible() for b in dialogo._botoes_copiar)
         and dialogo._botao_recolher.isVisible()
         and dialogo._botao_editar.isVisible()
-        and dialogo._botao_duplicar.isVisible()
         and not dialogo._botao_ok.isVisible()
         and not dialogo._botao_cancelar.isVisible()
     )
@@ -161,8 +159,9 @@ def main() -> None:
         assert _todos_habilitados(dialogo), "campos ficam habilitados (com a caixa de sempre) - so nao editam"
         assert len(dialogo._botoes_copiar) == len(dialogo._campos_editaveis()) == 9
         assert dialogo._botao_recolher.text() == "Recolher" and dialogo._botao_editar.text() == "Editar"
-        assert dialogo._botao_duplicar.text() == "Mandar a outro banco"
-        print("OK: 9 campos somente leitura (habilitados, com carência e parcela), 9 botões de copiar, Editar + Mandar a outro banco + Recolher (sem OK/Cancel).")
+        assert dialogo._botao_cancelar.text() == "Cancelar", "o botao padrao do Qt sairia em ingles"
+        assert not hasattr(dialogo, "_botao_duplicar"), "o \"Mandar a outro banco\" saiu"
+        print("OK: 9 campos somente leitura (habilitados, com carência e parcela), 9 botões de copiar, Editar + Recolher (sem OK/Cancelar).")
 
         assert dialogo._data.texto() == proposta["DATA"].strftime("%d/%m/%Y")
         assert _mesmos_equipamentos(dialogo._equipamento.currentText(), proposta["EQUIPAMENTO"])
@@ -289,11 +288,11 @@ def main() -> None:
         assert dialogo._status.currentText() == proposta["STATUS"], "trocar de modo nao pode mudar o status"
         assert not any(b.isVisible() for b in dialogo._botoes_copiar), "Copiar some ao editar"
         assert dialogo._botao_ok.isVisible() and dialogo._botao_cancelar.isVisible()
-        assert not dialogo._botao_recolher.isVisible() and not dialogo._botao_editar.isVisible() and not dialogo._botao_duplicar.isVisible()
+        assert not dialogo._botao_recolher.isVisible() and not dialogo._botao_editar.isVisible()
         dialogo._banco.showPopup()
         assert dialogo._banco.view().isVisible(), "editando, a lista de bancos deve abrir"
         dialogo._banco.hidePopup()
-        print("OK: campos destravam, Copiar some, OK/Cancel aparecem, Editar/Duplicar/Recolher somem.")
+        print("OK: campos destravam, Copiar some, OK/Cancelar aparecem, Editar/Recolher somem.")
 
         assert not dialogo.tem_alteracoes(), "recem aberto para edicao: nada digitado ainda"
         dialogo._observacoes.setPlainText("editado apos habilitar edicao")
@@ -346,7 +345,7 @@ def main() -> None:
         # Enter aperta o botao padrao (o QDialog fazia isso sozinho): Recolher na leitura, OK na edicao
         dialogo = _abrir(original, indice)
         QTest.keyClick(dialogo, Qt.Key.Key_Return)
-        assert dialogo.eventos == ["recolher"], "Enter na leitura aperta Recolher (nao 'Editar' nem 'Duplicar')"
+        assert dialogo.eventos == ["recolher"], "Enter na leitura aperta Recolher (nao 'Editar')"
         dialogo = _abrir(original, indice)
         dialogo._botao_editar.click()
         QTest.keyClick(dialogo._meses, Qt.Key.Key_Return)  # Enter num campo de numero: sobe ate o formulario
@@ -381,7 +380,7 @@ def main() -> None:
         assert novo._data.texto() == QDate.currentDate().toString("dd/MM/yyyy"), "a data padrao e a de hoje"
         assert not any(c.travado() for c in (novo._equipamento, novo._banco, novo._status))
         assert not any(b.isVisible() for b in novo._botoes_copiar)
-        assert novo._botao_ok.isVisible() and not novo._botao_editar.isVisible() and not novo._botao_duplicar.isVisible()
+        assert novo._botao_ok.isVisible() and not novo._botao_editar.isVisible()
         assert not novo.tem_alteracoes(), "uma proposta nova em branco (so com a data de hoje) nao tem 'alteracao'"
         novo._valor.setValue(10)
         assert novo.tem_alteracoes()
@@ -392,18 +391,17 @@ def main() -> None:
         avulso.close()
         print("OK: proposta nova (com cliente fixo ou avulsa) abre editável, sem Copiar, com a data de hoje; Cancel avisa `cancelada`.")
 
-        linha("10) VENDEDOR abre em leitura e nao ve 'Editar' nem 'Duplicar'")
+        linha("10) VENDEDOR abre em leitura e nao ve 'Editar'")
         sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_VENDEDOR, nome_usuario="Qualquer"))
         try:
             dialogo = _abrir(proposta, indice)
             assert dialogo._modo_leitura
             assert not dialogo._botao_editar.isVisible()
-            assert not dialogo._botao_duplicar.isVisible(), "duplicar cria proposta: tambem e so do ADMIN"
             assert dialogo._botao_recolher.isVisible()
             dialogo.close()
         finally:
             sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
-        print("OK: sem permissão de escrita, os botões de editar e de duplicar nem aparecem.")
+        print("OK: sem permissão de escrita, o botão de editar nem aparece.")
 
         linha("11) O campo de DATA: selecionar tudo, apagar tudo e digitar a data inteira de uma vez")
         # o bug: no QDateEdit so dava pra editar dia, mes e ano um de cada vez. Agora e o mesmo campo dos filtros.

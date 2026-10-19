@@ -1,5 +1,5 @@
 """Testa, sem Qt e sem arquivo nenhum, as regras novas de core/dashboard.py (o "painel"): periodo e
-comparacao, numeros do topo, "Precisa de atencao", funil, por banco, para reenviar, qualidade dos
+comparacao, numeros do topo, "Precisa de atencao", funil, por banco, qualidade dos
 dados, resumo para copiar e a visao do vendedor. Inclui os casos de borda: sem propostas, tudo sem
 valor, um so banco, "Todos", periodo sem dados.
 
@@ -282,59 +282,6 @@ def testar_por_banco() -> None:
     print("OK: um so banco; sem propostas -> tabela vazia com as colunas.")
 
 
-def testar_para_reenviar() -> None:
-    linha("7) Para reenviar")
-    df = montar(
-        # A: todas negadas em Santander e Portobank
-        dict(CPF="10000000001", CLIENTE="CLIENTE A", BANCO="Santander", STATUS="Negado", DATA=_dias_atras(5)),
-        dict(CPF="10000000001", CLIENTE="CLIENTE A", BANCO="portobank", STATUS="Negado", DATA=_dias_atras(2)),
-        # B: uma negada e uma aprovada -> nao entra
-        dict(CPF="10000000002", CLIENTE="CLIENTE B", BANCO="Santander", STATUS="Negado"),
-        dict(CPF="10000000002", CLIENTE="CLIENTE B", BANCO="Medicalsan", STATUS="Aprovado"),
-        # C: so em analise -> nao entra
-        dict(CPF="10000000003", CLIENTE="CLIENTE C", BANCO="Santander", STATUS="Em Análise"),
-        # D: negada so em "Todos" (nao e banco)
-        dict(CPF="10000000004", CLIENTE="CLIENTE D", BANCO="Todos", STATUS="Negado", DATA=_dias_atras(20)),
-        # E: sem cliente cadastrado
-        dict(CPF="10000000005", CLIENTE="", BANCO="Smart", STATUS="Negado", DATA=_dias_atras(40)),
-        # F: mesmo dia: a que esta mais abaixo no arquivo e a mais recente
-        dict(CPF="10000000006", CLIENTE="CLIENTE F", BANCO="Smart", STATUS="Negado", DATA=_dias_atras(3), EQUIPAMENTO="PRIMEIRA"),
-        dict(CPF="10000000006", CLIENTE="CLIENTE F", BANCO="Mova HTM", STATUS="Negado", DATA=_dias_atras(3), EQUIPAMENTO="SEGUNDA"),
-        # G: sem CPF: ignorado
-        dict(CPF="", CLIENTE="SEM CPF", BANCO="Santander", STATUS="Negado"),
-    )
-    r = {c.cliente or c.cpf: c for c in dash.para_reenviar(df, bancos_conhecidos=["Santander", "Portobank", "Medicalsan", "Smart", "Mova HTM", "Todos", "Gloriabank"])}
-    assert set(r) == {"CLIENTE A", "CLIENTE D", "10000000005", "CLIENTE F"}, sorted(r)
-    a = r["CLIENTE A"]
-    assert a.propostas == 2 and a.indice_da_proposta == 1, "duplicar parte da proposta mais recente (2 dias atras)"
-    assert set(a.bancos_tentados) == {"Portobank", "Santander"}, "a grafia da lista de config.py vale sobre a digitada ('portobank')"
-    assert set(a.bancos_nao_tentados) == {"Medicalsan", "Smart", "Mova HTM", "Gloriabank"}, "conhecidos + usados, menos os tentados; 'Todos' nunca"
-    assert "Todos" not in a.bancos_nao_tentados and "TODOS" not in a.bancos_nao_tentados
-    print("OK: quem tem TODAS as propostas negadas entra, com bancos tentados e os que faltam.")
-
-    assert r["CLIENTE D"].bancos_tentados == () and "Todos" not in r["CLIENTE D"].bancos_nao_tentados
-    assert r["10000000005"].cadastrado is False and r["CLIENTE A"].cadastrado is True
-    f = r["CLIENTE F"]
-    assert f.indice_da_proposta == 8, "no mesmo dia, a proposta que esta mais abaixo no arquivo e a mais recente"
-    print("OK: 'Todos' nao conta como banco; cliente sem cadastro fica marcado; desempate pela linha do arquivo.")
-
-    ordem = [c.cliente or c.cpf for c in dash.para_reenviar(df, bancos_conhecidos=[])]
-    assert ordem == ["CLIENTE A", "CLIENTE F", "CLIENTE D", "10000000005"], ordem  # mais recente primeiro (2, 3, 20, 40 dias)
-    print("OK: os mais recentes primeiro.")
-
-    intervalo = (pd.Timestamp(_dias_atras(4)), pd.Timestamp(_dias_atras(0)))
-    no_periodo = [c.cliente for c in dash.para_reenviar(df, intervalo, bancos_conhecidos=[])]
-    assert no_periodo == ["CLIENTE A", "CLIENTE F"], "com periodo: so quem teve a ULTIMA proposta nele"
-    assert dash.para_reenviar(df, (pd.Timestamp(_dias_atras(400)), pd.Timestamp(_dias_atras(300)))) == []
-    assert dash.para_reenviar(vazio()) == []
-    print("OK: o periodo olha a ultima proposta do cliente; periodo sem ninguem e sem propostas -> lista vazia.")
-
-    padrao = dash.para_reenviar(df)
-    sugeridos = {b for c in padrao for b in c.bancos_nao_tentados}
-    assert "Todos" not in sugeridos and "Hubcred BV" in sugeridos, "sem a lista explicita, usa os bancos de config.py (menos 'Todos')"
-    print("OK: por padrao usa a lista de bancos conhecidos de config.py.")
-
-
 def testar_qualidade() -> None:
     linha("8) Qualidade dos dados")
     df = montar(
@@ -398,7 +345,7 @@ def testar_casos_de_borda_gerais() -> None:
     linha("11) Bordas gerais: nenhum quebra com propostas vazias")
     v = vazio()
     dash.indicadores_do_topo(v)
-    assert dash.funil_por_etapa(v) and dash.por_banco(v).empty and dash.para_reenviar(v) == [] and dash.precisa_de_atencao(v) == []
+    assert dash.funil_por_etapa(v) and dash.por_banco(v).empty and dash.precisa_de_atencao(v) == []
     assert all(c.total == 0 for c in dash.qualidade_dos_dados(v))
     # o mesmo, como o app monta o de um vendedor SEM nenhuma proposta: le a planilha (colunas de texto) e filtra -> 0 linhas
     cheias = montar(dict(VENDEDOR="OUTRA PESSOA"), dict(VENDEDOR="OUTRA PESSOA"))
@@ -409,7 +356,6 @@ def testar_casos_de_borda_gerais() -> None:
     dash.por_banco(filtradas)
     dash.precisa_de_atencao(filtradas)
     dash.qualidade_dos_dados(filtradas)
-    dash.para_reenviar(filtradas)
     assert dash.resumo_para_copiar(filtradas) == "Nenhuma proposta."
     print("OK: sem propostas (vazias ou filtradas ate zero) nenhuma funcao do painel quebra.")
 
@@ -428,7 +374,6 @@ def main() -> None:
     testar_atencao()
     testar_funil()
     testar_por_banco()
-    testar_para_reenviar()
     testar_qualidade()
     testar_resumo()
     testar_visao_do_vendedor()

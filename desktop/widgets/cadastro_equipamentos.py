@@ -193,6 +193,7 @@ class TrazerEquipamentosDialog(QDialog):
         self.falta.setProperty("role", "secundario")
         layout.addWidget(self.falta)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
         self.botao_trazer = botoes.button(QDialogButtonBox.StandardButton.Ok)
         self.botao_trazer.setText("Trazer para o cadastro")
         botoes.accepted.connect(self._trazer)

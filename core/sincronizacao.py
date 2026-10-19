@@ -258,7 +258,7 @@ def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = 
 
 
 def consultar_nuvem_para_primeira_abertura() -> NuvemParaPrimeiraAbertura:
-    """Sem planilha neste computador: a nuvem tem dados para baixar? Le as 4 abas (rede! chamar numa
+    """Sem planilha neste computador: a nuvem tem dados para baixar? Le todas as abas (rede! chamar numa
     thread). Nunca levanta: qualquer falha vira NUVEM_SEM_REDE com o motivo em `detalhe`."""
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         return NuvemParaPrimeiraAbertura(NUVEM_DESATIVADA)

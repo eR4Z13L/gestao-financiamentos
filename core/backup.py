@@ -201,7 +201,7 @@ def restaurar_backup(backup: Path, caminho_xlsx: Path | None = None) -> Path:
             f"Não foi possível restaurar '{caminho_xlsx.name}'. "
             "Verifique se ele não está aberto no Excel e tente novamente."
         ) from exc
-    # o arquivo agora e outro: nada do que ele tem foi confirmado na nuvem. Marca as 4 abas como
+    # o arquivo agora e outro: nada do que ele tem foi confirmado na nuvem. Marca todas as abas como
     # pendentes pro app nao tratar isto como "em dia" (e nao baixar por cima sem avisar).
     if config.SINCRONIZACAO_GOOGLE_ATIVADA:
         try:

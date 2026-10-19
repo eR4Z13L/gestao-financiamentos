@@ -28,22 +28,6 @@ def formatar_data(valor) -> str:
     return _AUSENTE
 
 
-def formatar_meses(valor) -> str:
-    if pd.isna(valor):
-        return _AUSENTE
-    return str(int(valor))
-
-
-def formatar_equipamento_e_valor(equipamento, valor) -> str:
-    """"HAKON · R$ 75.000,00": o equipamento e o valor da proposta numa linha so.
-    O que faltar fica de fora (so o equipamento, ou so o valor); sem nenhum dos
-    dois, "—" - a linha nunca some, pra os cards terem todos a mesma altura."""
-    partes = [_texto_limpo(equipamento)]
-    if valor is not None and not pd.isna(valor):
-        partes.append(formatar_reais(valor))
-    return " · ".join(p for p in partes if p) or _AUSENTE
-
-
 def _texto_limpo(valor) -> str:
     """Texto sem espacos nas pontas; ausente (None/NaN) vira ""."""
     if valor is None or (not isinstance(valor, str) and pd.isna(valor)):

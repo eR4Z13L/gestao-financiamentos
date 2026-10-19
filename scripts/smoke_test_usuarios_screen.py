@@ -1,5 +1,5 @@
 """Testa a tela Administração/Usuários (troca do PIN de entrada, cadastro de vendedor,
-status/carteira, redefinir senha, renomear, transferir carteira, desativar/reativar) sem
+status/carteira, renomear, transferir carteira, desativar/reativar) sem
 abrir uma janela de verdade e sem mexer em nada real - tudo numa planilha 100% ficticia e em arquivos temporários
 (scripts/fixture_ficticia.py).
 
@@ -119,12 +119,7 @@ def main() -> None:
         assert tela._campos_pin.isHidden() and not tela._sem_pin.isHidden()
         print("OK: PIN atual errado vezes demais apaga o PIN, e o cartão volta à explicação.")
 
-        assert auth.forca_da_senha("abcdefgh") == "fraca", "so minusculas, sem variedade"
-        assert auth.forca_da_senha("Abcdefg1") == "média"
-        assert auth.forca_da_senha("Abcdefgh123!") == "forte", "12+ caracteres e 3+ tipos"
-        print("OK: forca_da_senha() classifica fraca/média/forte de forma consistente.")
-
-        linha("2) Cadastros > Vendedores (cards): cadastrar mostra a senha inicial; carteira e senha no card")
+        linha("2) Cadastros > Vendedores (cards): cadastrar sem senha nem login; só a carteira no card")
         assert not hasattr(tela, "_tabela_vendedores"), "os vendedores sairam da Administracao"
         cad = CadastroVendedores()
         cad.resize(1100, 700)
@@ -139,29 +134,24 @@ def main() -> None:
         cad._card_aberto().campos["nome"].setText("Vendedor Tela Teste")
         cad._card_aberto().botoes["salvar"].click()
         assert len(cad.cards) == total_antes + 1 and card("Vendedor Tela Teste").etiqueta.texto() == "Ativo"
-        assert "Senha inicial de acesso" in mensagens[-1]
-        senha_inicial = mensagens[-1].split("Senha inicial de acesso: ")[1].split()[0]
-        assert "Nenhum cliente" in card("Vendedor Tela Teste").detalhe.text() and "senha definida" in card("Vendedor Tela Teste").detalhe.text()
-        print(f"OK: '+ Novo vendedor' cadastra ({total_antes} -> {len(cad.cards)} cards), já ativo, e mostra a senha inicial.")
+        assert mensagens[-1] == "'Vendedor Tela Teste' cadastrado.", "sem senha inicial na mensagem"
+        assert card("Vendedor Tela Teste").detalhe.text() == "Nenhum cliente", "o card mostra só a carteira (sem pílula de senha)"
+        linha_nova = bd.ler_vendedores(tmp_xlsx).set_index("NOME").loc["Vendedor Tela Teste"]
+        assert not linha_nova["SENHA_HASH"] and not linha_nova["SALT"], "cadastrar não gera senha (o modo vendedor está desligado)"
+        cad.botao_novo.click()
+        cad._card_aberto().campos["nome"].setText("vendedor tela teste")
+        cad._card_aberto().botoes["salvar"].click()
+        assert "já estava cadastrado" in mensagens[-1] and len(cad.cards) == total_antes + 1
+        print(f"OK: '+ Novo vendedor' cadastra ({total_antes} -> {len(cad.cards)} cards), já ativo, sem senha; repetir o nome avisa.")
 
-        linha("3) Redefinir senha (três pontinhos)")
-        def _senha_local_confere(nome: str, senha: str) -> bool:
-            df = bd.ler_vendedores(tmp_xlsx)
-            linha_vendedor = df[df["NOME"] == nome].iloc[0]
-            return auth.senha_confere(senha, linha_vendedor["SENHA_HASH"], linha_vendedor["SALT"])
-
-        assert _senha_local_confere("Vendedor Tela Teste", senha_inicial)
-        respostas_sim.append(False)
-        card("Vendedor Tela Teste").acoes["Redefinir senha"].trigger()
-        assert _senha_local_confere("Vendedor Tela Teste", senha_inicial), "respondendo Não, nada muda"
-        card("Vendedor Tela Teste").acoes["Redefinir senha"].trigger()
-        assert not _senha_local_confere("Vendedor Tela Teste", senha_inicial) and "Nova senha" in mensagens[-1]
-        print("OK: redefinir senha pergunta antes; 'Sim' gera uma senha nova e invalida a antiga.")
+        linha("3) Três pontinhos: sem 'Redefinir senha' (só carteira e ativar/desativar)")
+        assert "Redefinir senha" not in card("Vendedor Tela Teste").acoes and "Transferir carteira" in card("Vendedor Tela Teste").acoes
+        print("OK: o card do vendedor não oferece mais redefinir senha.")
 
         linha("4) Carteira no card; desativar exige carteira vazia")
         _cliente("11122233396", "CLIENTE DO TELA TESTE", "Vendedor Tela Teste")
         cad.recarregar()
-        assert "1 cliente ·" in card("Vendedor Tela Teste").detalhe.text()
+        assert card("Vendedor Tela Teste").detalhe.text() == "1 cliente"
         card("Vendedor Tela Teste").acoes["ativo"].trigger()  # confirmação = Sim, mas o core recusa
         assert vendedores_mod.esta_ativo(bd.ler_vendedores(tmp_xlsx).set_index("NOME").loc["Vendedor Tela Teste", "ATIVO"])
         assert "carteira" in mensagens[-1].lower()

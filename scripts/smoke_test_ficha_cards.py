@@ -46,7 +46,6 @@ from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
-from core.formatting import formatar_equipamento_e_valor
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -146,12 +145,6 @@ def testar_regras() -> None:
     print("OK: CPFs só com dígitos (pontuação diferente conta como o mesmo cliente); uma aberta basta; "
           "planilha sem proposta nenhuma devolve conjunto vazio.")
 
-    nan = float("nan")
-    assert formatar_equipamento_e_valor("HAKON", 75000.0) == "HAKON · R$ 75.000,00"
-    assert formatar_equipamento_e_valor("  HAKON ", nan) == "HAKON"
-    assert formatar_equipamento_e_valor("", 1500.5) == "R$ 1.500,50"
-    assert formatar_equipamento_e_valor(None, None) == "—" and formatar_equipamento_e_valor("", nan) == "—"
-    print("OK: 'HAKON · R$ 75.000,00'; o que falta fica de fora; sem nenhum dos dois, '—' (a linha nunca some).")
 
 
 def testar_cores_do_tipo() -> None:
@@ -707,8 +700,8 @@ def testar_vendedor(app: QApplication, stubs: _Stubs, cpfs: dict[str, str], arqu
         aberto = tela.lista_antigas.card_aberto()
         assert aberto is not None, "dois cliques abrem a proposta pro vendedor também"
         formulario = aberto.formulario
-        assert formulario._modo_leitura and formulario._botao_editar.isHidden() and formulario._botao_duplicar.isHidden(), \
-            "só leitura: sem 'Editar' nem 'Mandar a outro banco'"
+        assert formulario._modo_leitura and formulario._botao_editar.isHidden(), \
+            "só leitura: sem 'Editar'"
         assert aberto.botao_excluir is None, "nem excluir"
         assert formulario._valor.value() > 0 and formulario._observacoes.toPlainText().startswith("obs "), "vê meses/observações pela leitura"
         formulario._botao_recolher.click()

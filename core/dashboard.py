@@ -3,7 +3,7 @@ nada fica salvo na planilha.
 
 Duas camadas neste arquivo. A de cima (`totais_gerais`, `detalhamento_por_status`,
 `por_vendedor`) e a original. A de baixo ("Painel") e a do dashboard atual: periodo, numeros do
-topo, "Precisa de atencao", funil, por banco, para reenviar, qualidade dos dados, resumo para
+topo, "Precisa de atencao", funil, por banco, qualidade dos dados, resumo para
 copiar e a visao do vendedor. Todas as funcoes do painel recebem DataFrames ja lidos (nunca leem
 arquivo) e o dashboard so SINALIZA: nenhuma corrige dado.
 """
@@ -17,7 +17,6 @@ from typing import Iterable
 
 import pandas as pd
 
-from core import bancos as bancos_mod
 from core import vendedores as vendedores_mod
 from core.formatting import dias_do_tempo
 from core.propostas import (
@@ -646,81 +645,6 @@ def por_banco(propostas: pd.DataFrame) -> pd.DataFrame:
 def chave_do_banco(nome_exibido: str) -> str:
     """O `parametro` do FILTRO_BANCO de uma linha de `por_banco` ("" = proposta sem banco)."""
     return "" if nome_exibido == ROTULO_SEM_BANCO else nome_exibido.strip().upper()
-
-
-# -- para reenviar -------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ClienteParaReenviar:
-    cpf: str
-    cliente: str
-    cadastrado: bool  # False: ha propostas com este CPF mas nao ha cliente cadastrado (nao da pra abrir a ficha)
-    indice_da_proposta: int  # a mais recente: e dela que "Duplicar" parte
-    propostas: int
-    bancos_tentados: tuple[str, ...]
-    bancos_nao_tentados: tuple[str, ...]
-    ultima_data: pd.Timestamp | None
-
-
-def para_reenviar(
-    propostas: pd.DataFrame,
-    intervalo: tuple[pd.Timestamp, pd.Timestamp] | None = None,
-    bancos_conhecidos: Iterable[str] | None = None,
-) -> list[ClienteParaReenviar]:
-    """Clientes cujas propostas foram TODAS negadas (olhando o historico inteiro de `propostas`), com os
-    bancos ja tentados e os que ainda nao (os ativos do cadastro + os ja usados em qualquer proposta). Com
-    `intervalo`, so quem teve a ultima proposta nele. "Todos" nao e banco: nunca entra em nenhuma das duas listas.
-    Mais recentes primeiro."""
-    if propostas.empty:
-        return []
-    conhecidos = bancos_mod.nomes_ativos() if bancos_conhecidos is None else bancos_conhecidos
-
-    chaves = _texto_normalizado(propostas["BANCO"])
-    grafias: dict[str, str] = {}
-    for chave in set(chaves) - {""} - NAO_SAO_BANCO:
-        grafias[chave] = _grafia_mais_usada(propostas.loc[chaves == chave, "BANCO"])
-    uso = Counter(c for c in chaves if c and c not in NAO_SAO_BANCO)
-    for nome in conhecidos:  # a grafia do cadastro e a "oficial": vale sobre a digitada nas propostas
-        chave = nome.strip().upper()
-        if chave and chave not in NAO_SAO_BANCO:
-            grafias[chave] = nome.strip()
-
-    cpfs = propostas["CPF"].map(apenas_digitos)
-    etapas = propostas["STATUS"].map(etapa_status)
-    datas = pd.to_datetime(propostas["DATA"], errors="coerce")
-    resultado = []
-    for cpf in sorted(set(cpfs) - {""}):
-        do_cliente = cpfs == cpf
-        if not (etapas[do_cliente] == ETAPA_NEGADO).all():
-            continue
-        # a mais recente por DATA; no empate (mesmo dia) a que esta mais abaixo no arquivo (lancada depois)
-        ordem = (
-            propostas[do_cliente]
-            .assign(_data=datas[do_cliente])
-            .sort_index(ascending=False)
-            .sort_values("_data", ascending=False, na_position="last", kind="stable")
-        )
-        mais_recente = ordem.iloc[0]
-        ultima_data = mais_recente["_data"] if pd.notna(mais_recente["_data"]) else None
-        if intervalo is not None and (ultima_data is None or not (intervalo[0] <= _dia(ultima_data) <= intervalo[1])):
-            continue
-        nome = next((n for n in propostas.loc[do_cliente, "CLIENTE"] if isinstance(n, str) and n.strip()), "")
-        tentados = sorted({c for c in chaves[do_cliente] if c and c not in NAO_SAO_BANCO})
-        nao_tentados = sorted((c for c in grafias if c not in tentados), key=lambda c: (-uso[c], grafias[c]))
-        resultado.append(
-            ClienteParaReenviar(
-                cpf=cpf,
-                cliente=nome.strip(),
-                cadastrado=bool(nome.strip()),
-                indice_da_proposta=int(ordem.index[0]),
-                propostas=int(do_cliente.sum()),
-                bancos_tentados=tuple(grafias[c] for c in tentados),
-                bancos_nao_tentados=tuple(grafias[c] for c in nao_tentados),
-                ultima_data=ultima_data,
-            )
-        )
-    return sorted(resultado, key=lambda r: (r.ultima_data is None, -(r.ultima_data.value if r.ultima_data is not None else 0), r.cliente))
 
 
 # -- qualidade dos dados ---------------------------------------------------------------------------

@@ -42,7 +42,6 @@ from core.validators import apenas_digitos
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen, _resumo_com_vendas
 from desktop.theme import TEMA_ESCURO, build_stylesheet
 from desktop.widgets import card_da_venda as card_mod
-from desktop.widgets.card_da_proposta import CardNovaProposta
 from desktop.widgets.card_da_venda import NOVA
 from desktop.widgets.lista_de_vendas import FaixaDeAviso
 
@@ -297,22 +296,7 @@ def main() -> None:
             assert not tela.tem_edicao_pendente() and tela.lista_vendas.editando is None
             print("OK: 'Recarregar' pergunta; 'Sim' descarta o formulário do card de venda.")
 
-            linha("8) 'Duplicar' do Dashboard: proposta de venda vai pro card dela; a antiga, pro card 'Nova proposta'")
-            assert tela.abrir_nova_proposta_a_partir_de(fx.CPF_MARIA, v.indice_da_proposta(pa))
-            _processar()
-            assert tela.lista_vendas.aberta == id_a and tela.lista_vendas.editando == NOVA
-            assert tela.lista_antigas.rascunho is None and tela.lista_antigas.aberta is None
-            tela.lista_vendas.descartar()
-            assert tela.abrir_nova_proposta_a_partir_de(fx.CPF_MARIA, antigas[0])
-            _processar()
-            assert tela.lista_antigas.rascunho is not None and tela.lista_vendas.editando is None
-            assert isinstance(tela.lista_antigas.cards[0], CardNovaProposta), "o card 'Nova proposta' fica no topo"
-            assert tela.lista_antigas.cards[0].formulario._banco.currentText() == "", "duplicar: sem banco, para escolher"
-            tela.lista_antigas.descartar()
-            assert tela.lista_antigas.rascunho is None
-            print("OK: de uma proposta de venda abre o '+ Adicionar proposta' do card dela; de uma antiga, o card 'Nova proposta'.")
-
-            linha("9) Gravar numa venda lá embaixo não leva a ficha pro topo")
+            linha("8) Gravar numa venda lá embaixo não leva a ficha pro topo")
             for i in range(10):
                 v.criar_venda(fx.CPF_MARIA, ["Cadeira Exemplo"], _pedido((b1, b2)[i % 2], 1000 + i))
             tela._depois_de_gravar_venda()

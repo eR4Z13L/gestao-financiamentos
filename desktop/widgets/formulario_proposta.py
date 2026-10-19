@@ -3,7 +3,7 @@ proposta de Todas as Propostas e da Ficha, e o card "Nova proposta").
 
 Mesmo formulario serve pra tres casos:
 - cpf fixo + proposta=None -> nova proposta pra um cliente ja conhecido
-  (aberta a partir da Ficha de Cliente); com `base`, ja vem preenchida (duplicar)
+  (aberta a partir da Ficha de Cliente); com `base`, ja vem preenchida a partir de outra proposta
 - cpf fixo + proposta+indice -> abrir uma proposta existente
 - cpf=None -> nova proposta "avulsa" (sem um cliente pre-selecionado): mostra um
   campo de cliente pesquisavel na primeira linha.
@@ -15,15 +15,14 @@ com a largura que o conteudo pede, pro card expandido ser o menos alto possivel.
 
 Uma proposta existente abre primeiro em MODO LEITURA (campos travados - mesma
 caixa da edicao, mas so pra ler/selecionar -, com um botao de copiar ao lado
-de cada um, e os botoes Editar, Mandar a outro banco e Recolher). So depois de "Editar" o
-formulario vira o de edicao, com OK/Cancel - e Cancel descarta o que foi digitado e
+de cada um, e os botoes Editar e Recolher). So depois de "Editar" o
+formulario vira o de edicao, com OK/Cancelar - e Cancelar descarta o que foi digitado e
 VOLTA pra leitura (so "Recolher" fecha o card). Proposta nova abre direto em
-edicao (nao ha o que "voltar"): Cancel avisa `cancelada`.
+edicao (nao ha o que "voltar"): Cancelar avisa `cancelada`.
 
 O formulario nao sabe onde esta: quem o hospeda (a lista de vendas ou a de propostas) reage aos
 sinais - `gravada` (salvou; `indice_gravado` diz qual proposta), `recolher_pedido`
-(Recolher, ou Esc na leitura), `cancelada` (Cancel/Esc numa proposta nova) e
-`duplicacao_pedida`.
+(Recolher, ou Esc na leitura) e `cancelada` (Cancelar/Esc numa proposta nova).
 """
 
 from __future__ import annotations
@@ -168,7 +167,6 @@ class FormularioProposta(QWidget):
     gravada = Signal()
     recolher_pedido = Signal()
     cancelada = Signal()
-    duplicacao_pedida = Signal()
     # emitido ANTES de `gravada`, so quando o status acabou de virar "Efetivado" (nao
     # quando ja estava): (cpf, equipamento, indice_gravado). Quem escuta (a lista de propostas)
     # oferece encerrar as outras propostas em aberto da mesma venda - ver
@@ -191,7 +189,7 @@ class FormularioProposta(QWidget):
     ):
         """`base`: valores iniciais de uma proposta NOVA (ver
         propostas_mod.dados_para_duplicar); ignorado se `proposta` existe. `so_edicao`: dentro do card da venda
-        aberto - abre direto editando (a leitura e a propria linha do banco no card) e Cancel fecha o formulario
+        aberto - abre direto editando (a leitura e a propria linha do banco no card) e Cancelar fecha o formulario
         (avisa `cancelada`) em vez de voltar pra leitura. `escolher_venda` (proposta nova, cliente na busca): o
         "+ Nova proposta" de Todas as Propostas - depois do cliente, a venda: uma em aberto dele (a proposta entra
         nela) ou "+ Venda nova com esta proposta" (cria a venda junto)."""
@@ -201,9 +199,9 @@ class FormularioProposta(QWidget):
         self._indice = indice
         self._nome_cliente = nome_cliente
         self._existente = proposta is not None
-        self._proposta_original = proposta  # o que "Cancel" restaura, e o que o arquivo tem que ainda ter ao gravar
-        self._foco_inicial_no_banco = proposta is None and base is not None  # duplicata: o banco e o que falta escolher
-        # proposta nova: grava criando a venda junto, ou - vinda de "Mandar a outro banco" - dentro da mesma venda
+        self._proposta_original = proposta  # o que "Cancelar" restaura, e o que o arquivo tem que ainda ter ao gravar
+        self._foco_inicial_no_banco = proposta is None and base is not None  # vinda de outra proposta: o banco e o que falta escolher
+        # proposta nova: grava criando a venda junto, ou - vinda do "+ Adicionar proposta" do card da venda - dentro dela
         self._id_venda = (base or {}).get("ID_VENDA", "") if proposta is None else ""
         self._modo_leitura = False
         self._botoes_copiar: list[BotaoCopiar] = []
@@ -364,17 +362,16 @@ class FormularioProposta(QWidget):
         for campo in (self._data.campo, self._valor, self._meses, self._parcela):
             campo.setMinimumHeight(altura_caixa)
 
-        # Editar/Duplicar/Recolher so em modo leitura; OK/Cancel so em modo edicao -
+        # Editar/Recolher so em modo leitura; OK/Cancelar so em modo edicao -
         # _aplicar_modo() alterna a visibilidade
         self._botao_editar = self._botao("Editar", self._habilitar_edicao)
-        self._botao_duplicar = self._botao("Mandar a outro banco", self.duplicacao_pedida.emit)
         self._botao_recolher = self._botao("Recolher", self.recolher_pedido.emit)
         self._botao_ok = self._botao("OK", self._salvar)
-        self._botao_cancelar = self._botao("Cancel", self._cancelar_edicao)
+        self._botao_cancelar = self._botao("Cancelar", self._cancelar_edicao)
         linha_botoes = QHBoxLayout()
         linha_botoes.setSpacing(8)
         linha_botoes.addStretch(1)
-        for botao in (self._botao_editar, self._botao_duplicar, self._botao_recolher, self._botao_ok, self._botao_cancelar):
+        for botao in (self._botao_editar, self._botao_recolher, self._botao_ok, self._botao_cancelar):
             linha_botoes.addWidget(botao)
         raiz.addLayout(linha_botoes)
 
@@ -560,11 +557,10 @@ class FormularioProposta(QWidget):
         # VENDEDOR nunca escreve nada (core/sessao.py) - nao faz sentido nem
         # oferecer estes botoes; a barreira de verdade continua sendo a do core/
         self._botao_editar.setVisible(leitura and sessao_mod.eh_admin())
-        self._botao_duplicar.setVisible(leitura and sessao_mod.eh_admin() and not self._so_edicao)
         self._botao_recolher.setVisible(leitura)
         self._botao_ok.setVisible(not leitura)
         self._botao_cancelar.setVisible(not leitura)
-        # sem isso, Enter em modo leitura poderia cair em "Editar" ou "Duplicar"
+        # sem isso, Enter em modo leitura poderia cair em "Editar"
         (self._botao_recolher if leitura else self._botao_ok).setDefault(True)
         (self._botao_ok if leitura else self._botao_recolher).setDefault(False)
 
@@ -603,7 +599,7 @@ class FormularioProposta(QWidget):
         self._data.campo.setFocus()
 
     def _cancelar_edicao(self) -> None:
-        """Cancel: descarta o que foi digitado e VOLTA pra leitura sem recolher
+        """Cancelar: descarta o que foi digitado e VOLTA pra leitura sem recolher
         o card. Numa proposta nova nao ha leitura pra onde voltar - avisa
         `cancelada` e quem hospeda decide (tirar o card, ou voltar pra proposta de origem)."""
         if not self._existente or self._so_edicao:
@@ -616,7 +612,7 @@ class FormularioProposta(QWidget):
     # -- teclado e mouse --------------------------------------------------------------
 
     def keyPressEvent(self, evento: QKeyEvent) -> None:
-        # o que o QDialog fazia sozinho: Esc age como o botao Cancel (edicao) ou Recolher
+        # o que o QDialog fazia sozinho: Esc age como o botao Cancelar (edicao) ou Recolher
         # (leitura); Enter aperta o botao padrao. So chega aqui o que o campo com foco
         # nao usou (um QPlainTextEdit fica com o Enter dele, pra quebrar linha). O formulario
         # ACEITA tudo: senao a tecla subiria pra lista de cards (o Enter dela expande/recolhe).

@@ -12,10 +12,7 @@ do topo, "minhas em analise", "minhas aprovadas para efetivar", "meus clientes s
 desempenho por banco e o resumo - nunca o nome de outro vendedor, nem os blocos que exigem escrever.
 
 A tela nao navega sozinha: cada linha clicavel EMITE um sinal (`filtro_pedido`, `ficha_pedida`) e a janela
-principal leva a pessoa pra Todas as Propostas ja filtrada ou pra Ficha. `duplicacao_pedida` continua
-declarado (cpf, posicao real da proposta - Ficha com "Nova proposta" a partir dela) mas sem nenhum bloco
-que o emita hoje: era do card "Para reenviar", removido da tela (a logica em core/dashboard.py e o widget
-desktop/widgets/linha_para_reenviar.py continuam, caso o bloco volte no futuro).
+principal leva a pessoa pra Todas as Propostas ja filtrada ou pra Ficha.
 """
 
 from __future__ import annotations
@@ -88,7 +85,6 @@ def _diferenca(valor: float, unidade: str, referencia: str, casas: int = 0) -> s
 class DashboardScreen(QWidget):
     filtro_pedido = Signal(object)  # FiltroDoDashboard: abrir Todas as Propostas so com isso
     ficha_pedida = Signal(str)  # cpf: abrir a Ficha desse cliente
-    duplicacao_pedida = Signal(str, int)  # cpf, posicao real da proposta: Ficha com "Nova proposta" a partir dela
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)

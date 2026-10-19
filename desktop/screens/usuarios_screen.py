@@ -48,7 +48,7 @@ _ROTULO_POR_MOTIVO = {
     backup_mod.MOTIVO_AUTOMATICO: "Automático",
     backup_mod.MOTIVO_MANUAL: "Manual",
     backup_mod.MOTIVO_PRE_RESTAURACAO: "Pré-restauração",
-    backup_mod.MOTIVO_PRE_MESCLAGEM: "Pré-mesclagem",
+    backup_mod.MOTIVO_PRE_MESCLAGEM: "Antigo",
     backup_mod.MOTIVO_PRE_NUVEM: "Antes de baixar da nuvem",
     backup_mod.MOTIVO_COPIA_DA_NUVEM: "Cópia da nuvem (antes de sobrescrever)",
     backup_mod.MOTIVO_PRE_VENDAS: "Antes de juntar as propostas em vendas",
@@ -476,7 +476,7 @@ class UsuariosScreen(QWidget):
         QMessageBox.information(
             self,
             "Envio iniciado",
-            "Os dados deste computador estão sendo enviados para a nuvem (as 4 abas). Acompanhe o indicador "
+            "Os dados deste computador estão sendo enviados para a nuvem (todas as abas). Acompanhe o indicador "
             f"na barra lateral.{onde}",
         )
         return True
@@ -590,7 +590,7 @@ class UsuariosScreen(QWidget):
             "Restaurar backup",
             f"Restaurar o backup de {backup.quando.strftime('%d/%m/%Y %H:%M')} "
             f"({_ROTULO_POR_MOTIVO.get(backup.motivo, backup.motivo)})?\n\n"
-            "Isso substitui TODOS os dados atuais (clientes, propostas, vendedores) pelos deste "
+            "Isso substitui TODOS os dados atuais (clientes, equipamentos, propostas, vendas, vendedores e bancos) pelos deste "
             "backup. O estado atual também é salvo automaticamente antes - então, se precisar, dá "
             "pra desfazer essa restauração também.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

@@ -444,7 +444,7 @@ def main() -> None:
             todas_desmarcadas._salvar()
             assert "equipamento" in msgs.ultima()[2], "sem nenhuma caixinha marcada não grava"
             existente = FormularioProposta(fx.CPF_JOAO, "JOÃO", proposta=nova.to_dict(), indice=f.indice_gravado)
-            assert existente._botao_duplicar.text() == "Mandar a outro banco"
+            assert existente._botao_editar.text() == "Editar" and not hasattr(existente, "_botao_duplicar")
             assert [c.isChecked() for c in existente._equipamento.caixas] == [True, False], "marca só o que ela cobre"
             assert all(not c.isEnabled() for c in existente._equipamento.caixas), "na leitura, travadas"
             print("OK: lista fechada fora da venda (cria a venda); numa venda, uma caixinha por equipamento dela, todas "

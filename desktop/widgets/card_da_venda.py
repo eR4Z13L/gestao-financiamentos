@@ -643,6 +643,7 @@ class DesfechoDialog(QDialog):
             self.motivo.setCurrentIndex(self.motivo.findData(venda.motivo))
         layout.addWidget(self.motivo)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
         botoes.button(QDialogButtonBox.StandardButton.Ok).setText(f"Marcar como {status}")
         botoes.accepted.connect(self.accept)
         botoes.rejected.connect(self.reject)

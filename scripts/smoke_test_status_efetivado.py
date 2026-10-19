@@ -106,7 +106,7 @@ def testar_regras() -> None:
         assert propostas_mod.eh_nao_efetivado(s) and not propostas_mod.eh_efetivado(s) and not propostas_mod.eh_aprovado_nao_efetivado(s)
     for s in ("Encerrada", "ENCERRADA", " encerrada "):
         assert propostas_mod.categoria_status(s) == "Encerrada", s  # fica FORA de Aprovado/Negado
-        assert propostas_mod.eh_proposta_encerrada(s) and not propostas_mod.eh_efetivado(s)
+        assert not propostas_mod.eh_efetivado(s)
     assert not propostas_mod.esta_em_aberto("Não efetivado") and not propostas_mod.esta_em_aberto("Encerrada")
     print("OK: 'Não efetivado' conta como Aprovado na taxa (o banco aprovou); 'Encerrada' tem categoria própria "
           "(fora de Aprovado e de Negado); as duas encerram (esta_em_aberto = False).")

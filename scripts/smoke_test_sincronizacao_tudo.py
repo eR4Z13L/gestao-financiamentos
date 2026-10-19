@@ -1,4 +1,4 @@
-"""Testa core/sincronizacao.py (sincronizar_tudo_agora): relê as 4 abas do disco e
+"""Testa core/sincronizacao.py (sincronizar_tudo_agora): relê todas as abas do disco e
 dispara a sincronização de cada uma, mesmo sem nada ter mudado. Rede sempre
 substituída por uma falsa (nenhum byte sai da máquina) - mesmo padrão de
 smoke_test_sincronizacao_estado.py. Planilha fictícia numa pasta temporária.
@@ -92,7 +92,7 @@ class _RedeFalsa:
 
 
 def testar_sincronizar_tudo_agora(arquivo: Path) -> None:
-    linha("1) sincronizar_tudo_agora() dispara as 4 abas, com o conteudo ATUAL do disco")
+    linha("1) sincronizar_tudo_agora() dispara todas as abas, com o conteudo ATUAL do disco")
     vendedores_mod.adicionar_vendedor("Vendedora Da Fila")
 
     with _RedeFalsa() as rede:
@@ -103,7 +103,7 @@ def testar_sincronizar_tudo_agora(arquivo: Path) -> None:
         assert sheets_sync.estado_atual().nivel == sheets_sync.NIVEL_OK
         _, linhas_vendedores = next(c for c in rede.chamadas if c[0] == bd.ABA_VENDEDORES)
         assert linhas_vendedores == len(vendedores_mod.listar_vendedores()), "leu o estado ATUAL, com o vendedor novo"
-    print(f"OK: as 4 abas foram sincronizadas ({sorted(abas_chamadas)}), com os dados atuais do disco.")
+    print(f"OK: todas as abas foram sincronizadas ({sorted(abas_chamadas)}), com os dados atuais do disco.")
 
 
 def testar_sincronizar_tudo_agora_reflete_edicao_local(arquivo: Path) -> None:
@@ -147,7 +147,7 @@ def testar_sincronizar_tudo_agora_entra_na_fila_se_falhar(arquivo: Path) -> None
         sheets_sync._sincronizar_agora = original
         sheets_sync._obter_cliente = cliente_original
         sheets_sync._reiniciar_estado()
-    print("OK: se 'Sincronizar agora' falhar, as 4 abas ficam na fila de repetição normal (E9).")
+    print("OK: se 'Sincronizar agora' falhar, todas as abas ficam na fila de repetição normal (E9).")
 
 
 def main() -> None:

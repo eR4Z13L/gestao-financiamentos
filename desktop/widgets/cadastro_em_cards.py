@@ -71,7 +71,7 @@ class ItemDoCadastro:
 
 @dataclass(frozen=True)
 class AcaoExtra:
-    """Mais uma opcao nos tres pontinhos (ex.: "Redefinir senha"). `executar` cuida das proprias perguntas
+    """Mais uma opcao nos tres pontinhos (ex.: "Transferir carteira"). `executar` cuida das proprias perguntas
     (pode abrir dialogos) e devolve a mensagem de sucesso, "" pra nao mostrar nada, ou None se a pessoa
     desistiu; levanta um dos erros_esperados quando a regra recusa."""
 

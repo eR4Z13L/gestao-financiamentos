@@ -25,9 +25,7 @@ PASTA_SCRIPTS = Path(__file__).resolve().parent
 
 # Testes que ainda tocam a planilha real e serao trocados depois (nome -> o que falta). ESVAZIAR quando
 # acontecer: o guarda reprova um pendente que ja esta limpo, para a lista nao ficar velha.
-PENDENTES: dict[str, str] = {
-    "smoke_test_propostas_screen.py": "ainda copia a planilha real (trocar depois da Etapa 0)",
-}
+PENDENTES: dict[str, str] = {}
 
 TESTE_DA_CONFIG_LOCAL = "smoke_test_config_local.py"
 FUNCOES_DE_COPIA = {"copy", "copy2", "copyfile", "copyfileobj", "copytree"}

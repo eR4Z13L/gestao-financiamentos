@@ -28,6 +28,7 @@ from core import backup as backup_mod
 from core import data_store as bd
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
+from desktop.screens import usuarios_screen as usuarios_screen_mod
 from desktop.screens.usuarios_screen import UsuariosScreen
 
 
@@ -124,7 +125,9 @@ def main() -> None:
 
         assert len(mensagens) == antes_msg + 2, "1 pergunta de confirmação + 1 aviso de sucesso"
         assert "TODOS os dados atuais" in mensagens[-2], "a pergunta avisa que é uma substituição completa"
+        assert "clientes, equipamentos, propostas, vendas, vendedores e bancos" in mensagens[-2], "a pergunta cita tudo o que é substituído"
         assert "restaurados" in mensagens[-1].lower()
+        assert usuarios_screen_mod._ROTULO_POR_MOTIVO[backup_mod.MOTIVO_PRE_MESCLAGEM] == "Antigo", "backup de antes da mesclagem (saiu do app) aparece como Antigo"
         assert tela._modelo_backups.rowCount() == antes_backups + 1, "o backup de segurança entrou na lista"
         assert "Vendedora Depois Do Backup" not in vendedores_mod.listar_vendedores(), "os dados voltaram ao do backup"
         assert "Vendedora Original" in vendedores_mod.listar_vendedores()

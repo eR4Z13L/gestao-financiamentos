@@ -625,7 +625,7 @@ def _salvar_planilha(wb, caminho_xlsx: Path) -> None:
 
 
 def criar_planilha_vazia(caminho_xlsx: Path) -> None:
-    """Cria o arquivo de dados do zero: as 4 abas, na ordem do arquivo real, so com os cabecalhos. E o
+    """Cria o arquivo de dados do zero: todas as abas, na ordem do arquivo real, so com os cabecalhos. E o
     que a primeira abertura usa quando nao ha planilha (instalacao nova). Nunca sobrescreve: se ja
     existe um arquivo nesse caminho, levanta FileExistsError sem tocar nele. A aba BANCOS nasce na primeira
     leitura (ler_bancos), ja com config.BANCOS_INICIAIS."""

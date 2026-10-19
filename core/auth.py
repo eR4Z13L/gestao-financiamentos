@@ -31,25 +31,6 @@ def gerar_senha_aleatoria(tamanho: int = 8) -> str:
     return "".join(secrets.choice(_ALFABETO_SENHA) for _ in range(tamanho))
 
 
-def forca_da_senha(senha: str) -> str:
-    """"fraca"/"média"/"forte" - so um indicador visual pra quem esta digitando, nunca
-    bloqueia nada alem do tamanho minimo (SENHA_MINIMA, conferido em quem chama). Leva em
-    conta o tamanho e a variedade de tipos de caractere (minuscula/maiuscula/numero/simbolo)."""
-    if len(senha) < SENHA_MINIMA:
-        return "fraca"
-    variedade = sum((
-        any(c.islower() for c in senha),
-        any(c.isupper() for c in senha),
-        any(c.isdigit() for c in senha),
-        any(not c.isalnum() for c in senha),
-    ))
-    if len(senha) >= 12 and variedade >= 3:
-        return "forte"
-    if variedade >= 2:
-        return "média"
-    return "fraca"
-
-
 def hash_senha(senha: str, salt_hex: str | None = None) -> tuple[str, str]:
     """Devolve (hash_hex, salt_hex). Sem salt_hex, gera um salt novo (cadastro/
     redefinicao); com salt_hex, recalcula o hash com o MESMO salt (conferir
@@ -89,14 +70,3 @@ def verificar_senha_admin(senha: str) -> bool:
         return False
     dados = json.loads(CAMINHO_CREDENCIAIS_ADMIN.read_text(encoding="utf-8"))
     return senha_confere(senha, dados.get("senha_hash", ""), dados.get("salt", ""))
-
-
-def alterar_senha_admin(senha_atual: str, senha_nova: str) -> bool:
-    """Troca a senha do ADMIN, mas so se `senha_atual` conferir - evita que
-    alguem que encontre o app aberto (sem ter que logar de novo) troque a
-    senha sem saber a atual. Devolve False (sem trocar nada) se a senha
-    atual estiver errada."""
-    if not verificar_senha_admin(senha_atual):
-        return False
-    definir_senha_admin(senha_nova)
-    return True

@@ -123,7 +123,6 @@ class MainWindow(QMainWindow):
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
         self._tela_dashboard.ficha_pedida.connect(self.abrir_ficha_do_cliente)
-        self._tela_dashboard.duplicacao_pedida.connect(self.abrir_nova_proposta_duplicada)
         self._menu.pagina_escolhida.connect(self._ao_escolher_pagina)
 
         self._temporizador_do_indicador = QTimer(self)
@@ -233,15 +232,6 @@ class MainWindow(QMainWindow):
             return
         self.ir_para(PAGINA_VENDAS)
         self._tela_vendas.nova_venda()
-
-    def abrir_nova_proposta_duplicada(self, cpf: str, indice_da_proposta: int) -> None:
-        """A Ficha do cliente com o card "Nova proposta" ja preenchido a partir da proposta `indice_da_proposta`."""
-        if not sessao_mod.eh_admin():  # so o ADMIN cria proposta (a trava de verdade tambem esta no core)
-            return
-        if not self._confirmar_descartar_edicoes():
-            return
-        self.ir_para(PAGINA_FICHA)
-        self._tela_ficha.abrir_nova_proposta_a_partir_de(cpf, indice_da_proposta)
 
     def _confirmar_descartar_edicoes(self, pergunta: str = "Descartar as alterações e continuar?") -> bool:
         """Se ha um card de proposta com edicao nao salva, pergunta antes de seguir; True = pode seguir."""

@@ -28,10 +28,8 @@ import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False
 from ambiente_de_teste import Ambiente, Mensagens
 from core import bancos as bancos_mod
-from core import dashboard as dash
 from core import data_store as bd
 from core import data_store_sheets as nuvem
-from core import propostas as propostas_mod
 from core import sessao as sessao_mod
 from core import sheets_sync
 from core import sincronizacao
@@ -195,7 +193,7 @@ def main() -> None:
                 sincronizacao._recusar_se_a_nuvem_parece_vazia_por_engano(dados, caminho)
                 sincronizacao._gravar_dados_no_arquivo(caminho, dados)
                 assert bd.ler_bancos(caminho).equals(antes_bancos), "nuvem sem BANCOS nao pode mexer no cadastro daqui"
-                print("OK: nuvem de antes do cadastro (sem a aba): baixa as 4 abas e o cadastro daqui fica igual.")
+                print("OK: nuvem de antes do cadastro (sem a aba): baixa todas as abas e o cadastro daqui fica igual.")
 
                 da_nuvem = pd.DataFrame([{"NOME": "Banco Da Nuvem", "ATIVO": "Sim"}, {"NOME": "Santander", "ATIVO": "Não"}])
                 nuvem.ler_bancos = lambda: da_nuvem.copy()
@@ -216,17 +214,10 @@ def main() -> None:
                 for nome, funcao in leitores.items():
                     setattr(nuvem, nome, funcao)
 
-            linha("4) Dashboard: os bancos 'ainda não tentados' vêm do cadastro (só os ativos)")
+            linha("4) Formulário de proposta: lista fechada (ativos + 'Todos')")
             bancos_mod.reativar_banco("Santander")
             bancos_mod.adicionar_banco("Banco Inativo")
             bancos_mod.desativar_banco("Banco Inativo")
-            propostas = bd.ler_propostas(caminho)
-            propostas["STATUS"] = propostas_mod.STATUS_NEGADO
-            sugeridos = {b for c in dash.para_reenviar(propostas) for b in c.bancos_nao_tentados}
-            assert "Banco Da Nuvem" in sugeridos and "Banco Inativo" not in sugeridos, sugeridos
-            print("OK: banco ativo do cadastro entra nas sugestões; desativado não.")
-
-            linha("5) Formulário de proposta: lista fechada (ativos + 'Todos')")
             nomes_ativos = bancos_mod.nomes_ativos()
             novo = FormularioProposta(cpf=None)
             itens = [novo._banco.itemText(i) for i in range(novo._banco.count())]
@@ -245,7 +236,7 @@ def main() -> None:
             assert not f.tem_alteracoes(), "abrir uma proposta com banco fora da lista nao conta como alteracao"
             print("OK: a proposta mostra o banco exatamente como gravado ('SANTANDER', 'Banco Inativo'), sem trocar nada.")
 
-            linha("6) Tela Cadastros (barra lateral, Ctrl+4) > Bancos, em cards")
+            linha("5) Tela Cadastros (barra lateral, Ctrl+4) > Bancos, em cards")
             sessao_mod.encerrar()
             janela = amb.nova_janela("admin", TEMA_ESCURO)
             adm = janela._tela_administracao
