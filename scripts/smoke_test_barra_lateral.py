@@ -692,7 +692,8 @@ def testar_ultima_tela_e_geometria(amb: Ambiente, msgs: Mensagens, tema: str) ->
     assert settings_mod.obter_geometria_janela() is not None
     outra = amb.nova_janela("admin", tema)
     # a altura e o que distingue "restaurou" de "usou o padrao" (800); a largura pode cair no minimo do layout
-    assert outra.size().height() == alvo.height() and outra.size().width() >= minimo.width(), outra.size()
+    # (que, com a janela estreita na tela de 800 px do teste, ja e o da barra recolhida: abaixo de 1200 px ela recolhe sozinha)
+    assert outra.size().height() == alvo.height() and outra.size().width() >= outra.minimumSizeHint().width(), outra.size()
     print("OK: o tamanho da janela e salvo ao fechar e restaurado na proxima abertura.")
 
     # geometria invalida (lixo no registro/arquivo): usa o padrao, sem quebrar

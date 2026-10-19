@@ -86,6 +86,7 @@ class Ambiente:
         self.pasta = Path(tempfile.mkdtemp(prefix="teste_de_tela_"))
         self.registro_antes = fx.instantaneo_do_registro()
         fx.isolar_preferencias(self.pasta)
+        fx.simular_tela()
         self.caminho = fx.criar_volumoso(self.pasta) if volumoso else fx.criar(self.pasta)
         fx.apontar_modulos_para(self.caminho)
         self.janelas: list[MainWindow] = []
@@ -124,6 +125,11 @@ class Ambiente:
             except RuntimeError:
                 pass  # o controlador do "Sair" ja mandou apagar esta janela: nada a desligar
         self.janelas.clear()
+        # desligar() guardou o tamanho da janela; a tela virtual do offscreen (800x800) o encolheria na janela seguinte
+        # (e uma janela estreita recolhe a barra lateral sozinha): a geometria nao vaza de um teste pro outro
+        configuracoes = settings_mod._settings()
+        configuracoes.remove("geometria_janela")
+        configuracoes.sync()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # sem event loop, deleteLater nao roda sozinho
 
     def encerrar(self) -> None:

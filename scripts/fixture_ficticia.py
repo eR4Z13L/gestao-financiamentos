@@ -273,6 +273,17 @@ def isolar_preferencias(diretorio: Path) -> None:
         raise RuntimeError(f"Isolamento das preferencias falhou: elas iriam pra {arquivo}, fora de {diretorio}.")
 
 
+def simular_tela(largura: int = 1920, altura: int = 1080) -> None:
+    """Faz a MainWindow achar que a area util da tela tem este tamanho (a tela virtual do offscreen tem 800x800 e
+    abriria a janela pequena e com a barra lateral recolhida). Padrao: uma tela grande, que mantem o tamanho
+    inicial de 1200x800 e a barra expandida. Chamar antes de criar a MainWindow."""
+    from PySide6.QtCore import QSize
+
+    from desktop.main_window import MainWindow
+
+    MainWindow._area_da_tela = lambda self: QSize(largura, altura)
+
+
 def instantaneo_do_registro() -> dict[str, object]:
     """As preferencias REAIS do app no registro do Windows (nome -> valor), so leitura. Pra o
     teste comparar antes e depois e provar que nao mexeu nelas. Fora do Windows, {}."""

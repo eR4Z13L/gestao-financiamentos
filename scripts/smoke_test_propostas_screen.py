@@ -275,6 +275,7 @@ def testar_sidebar_e_tema(app: QApplication) -> None:
 def main() -> None:
     registro_antes = fx.instantaneo_do_registro()
     fx.isolar_preferencias(Path(tempfile.mkdtemp(prefix="prefs_propostas_")))
+    fx.simular_tela()
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     app = QApplication.instance() or QApplication(sys.argv)
     testar_remover_proposta_core()

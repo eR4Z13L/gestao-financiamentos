@@ -18,7 +18,7 @@ import threading
 from datetime import datetime
 from functools import partial
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QSize, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -72,6 +72,16 @@ _LARGURA_RECOLHIDA = 60
 _MARGEM_LATERAL = 14
 _MARGEM_LATERAL_RECOLHIDA = 12  # (59 uteis - 34 do avatar) / 2: a barra tem 1 px de borda, e o avatar cabe inteiro
 _TAMANHO_INICIAL = (1200, 800)
+_FRACAO_DA_TELA_NA_ABERTURA = 0.9
+_LARGURA_PARA_BARRA_EXPANDIDA = 1200  # abaixo disso a barra lateral recolhe sozinha (60 + a pagina mais larga cabe em 1000 px)
+
+
+def tamanho_inicial_da_janela(area_da_tela: QSize) -> QSize:
+    """90% da area util da tela, no maximo o tamanho padrao: nunca maior que a tela."""
+    return QSize(
+        min(_TAMANHO_INICIAL[0], int(area_da_tela.width() * _FRACAO_DA_TELA_NA_ABERTURA)),
+        min(_TAMANHO_INICIAL[1], int(area_da_tela.height() * _FRACAO_DA_TELA_NA_ABERTURA)),
+    )
 _INTERVALO_DO_INDICADOR_MS = 2000  # relê so a memoria (nunca a rede): barato
 _INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS = 60_000  # rede de verdade: nao martelar a API a cada 2s
 _INTERVALO_DO_SINAL_MS = 60_000  # "este computador esta com o app aberto" (aviso pra outro PC): 1 escrita por minuto
@@ -85,7 +95,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Gestão de Financiamentos")
         self._restaurar_geometria()
 
-        self._menu_recolhido = settings_mod.obter_sidebar_recolhida()
+        # abaixo de 1200 px a barra recolhe sozinha; a escolha da pessoa (salva) volta a valer quando a janela cresce
+        self._janela_estreita: bool | None = None  # None ate a barra existir (resizeEvent antes disso e ignorado)
+        self._menu_recolhido = settings_mod.obter_sidebar_recolhida() or self.width() < _LARGURA_PARA_BARRA_EXPANDIDA
         self._tema_atual = settings_mod.obter_tema()
 
         self._paginas = QStackedWidget()
@@ -102,6 +114,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(corpo)
 
         self._aplicar_estado_sidebar()
+        self._janela_estreita = self.width() < _LARGURA_PARA_BARRA_EXPANDIDA
         self._configurar_atalhos()
 
         self._tela_propostas.dados_atualizados.connect(self._atualizar_selo_propostas)
@@ -624,10 +637,24 @@ class MainWindow(QMainWindow):
 
     # -- tamanho e posicao da janela ---------------------------------------------------------------
 
+    def _area_da_tela(self) -> QSize:
+        return self.screen().availableGeometry().size()
+
     def _restaurar_geometria(self) -> None:
         geometria = settings_mod.obter_geometria_janela()
         if geometria is None or not self.restoreGeometry(geometria):
-            self.resize(*_TAMANHO_INICIAL)
+            self.resize(tamanho_inicial_da_janela(self._area_da_tela()))
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        if self._janela_estreita is None:
+            return
+        estreita = self.width() < _LARGURA_PARA_BARRA_EXPANDIDA
+        if estreita == self._janela_estreita:
+            return  # so o cruzamento do limite mexe na barra: expandir a mao numa janela estreita nao e desfeito a cada pixel
+        self._janela_estreita = estreita
+        self._menu_recolhido = True if estreita else settings_mod.obter_sidebar_recolhida()
+        self._aplicar_estado_sidebar()
 
     def _salvar_estado_da_janela(self) -> None:
         settings_mod.definir_geometria_janela(self.saveGeometry())
