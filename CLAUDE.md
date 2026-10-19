@@ -51,3 +51,17 @@ ECONOMIA DE TOKENS AO USAR SUBAGENTES:
 1. Ao instruir um subagente, ser específico sobre o que ele deve devolver — pedir um resumo objetivo (ex: "liste os arquivos e linhas, não devolva o conteúdo inteiro")
 2. Preferir o subagente de exploração mais leve disponível para buscas simples de arquivo/código, reservando o mais robusto só para tarefas que exigem julgamento
 3. Antes de disparar um subagente, confirmar que a tarefa realmente precisa de investigação separada
+
+## Quem faz o quê (líder que delega)
+
+- O líder da conversa planeja, divide o trabalho e confere; não escreve código, salvo o que for pequeno demais para delegar.
+- Código de plano aprovado → Pedro (`programador`); suíte e mutações → Tito (`testador`); revisão de mudança grande →
+  Rita (`revisor`); varredura antes de commit → Vera (`varredor-privacidade`); trabalho mecânico (rodar script, buscar,
+  contar, copiar) → `ajudante` (modelo barato). As fichas estão em `.claude/agents/`.
+- Sonnet com esforço médio no dia a dia; alto só quando a tarefa pedir. Ler só o trecho necessário dos arquivos.
+- `/clear` entre tarefas; quando o contexto passar de ~150 mil tokens, escrever a passagem de bastão e pedir um líder novo.
+- **Autonomia dentro da cerca (decisão de 14/10):** o usuário aprova o plano de cada etapa e a entrega final. Dentro do
+  plano aprovado, o líder decide e os membros perguntam a ele. Só sobe para o usuário: plano novo ou mudança de escopo,
+  apagar, publicar, commit ou push, mexer na configuração do Claude Code, gastar ou instalar algo e tudo o que toca
+  dados reais ou a planilha.
+- No máximo 2 tarefas "fazendo" ao mesmo tempo; ideia nova espera numa lista de ideias até a etapa atual fechar.
