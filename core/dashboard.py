@@ -19,8 +19,8 @@ import pandas as pd
 
 from core import vendedores as vendedores_mod
 from core.formatting import dias_do_tempo
+from core import propostas as propostas_mod
 from core.propostas import (
-    DIAS_PROPOSTA_PARADA,
     ETAPA_APROVADO,
     ETAPA_DESCONHECIDA,
     ETAPA_EFETIVADO,
@@ -481,7 +481,7 @@ def precisa_de_atencao(propostas: pd.DataFrame, dias: int | None = None, hoje: d
     ha quantos dias em aberto conta como "parada" (padrao: propostas.DIAS_PROPOSTA_PARADA, o mesmo
     do selo da barra lateral)."""
     if dias is None:
-        dias = DIAS_PROPOSTA_PARADA
+        dias = propostas_mod.DIAS_PROPOSTA_PARADA  # lido agora, nao copiado no import: um limite so
     definicoes = {
         ATENCAO_PARADAS: (TOM_PROCESSO, lambda n: _plural(n, "proposta", "propostas") + f" em aberto há mais de {dias} dias", f"Em aberto há mais de {dias} dias"),
         ATENCAO_A_EFETIVAR: (TOM_PROCESSO, lambda n: _plural(n, "proposta aprovada", "propostas aprovadas") + " ainda sem efetivar", "Aprovadas ainda sem efetivar"),
@@ -508,7 +508,7 @@ def indices_do_filtro(propostas: pd.DataFrame, filtro: FiltroDoDashboard, hoje: 
     Todas as Propostas ja filtra por data nos proprios campos."""
     chave = filtro.chave
     if chave in ATENCOES_EM_ORDEM:
-        return set(_indices_de_atencao(propostas, chave, filtro.dias or DIAS_PROPOSTA_PARADA, hoje))
+        return set(_indices_de_atencao(propostas, chave, filtro.dias or propostas_mod.DIAS_PROPOSTA_PARADA, hoje))
     if propostas.empty:
         if chave in (FILTRO_ETAPA, FILTRO_BANCO, FILTRO_SEM_MESES, FILTRO_SEM_BANCO, FILTRO_SEM_STATUS):
             return set()

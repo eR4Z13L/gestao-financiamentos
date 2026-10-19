@@ -388,7 +388,7 @@ class CardDaVenda(QFrame):
         cliente.setWordWrap(True)
         topo.addWidget(cliente, stretch=1)
         self.voltar: BotaoVoltar | None = None
-        if venda.anterior:  # so num desfecho: reabrir
+        if venda.anterior:  # so num desfecho (reabrir) ou Pendente de entrega (voltar a Efetivada)
             self.voltar = BotaoVoltar(venda.anterior, self)
             self.voltar.clicked.connect(lambda: self.volta_da_venda_pedida.emit(self.venda))
             topo.addWidget(self.voltar, alignment=Qt.AlignmentFlag.AlignTop)
@@ -523,7 +523,7 @@ class CardDaVenda(QFrame):
         if proposta.dias_esperando is not None:
             espera = QLabel(ha_quanto(proposta.dias_esperando), widget)
             espera.setToolTip("Sem resposta do banco desde o envio (ou a última troca de status)")
-            espera.setProperty("role", "aviso" if proposta.dias_esperando >= vendas_mod.DIAS_PARA_ALERTA else "secundario")
+            espera.setProperty("role", "aviso" if proposta.dias_esperando >= propostas_mod.DIAS_PROPOSTA_PARADA else "secundario")
             linha.addWidget(espera)
 
         por_controles_de_status(linha, self, self.venda, proposta, widget, itens)
@@ -705,13 +705,17 @@ class ControleDasVendas(QObject):
         """A lista da etiqueta da venda: so os desfechos manuais (o resto do status vem dos bancos) e, num desfecho,
         "Reabrir"."""
         menu = QMenu(self._tela)
+        pendente = venda.status == vendas_mod.VENDA_PENDENTE_ENTREGA
         if venda.status in vendas_mod.DESFECHOS_DA_VENDA:
             menu.addAction(f"Reabrir a venda (volta para \"{venda.anterior}\")", lambda: self.voltar_venda(venda))
+        elif pendente:
+            menu.addAction(f"Voltar a venda (volta para \"{venda.anterior}\")", lambda: self.voltar_venda(venda))
         menu.addSection("Desfechos")
         for status in vendas_mod.DESFECHOS_DA_VENDA:
             acao = menu.addAction(f"{status}…", lambda s=status: self.escolher_status_da_venda(venda, s))
             acao.setCheckable(True)
             acao.setChecked(status == venda.status)
+            acao.setEnabled(not pendente)  # o core tambem recusa: marque como entregue antes
         aviso = menu.addAction("O resto vem dos bancos: o anel e o Efetivado de cada um")
         aviso.setEnabled(False)
         return menu
@@ -725,16 +729,19 @@ class ControleDasVendas(QObject):
         return self._desfecho(venda, status)
 
     def voltar_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
-        """O ↩ da venda (so num desfecho): reabrir - nunca por um clique sem querer."""
+        """O ↩ da venda (num desfecho ou Pendente de entrega): reabrir / voltar - nunca por um clique sem querer.
+        vendas_mod.voltar_venda decide: o desfecho reabre; o Pendente de entrega volta a Efetivada."""
+        pendente = venda.status == vendas_mod.VENDA_PENDENTE_ENTREGA
+        titulo, acao = ("Voltar a venda", "Voltar") if pendente else ("Reabrir a venda", "Reabrir")
         resposta = QMessageBox.question(
-            self._tela, "Reabrir a venda",
-            f"A venda de {self.nome(venda)} está \"{venda.status}\". Reabrir (volta para \"{venda.anterior}\")?",
+            self._tela, titulo,
+            f"A venda de {self.nome(venda)} está \"{venda.status}\". {acao} (volta para \"{venda.anterior}\")?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
         if resposta != QMessageBox.StandardButton.Yes:
             return False
-        return self._gravar("Não foi possível reabrir", lambda: vendas_mod.reabrir_venda(venda.id),
-                            lambda para: f"{self.nome(venda)}: reaberta (\"{para}\").")
+        return self._gravar(f"Não foi possível {acao.lower()}", lambda: vendas_mod.voltar_venda(venda.id),
+                            lambda para: f"{self.nome(venda)}: {'voltou a' if pendente else 'reaberta'} (\"{para}\").")
 
     def fechar_banco(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         return self._gravar("Não foi possível marcar como fechado", lambda: vendas_mod.fechar_proposta(proposta.id),

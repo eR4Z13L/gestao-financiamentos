@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core import propostas as propostas_mod
 from core import vendas as vendas_mod
 from core.validators import apenas_digitos
 from desktop.dialogs import organizar_vendas_dialog
@@ -35,7 +36,7 @@ from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.lista_de_vendas import FaixaDeAviso, ListaDeVendas, resumo_por_status
 
 FILTRO_EM_ANDAMENTO = "Em andamento"
-FILTRO_PARADAS = f"Paradas há {vendas_mod.DIAS_PARA_ALERTA} dias ou mais"
+FILTRO_PARADAS = f"Paradas há {propostas_mod.DIAS_PROPOSTA_PARADA} dias ou mais"
 FILTRO_EFETIVADAS = "Efetivadas"
 FILTRO_PERDIDAS = "Perdidas e não efetivadas"
 FILTRO_TODAS = "Todas"

@@ -2,14 +2,14 @@
 
 O modelo (decidido com o usuario em 02 e 03/10/2026):
 - PROPOSTA (cada pedido a um banco): Em Análise -> Pré-aprovado -> Aprovado / Negado - a resposta do banco. Um banco
-  APROVADO pode ser marcado como FECHADO (o cliente fechou com ele) e, fechado, segue sozinho ate Efetivado. Uma venda
-  pode fechar em VARIOS bancos (ex.: o equipamento X por um banco e o Y por outro), e cada financiamento anda no seu
-  tempo - por isso as etapas depois do fechamento sao de cada proposta, nao da venda.
+  APROVADO pode ser marcado como FECHADO (o cliente fechou com ele) e, fechado, segue sozinho por Aprovado ->
+  Assinado -> Nota fiscal enviada -> Efetivado (plano 1.2; pode pular etapa). Uma venda pode fechar em VARIOS bancos
+  (ex.: o equipamento X por um banco e o Y por outro), e cada financiamento anda no seu tempo - por isso as etapas
+  depois do fechamento sao de cada proposta, nao da venda.
 - VENDA: nao tem etapas proprias - o status sai dos bancos: Aguardando bancos (nenhum fechado), Em andamento (algum
   fechado) ou Efetivada (todos os fechados efetivados). Os desfechos sao manuais: Não efetivada (o cliente desistiu) e
-  Perdida (ex.: todos os bancos negaram); reabrir volta ao status calculado.
-  (Contrato assinado e Nota fiscal ficaram FORA por enquanto - o usuario vai ver como funcionam; quando voltarem,
-  entram como etapas de cada proposta fechada, antes de Efetivado.)
+  Perdida (ex.: todos os bancos negaram); reabrir volta ao status calculado. Tambem e manual o Pendente de entrega
+  (uma venda Efetivada cujo equipamento ainda nao foi entregue, com o motivo); Entregue (ou o ↩) volta a Efetivada.
 
 Regras:
 - Por padrao um pedido por banco cobre a venda inteira; tambem da pra mandar pedidos separados na mesma venda
@@ -42,10 +42,14 @@ VENDA_EM_ANDAMENTO = "Em andamento"
 VENDA_EFETIVADA = "Efetivada"
 VENDA_NAO_EFETIVADA = "Não efetivada"
 VENDA_PERDIDA = "Perdida"
+VENDA_PENDENTE_ENTREGA = "Pendente de entrega"  # manual: so a partir de Efetivada, com motivo
 
 ETAPAS_DA_VENDA = [VENDA_AGUARDANDO, VENDA_EM_ANDAMENTO, VENDA_EFETIVADA]  # calculadas pelos bancos
 DESFECHOS_DA_VENDA = [VENDA_NAO_EFETIVADA, VENDA_PERDIDA]  # manuais
-STATUS_DA_VENDA = ETAPAS_DA_VENDA + DESFECHOS_DA_VENDA
+STATUS_DA_VENDA = ETAPAS_DA_VENDA + [VENDA_PENDENTE_ENTREGA] + DESFECHOS_DA_VENDA
+VENDA_MANUAL = {VENDA_PENDENTE_ENTREGA, *DESFECHOS_DA_VENDA}  # o recalculo pelos bancos nao mexe nestes
+# Pendente de entrega NAO e finalizada: a venda ja saiu do banco mas ainda falta entregar, e isso entra nos alertas
+# e nas listas "em andamento" (so nao recebe pedido novo - ver VENDA_EM_ABERTO)
 VENDA_FINALIZADA = {VENDA_EFETIVADA, *DESFECHOS_DA_VENDA}
 
 # a resposta do banco (o que a lista e as bolinhas oferecem para qualquer proposta)
@@ -56,11 +60,16 @@ STATUS_DA_PROPOSTA = [
     propostas_mod.STATUS_NEGADO,
 ]
 PROPOSTA_EFETIVADA = propostas_mod.STATUS_EFETIVADO  # so para um banco fechado
-STATUS_DE_FECHADA = [propostas_mod.STATUS_APROVADO, PROPOSTA_EFETIVADA]  # onde um banco fechado pode estar
+# as etapas de um banco fechado, na ordem (a tela usa para saber qual e a proxima)
+ETAPAS_DO_FECHADO = [propostas_mod.STATUS_APROVADO, propostas_mod.STATUS_ASSINADO, propostas_mod.STATUS_NOTA_ENVIADA,
+                     PROPOSTA_EFETIVADA]
+STATUS_DE_FECHADA = list(ETAPAS_DO_FECHADO)  # onde um banco fechado pode estar
+ETAPAS_DEPOIS_DO_APROVADO = ETAPAS_DO_FECHADO[1:]  # so um banco fechado chega nelas
+_STATUS_QUE_VOLTAM = [*STATUS_DA_PROPOSTA, *ETAPAS_DEPOIS_DO_APROVADO]  # os que o "voltar" aceita como destino
 
 MOTIVOS_DE_PERDA = ["Desistiu", "Comprou à vista", "Foi com outro correspondente", "Todos os bancos negaram", "Outro"]
 
-DIAS_PARA_ALERTA = 7  # proposta em analise sem resposta / venda parada no mesmo status
+# o limite de dias de "parada" e um so em todo o app: propostas_mod.DIAS_PROPOSTA_PARADA (lido na hora da chamada)
 
 TIPO_VENDA = "venda"
 TIPO_PROPOSTA = "proposta"
@@ -138,7 +147,7 @@ def _recalcular_venda(vendas: pd.DataFrame, propostas: pd.DataFrame, linha_venda
     fechadas = [i for i in fechadas_da_venda(vendas.at[linha_venda, "BANCO_ESCOLHIDO"]) if i in da_venda.index]
     vendas.at[linha_venda, "BANCO_ESCOLHIDO"] = _SEPARADOR_DE_FECHADAS.join(fechadas)
     antigo = vendas.at[linha_venda, "STATUS"]
-    if antigo in DESFECHOS_DA_VENDA:
+    if antigo in VENDA_MANUAL:
         return
     novo = status_calculado([da_venda[i] for i in fechadas])
     if novo != antigo:
@@ -224,6 +233,8 @@ def mandar_a_outro_banco(id_venda: str, proposta: dict) -> str:
     venda = vendas.loc[_linha_da_venda(vendas, id_venda)]
     if venda["STATUS"] in DESFECHOS_DA_VENDA:
         raise ErroVenda(f"A venda está \"{venda['STATUS']}\": reabra a venda antes de mandar a outro banco.")
+    if venda["STATUS"] == VENDA_PENDENTE_ENTREGA:
+        raise ErroVenda(f"A venda está \"{VENDA_PENDENTE_ENTREGA}\": marque como entregue antes de mandar a outro banco.")
     linha = _nova_proposta({**proposta, "CPF": venda["CPF"], "EQUIPAMENTO": proposta.get("EQUIPAMENTO") or venda["EQUIPAMENTOS"]},
                            id_venda)
     bd.escrever_vendas_e_propostas(
@@ -236,8 +247,8 @@ def mandar_a_outro_banco(id_venda: str, proposta: dict) -> str:
 
 def editar_proposta(id_proposta: str, campos: dict, esperado: dict | None = None) -> bool:
     """Grava a edicao de uma proposta (o formulario, em qualquer tela) numa gravacao so. `campos`: so os que mudam.
-    Troca de STATUS: as respostas do banco; Efetivado so num banco fechado, e um banco fechado so fica entre Aprovado
-    e Efetivado (pra mudar a resposta, desmarque antes). Fica no historico e recalcula a venda; um status de antes das
+    Troca de STATUS: as respostas do banco; Assinado, Nota fiscal enviada e Efetivado so num banco fechado, e um banco
+    fechado so fica entre Aprovado e Efetivado (pra mudar a resposta, desmarque antes). Fica no historico e recalcula a venda; um status de antes das
     vendas que nao mudou e aceito como esta. `esperado`: a proposta como o formulario a abriu - se outra tela a mudou
     nesse meio-tempo, recusa em vez de gravar por cima. Devolve True quando, com isso, TODAS as propostas da venda
     estao negadas e a venda ainda aguarda os bancos - quem chamou oferece marcar a venda como Perdida."""
@@ -253,12 +264,17 @@ def editar_proposta(id_proposta: str, campos: dict, esperado: dict | None = None
     fechada = linha_venda is not None and id_proposta in fechadas_da_venda(vendas.at[linha_venda, "BANCO_ESCOLHIDO"])
     historico = []
     if novo != antigo:
-        if novo not in STATUS_DA_PROPOSTA and not (novo == PROPOSTA_EFETIVADA and fechada):
+        if novo not in STATUS_DA_PROPOSTA and not (novo in ETAPAS_DEPOIS_DO_APROVADO and fechada):
             if novo == PROPOSTA_EFETIVADA:
                 raise ErroVenda("Só um banco marcado como fechado pode ser efetivado (o anel ao lado do banco aprovado).")
+            if novo in ETAPAS_DEPOIS_DO_APROVADO:
+                raise ErroVenda(f"Só um banco marcado como fechado pode ir para \"{novo}\" (o anel ao lado do banco aprovado).")
             raise ErroVenda(f"Status de proposta inválido: {novo!r}.")
         if fechada and novo not in STATUS_DE_FECHADA:
             raise ErroVenda("Este banco está marcado como fechado na venda. Desmarque o anel antes de mudar a resposta.")
+        if fechada and vendas.at[linha_venda, "STATUS"] == VENDA_PENDENTE_ENTREGA:
+            # a venda diz que todos os fechados efetivaram: mexer num deles deixaria o "Pendente" mentindo
+            raise ErroVenda(f"A venda está \"{VENDA_PENDENTE_ENTREGA}\": marque como entregue antes de mudar o status deste banco.")
         historico.append(_registro_historico(TIPO_PROPOSTA, id_proposta, antigo, novo))
     estado_final = {**propostas.loc[linha].to_dict(), **campos}
     propostas_mod._validar_campos(estado_final, valor_obrigatorio=False)  # as mesmas regras do formulario de sempre
@@ -281,8 +297,9 @@ def editar_proposta(id_proposta: str, campos: dict, esperado: dict | None = None
 
 
 def mudar_status_proposta(id_proposta: str, novo: str) -> bool:
-    """Troca a resposta do banco (ou leva um banco fechado a Efetivado). Devolve o mesmo que editar_proposta."""
-    if novo not in STATUS_DA_PROPOSTA and novo != PROPOSTA_EFETIVADA:
+    """Troca a resposta do banco (ou leva um banco fechado a Assinado, Nota fiscal enviada ou Efetivado). Devolve o
+    mesmo que editar_proposta."""
+    if novo not in STATUS_DA_PROPOSTA and novo not in ETAPAS_DEPOIS_DO_APROVADO:
         raise ErroVenda(f"Status de proposta inválido: {novo!r}.")
     return editar_proposta(id_proposta, {"STATUS": novo})
 
@@ -303,6 +320,8 @@ def _marcar_fechamento(id_proposta: str, fechar: bool) -> None:
     linha_venda = _linha_da_venda(vendas, id_venda)
     if vendas.at[linha_venda, "STATUS"] in DESFECHOS_DA_VENDA:
         raise ErroVenda(f"A venda está \"{vendas.at[linha_venda, 'STATUS']}\": reabra a venda antes.")
+    if vendas.at[linha_venda, "STATUS"] == VENDA_PENDENTE_ENTREGA:
+        raise ErroVenda(f"A venda está \"{VENDA_PENDENTE_ENTREGA}\": marque como entregue antes.")
     fechadas = fechadas_da_venda(vendas.at[linha_venda, "BANCO_ESCOLHIDO"])
     if fechar == (id_proposta in fechadas):
         return
@@ -318,8 +337,8 @@ def _marcar_fechamento(id_proposta: str, fechar: bool) -> None:
                                 f"{propostas.at[alvo[0], 'BANCO']}, que está marcado como fechado.")
         fechadas.append(id_proposta)
     else:
-        if propostas.at[linha, "STATUS"] == PROPOSTA_EFETIVADA:
-            raise ErroVenda("Este banco já está Efetivado: volte o status dele antes (a setinha ↩).")
+        if str(propostas.at[linha, "STATUS"] or "").strip().upper() != propostas_mod.STATUS_APROVADO.upper():
+            raise ErroVenda(f"Este banco já está {propostas.at[linha, 'STATUS']}: volte o status dele antes (a setinha ↩).")
         fechadas.remove(id_proposta)
     vendas.at[linha_venda, "BANCO_ESCOLHIDO"] = _SEPARADOR_DE_FECHADAS.join(fechadas)
     historico = [_registro_historico(TIPO_FECHAMENTO, id_proposta, "" if fechar else FECHADA, FECHADA if fechar else "")]
@@ -334,7 +353,8 @@ def fechar_proposta(id_proposta: str) -> None:
 
 
 def desfazer_fechamento(id_proposta: str) -> None:
-    """Desmarca o banco (nao fechou, afinal). Um banco ja Efetivado volta antes pelo "voltar"."""
+    """Desmarca o banco (nao fechou, afinal). So com ele em Aprovado: depois (Assinado, Nota fiscal enviada, Efetivado)
+    ele volta antes pelo "voltar"."""
     _marcar_fechamento(id_proposta, False)
 
 
@@ -355,6 +375,8 @@ def mudar_status_venda(id_venda: str, novo: str, *, motivo: str = "") -> None:
     _, vendas = _ler()
     linha = _linha_da_venda(vendas, id_venda)
     antigo = vendas.at[linha, "STATUS"]
+    if antigo == VENDA_PENDENTE_ENTREGA:
+        raise ErroVenda(f"A venda está \"{VENDA_PENDENTE_ENTREGA}\": marque como entregue antes.")
     if antigo == novo and vendas.at[linha, "MOTIVO"] == motivo:
         return
     vendas.at[linha, "STATUS"] = novo
@@ -406,14 +428,60 @@ def _anterior(id_: str) -> str | None:
 
 
 def voltar_venda(id_venda: str) -> str:
-    """O "↩" da venda: so existe num desfecho, e reabre (os outros status vem dos bancos). Devolve para onde voltou."""
+    """O "↩" da venda: so existe num desfecho (reabre: os outros status vem dos bancos) ou no Pendente de entrega
+    (volta a Efetivada). Devolve para onde voltou."""
+    _, vendas = _ler()
+    if vendas.at[_linha_da_venda(vendas, id_venda), "STATUS"] == VENDA_PENDENTE_ENTREGA:
+        return _sair_de_pendente(id_venda, "")
     return reabrir_venda(id_venda)
+
+
+def marcar_pendente_entrega(id_venda: str, motivo: str) -> None:
+    """A venda Efetivada ainda espera a entrega do equipamento: Pendente de entrega, com o motivo (texto livre,
+    obrigatorio). So a partir de Efetivada. O Pendente e manual: os bancos nao o recalculam."""
+    sessao_mod.exigir_admin()
+    motivo = (motivo or "").strip()
+    if not motivo:
+        raise ErroVenda("Diga o motivo da pendência de entrega.")
+    _, vendas = _ler()
+    linha = _linha_da_venda(vendas, id_venda)
+    antigo = vendas.at[linha, "STATUS"]
+    if antigo != VENDA_EFETIVADA:
+        raise ErroVenda(f"Só uma venda Efetivada pode ficar pendente de entrega (esta está \"{antigo}\").")
+    vendas.at[linha, "STATUS"] = VENDA_PENDENTE_ENTREGA
+    vendas.at[linha, "MOTIVO"] = motivo
+    bd.escrever_vendas_e_propostas(
+        _caminho(), vendas=vendas,
+        historico_novo=[_registro_historico(TIPO_VENDA, id_venda, antigo, VENDA_PENDENTE_ENTREGA, motivo)],
+    )
+
+
+def marcar_entregue(id_venda: str) -> None:
+    """O equipamento foi entregue: a venda Pendente de entrega volta a Efetivada (o motivo sai da venda; o historico
+    guarda "Entregue")."""
+    _sair_de_pendente(id_venda, "Entregue")
+
+
+def _sair_de_pendente(id_venda: str, motivo_no_historico: str) -> str:
+    sessao_mod.exigir_admin()
+    _, vendas = _ler()
+    linha = _linha_da_venda(vendas, id_venda)
+    antigo = vendas.at[linha, "STATUS"]
+    if antigo != VENDA_PENDENTE_ENTREGA:
+        raise ErroVenda("A venda não está pendente de entrega.")
+    vendas.at[linha, "STATUS"] = VENDA_EFETIVADA
+    vendas.at[linha, "MOTIVO"] = ""
+    bd.escrever_vendas_e_propostas(
+        _caminho(), vendas=vendas,
+        historico_novo=[_registro_historico(TIPO_VENDA, id_venda, antigo, VENDA_EFETIVADA, motivo_no_historico)],
+    )
+    return VENDA_EFETIVADA
 
 
 def voltar_proposta(id_proposta: str) -> bool:
     """Volta a proposta ao status de antes da ultima troca. Devolve o mesmo que mudar_status_proposta."""
     anterior = _anterior(id_proposta)
-    if anterior is None or anterior not in [*STATUS_DA_PROPOSTA, PROPOSTA_EFETIVADA]:
+    if anterior is None or anterior not in _STATUS_QUE_VOLTAM:
         raise ErroVenda("Não há um status anterior para onde voltar.")
     return mudar_status_proposta(id_proposta, anterior)
 
@@ -435,27 +503,44 @@ def _ultimas_mudancas(historico: pd.DataFrame) -> dict[str, pd.Timestamp]:
 
 
 def alertas(hoje: date | None = None) -> list[Alerta]:
-    """Proposta Em Análise ou Pré-aprovado sem resposta, e venda ainda andando parada na mesma etapa, ha
-    DIAS_PARA_ALERTA dias ou mais (desde a ultima troca no historico; sem historico, desde o envio/criacao)."""
+    """O que esta parado ha propostas_mod.DIAS_PROPOSTA_PARADA dias ou mais, em qualquer etapa (desde a ultima troca
+    no historico; sem historico, desde o envio/criacao):
+    - proposta Em Análise ou Pré-aprovado sem resposta do banco;
+    - todo banco FECHADO que ainda nao efetivou, em qualquer status - Aprovado, Assinado, Nota fiscal enviada e tambem
+      os de antes da 1.2 (Garantia Assinada...), para nenhuma venda andando ficar sem aviso ("Banco X: parado em
+      Assinado há N dias");
+    - venda Aguardando bancos, ou Pendente de entrega.
+    A venda Em andamento nao tem alerta proprio: os bancos dela ja avisam (nao ha aviso em dobro). Uma venda
+    desistida/perdida nao alerta nem pelos bancos."""
     hoje = pd.Timestamp(hoje or date.today())
+    limite = propostas_mod.DIAS_PROPOSTA_PARADA
     propostas = bd.ler_propostas(_caminho())
     vendas = bd.ler_vendas(_caminho())
     ultimas = _ultimas_mudancas(bd.ler_historico(_caminho()))
     resultado = []
     esperando = {propostas_mod.ETAPA_EM_ANALISE, propostas_mod.ETAPA_PRE_APROVADO}
+    fechadas_abertas = {i for texto, status in zip(vendas["BANCO_ESCOLHIDO"], vendas["STATUS"])
+                        if status not in DESFECHOS_DA_VENDA for i in fechadas_da_venda(texto)}
     for _, p in propostas.iterrows():
-        if propostas_mod.etapa_status(p["STATUS"]) not in esperando or not p["ID_PROPOSTA"]:
+        if not p["ID_PROPOSTA"]:
+            continue
+        if propostas_mod.etapa_status(p["STATUS"]) in esperando:
+            texto = "sem resposta"
+        elif (p["ID_PROPOSTA"] in fechadas_abertas
+              and propostas_mod.etapa_status(p["STATUS"]) != propostas_mod.ETAPA_EFETIVADO):
+            texto = f"parado em {p['STATUS'] or 'sem status'}"
+        else:
             continue
         desde = ultimas.get(p["ID_PROPOSTA"], p["DATA"])
         dias = (hoje - pd.Timestamp(desde).normalize()).days if pd.notna(desde) else 0
-        if dias >= DIAS_PARA_ALERTA:
-            resultado.append(Alerta(TIPO_PROPOSTA, p["ID_PROPOSTA"], dias, f"{p['BANCO']}: sem resposta há {dias} dias"))
+        if dias >= limite:
+            resultado.append(Alerta(TIPO_PROPOSTA, p["ID_PROPOSTA"], dias, f"{p['BANCO']}: {texto} há {dias} dias"))
     for _, v in vendas.iterrows():
-        if v["STATUS"] in VENDA_FINALIZADA:
+        if v["STATUS"] in VENDA_FINALIZADA or v["STATUS"] == VENDA_EM_ANDAMENTO:
             continue
         desde = ultimas.get(v["ID_VENDA"], v["DATA_CRIACAO"])
         dias = (hoje - pd.Timestamp(desde).normalize()).days if pd.notna(desde) else 0
-        if dias >= DIAS_PARA_ALERTA:
+        if dias >= limite:
             resultado.append(Alerta(TIPO_VENDA, v["ID_VENDA"], dias, f"parada em \"{v['STATUS']}\" há {dias} dias"))
     return resultado
 
@@ -491,7 +576,7 @@ class ResumoDaVenda:
     dias_na_etapa: int | None  # desde a ultima mudanca de status da venda (sem historico: desde a criacao)
     observacoes: str
     propostas: tuple[PropostaNaVenda, ...]
-    anterior: str | None = None  # num desfecho: o status para onde reabrir (None: nao ha "voltar")
+    anterior: str | None = None  # num desfecho ou Pendente de entrega: o status para onde voltar (None: nao ha "voltar")
 
     @property
     def finalizada(self) -> bool:
@@ -499,7 +584,7 @@ class ResumoDaVenda:
 
     @property
     def parada(self) -> bool:
-        return not self.finalizada and (self.dias_na_etapa or 0) >= DIAS_PARA_ALERTA
+        return not self.finalizada and (self.dias_na_etapa or 0) >= propostas_mod.DIAS_PROPOSTA_PARADA
 
     def aprovadas(self) -> list[PropostaNaVenda]:
         return [p for p in self.propostas if propostas_mod.etapa_status(p.status) == propostas_mod.ETAPA_APROVADO]
@@ -538,7 +623,7 @@ def _proposta_da_linha(indice, p: pd.Series, ultimas: dict, pilhas: dict, fechad
         int(meses) if meses is not None else None, p["DATA"] if pd.notna(p["DATA"]) else None,
         p["EQUIPAMENTO"], bool(id_proposta) and id_proposta in fechadas, dias,
         # status de antes das vendas nao volta
-        anterior if anterior in [*STATUS_DA_PROPOSTA, PROPOSTA_EFETIVADA] else None,
+        anterior if anterior in _STATUS_QUE_VOLTAM else None,
         int(carencia) if carencia is not None else None, _numero_ou_none(p.get("PARCELA (R$)")),
     )
 
@@ -564,11 +649,12 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
         criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None
         # o status vem dos bancos (uma venda gravada com etapas de antes - "Banco escolhido", "Nota fiscal" - le certo)
         calculado = status_calculado([p.status for p in itens if p.fechada])
-        status = v["STATUS"] if v["STATUS"] in DESFECHOS_DA_VENDA else calculado
+        status = v["STATUS"] if v["STATUS"] in VENDA_MANUAL else calculado
+        voltar_para = {VENDA_PENDENTE_ENTREGA: VENDA_EFETIVADA}.get(status, calculado if status in DESFECHOS_DA_VENDA else None)
         resultado.append(ResumoDaVenda(
             v["ID_VENDA"], v["CPF"], nome, vendedor, v["EQUIPAMENTOS"], status, v["MOTIVO"],
             tuple(fechadas), criacao, _dias_desde(ultimas.get(v["ID_VENDA"], criacao), hoje),
-            v["OBSERVAÇÕES"], tuple(itens), calculado if status in DESFECHOS_DA_VENDA else None,
+            v["OBSERVAÇÕES"], tuple(itens), voltar_para,
         ))
     resultado.sort(key=lambda r: r.data_criacao if r.data_criacao is not None else pd.Timestamp.min, reverse=True)
     return resultado
@@ -616,12 +702,13 @@ def vendas_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]
     return [v for v in listar_vendas(hoje) if apenas_digitos(v.cpf) == alvo]
 
 
-VENDA_EM_ABERTO = {VENDA_AGUARDANDO, VENDA_EM_ANDAMENTO}
+VENDA_EM_ABERTO = {VENDA_AGUARDANDO, VENDA_EM_ANDAMENTO}  # Pendente de entrega, Efetivada e os desfechos nao recebem pedido
 
 
 def vendas_em_aberto_do_cliente(cpf: str, hoje: date | None = None) -> list[ResumoDaVenda]:
     """As vendas do cliente que ainda aceitam mais um pedido a um banco (Aguardando bancos e Em andamento), a mais
-    recente primeiro: as que o "+ Nova proposta" oferece. Efetivada, Não efetivada e Perdida ficam de fora."""
+    recente primeiro: as que o "+ Nova proposta" oferece. Efetivada, Pendente de entrega, Não efetivada e Perdida ficam
+    de fora."""
     em_aberto = [v for v in vendas_do_cliente(cpf, hoje) if v.status in VENDA_EM_ABERTO]
     # a data de criacao nao tem hora: no mesmo dia, a criada por ultimo (mais embaixo no arquivo) vem primeiro - e a
     # que o "+ Nova proposta" marca sozinho

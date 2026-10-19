@@ -23,6 +23,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from core import propostas as propostas_mod
 from core import vendas as vendas_mod
 from desktop.theme import CORES_STATUS
 from desktop.widgets.card_da_venda import (
@@ -135,7 +136,7 @@ class CardDaProposta(QFrame):
         if proposta.dias_esperando is not None:
             self.espera = QLabel(texto_da_espera(proposta.dias_esperando), self)
             self.espera.setToolTip("Sem resposta do banco desde o envio (ou a última troca de status)")
-            parada = proposta.dias_esperando >= vendas_mod.DIAS_PARA_ALERTA
+            parada = proposta.dias_esperando >= propostas_mod.DIAS_PROPOSTA_PARADA
             self.espera.setProperty("role", "aviso" if parada else "secundario")
             ultima.addWidget(self.espera, alignment=Qt.AlignmentFlag.AlignTop)
         self._layout.addLayout(ultima)

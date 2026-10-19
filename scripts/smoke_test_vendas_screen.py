@@ -391,7 +391,7 @@ def main() -> None:
 
             linha("10) Venda parada há 7 dias ou mais")
             listar_original = v.listar_vendas
-            v.listar_vendas = lambda hoje=None: listar_original(date.today() + timedelta(days=v.DIAS_PARA_ALERTA))
+            v.listar_vendas = lambda hoje=None: listar_original(date.today() + timedelta(days=propostas_mod.DIAS_PROPOSTA_PARADA))
             try:
                 id_parada, _ = v.criar_venda(fx.CPF_ANA, ["Cadeira Exemplo"], _pedido(b1))
                 tela.filtro.setCurrentText(tela_mod.FILTRO_PARADAS)
@@ -477,6 +477,27 @@ def main() -> None:
             card.voltar.click()
             assert _venda(id_rx)["STATUS"] == v.VENDA_EM_ANDAMENTO and _venda(id_rx)["MOTIVO"] == ""
             assert next(c for c in tela.lista.cards if c.venda.id == id_rx).voltar is None, "fora de um desfecho, a venda não tem ↩"
+            # Pendente de entrega: o ↩ da venda volta a Efetivada (voltar_venda, e não o reabrir de desfecho)
+            id_rp, pp = v.criar_venda(fx.CPF_JOAO, ["Mesa Exemplo"], _pedido(b1))
+            v.mudar_status_proposta(pp, propostas_mod.STATUS_APROVADO)
+            v.fechar_proposta(pp)
+            v.efetivar_proposta(pp)
+            v.marcar_pendente_entrega(id_rp, "Aguardando a obra")
+            tela.carregar()
+            card = next(c for c in tela.lista.cards if c.venda.id == id_rp)
+            assert card.venda.status == v.VENDA_PENDENTE_ENTREGA and card.voltar.anterior == v.VENDA_EFETIVADA
+            menu_p = _acoes(tela.lista.controle.montar_menu_da_venda(card.venda))
+            assert any(t.startswith("Voltar a venda") for t in menu_p) and not any(t.startswith("Reabrir") for t in menu_p)
+            msgs.resposta_pergunta = QMessageBox.StandardButton.No
+            card.voltar.click()
+            assert msgs.ultima()[1] == "Voltar a venda", "Pendente: pergunta de voltar, não de reabrir"
+            assert "Pendente de entrega" in msgs.ultima()[2] and "Efetivada" in msgs.ultima()[2]
+            assert _venda(id_rp)["STATUS"] == v.VENDA_PENDENTE_ENTREGA
+            msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
+            msgs.limpar()
+            card.voltar.click()
+            assert _venda(id_rp)["STATUS"] == v.VENDA_EFETIVADA and _venda(id_rp)["MOTIVO"] == ""
+            msgs.exigir_sem_erros("voltar de Pendente de entrega")
             # proposta com status de antes das vendas: depois de trocar, o ↩ não oferece voltar a ele
             id_ry, py_ = v.criar_venda(fx.CPF_ANA, ["Laser Exemplo"], _pedido(b2))
             propostas_mod.atualizar_proposta(v.indice_da_proposta(py_), {"STATUS": "Nota Fiscal Anexada"})

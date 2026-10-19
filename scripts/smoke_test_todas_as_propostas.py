@@ -149,15 +149,15 @@ def testar_cards_e_ordem(tela, dados: dict) -> None:
     assert a1.espera.text() == texto_da_espera(0) == "esperando desde hoje", "a espera conta do HISTÓRICO (enviada hoje)"
     assert a1.espera.property("role") == "secundario", "esperando há pouco: sem destaque"
     parada = next(c for c in _cards(tela) if c.item.proposta.dias_esperando is not None
-                  and c.item.proposta.dias_esperando >= v.DIAS_PARA_ALERTA)
+                  and c.item.proposta.dias_esperando >= propostas_mod.DIAS_PROPOSTA_PARADA)
     assert parada.espera.property("role") == "aviso", f"parada há {parada.item.proposta.dias_esperando} dias: destacada"
     # o limite: 7 dias ja e "parada" (destacada); 6, ainda nao
-    for dias, papel in ((v.DIAS_PARA_ALERTA, "aviso"), (v.DIAS_PARA_ALERTA - 1, "secundario")):
+    for dias, papel in ((propostas_mod.DIAS_PROPOSTA_PARADA, "aviso"), (propostas_mod.DIAS_PROPOSTA_PARADA - 1, "secundario")):
         proposta = v.PropostaNaVenda("", 0, "Banco", propostas_mod.STATUS_EM_ANALISE, 1.0, 12, None, "E", False, dias)
         card = CardDaProposta(v.PropostaNaLista(proposta, None, fx.CPF_ANA, "CLIENTE", "ANA"))
         assert card.espera.text() == texto_da_espera(dias) and card.espera.property("role") == papel, (dias, papel)
         card.deleteLater()
-    assert v.DIAS_PARA_ALERTA == 7
+    assert propostas_mod.DIAS_PROPOSTA_PARADA == 7
 
     ordem = [i.proposta.indice for i in tela.propostas_visiveis()]
     itens = {i.proposta.indice: i for i in tela.propostas_visiveis()}

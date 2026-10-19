@@ -24,6 +24,10 @@ STATUS_APROVADO = "Aprovado"
 STATUS_NF_ANEXADA = "Nota Fiscal Anexada"
 STATUS_GARANTIA_ASSINADA = "Garantia Assinada"
 STATUS_EFETIVADO = "Efetivado"
+# As etapas de um banco FECHADO depois de Aprovado (plano 1.2): Aprovado -> Assinado -> Nota fiscal enviada ->
+# Efetivado. Quem garante que so um banco fechado chega nelas e core/vendas.py (aqui so se classificam).
+STATUS_ASSINADO = "Assinado"
+STATUS_NOTA_ENVIADA = "Nota fiscal enviada"
 # "Não efetivado": o banco aprovou mas o cliente NAO seguiu com a compra - desfecho
 # FINAL, so alcancavel a partir de "Aprovado" (adicionar_proposta/atualizar_proposta
 # travam qualquer outra origem). Nao confundir com a metrica antiga
@@ -75,8 +79,12 @@ _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PEN
 _PALAVRAS_PRE_APROVADO = {"PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO"}
 _PALAVRAS_NF_ANEXADA = {"NOTA FISCAL ANEXADA"}
 _PALAVRAS_GARANTIA_ASSINADA = {"GARANTIA ASSINADA"}
+# Assinado e Nota fiscal enviada (banco fechado): para o funil e as taxas ainda e "Aprovado" - o banco aprovou e o
+# financiamento ainda nao saiu (so Efetivado encerra).
+_PALAVRAS_ETAPAS_DO_FECHADO = {"ASSINADO", "NOTA FISCAL ENVIADA"}
 _PALAVRAS_APROVADO = (
     _PALAVRAS_APROVADO_NAO_EFETIVADO
+    | _PALAVRAS_ETAPAS_DO_FECHADO
     | _PALAVRAS_EFETIVADO
     | _PALAVRAS_NAO_EFETIVADO
     | _PALAVRAS_PRE_APROVADO
@@ -157,7 +165,7 @@ def etapa_status(status: str) -> str:
         (ETAPA_PROPOSTA_ENCERRADA, _PALAVRAS_ENCERRADA),
         (ETAPA_NAO_EFETIVADO, _PALAVRAS_NAO_EFETIVADO),
         (ETAPA_EFETIVADO, _PALAVRAS_EFETIVADO),
-        (ETAPA_APROVADO, _PALAVRAS_APROVADO_NAO_EFETIVADO),
+        (ETAPA_APROVADO, _PALAVRAS_APROVADO_NAO_EFETIVADO | _PALAVRAS_ETAPAS_DO_FECHADO),
         (ETAPA_PRE_APROVADO, _PALAVRAS_PRE_APROVADO),
         (ETAPA_NF_ANEXADA, _PALAVRAS_NF_ANEXADA),
         (ETAPA_GARANTIA_ASSINADA, _PALAVRAS_GARANTIA_ASSINADA),
@@ -188,7 +196,7 @@ def eh_aprovado_nao_efetivado(status: str) -> bool:
     status "Não efetivado", um desfecho FINAL (o cliente ja desistiu) - este
     aqui e so "pendente" (o nome antigo desta funcao/metrica e antes do status
     "Não efetivado" ter sido criado)."""
-    return (status or "").strip().upper() in _PALAVRAS_APROVADO_NAO_EFETIVADO
+    return (status or "").strip().upper() in (_PALAVRAS_APROVADO_NAO_EFETIVADO | _PALAVRAS_ETAPAS_DO_FECHADO)
 
 
 def esta_em_aberto(status: str) -> bool:
@@ -200,9 +208,11 @@ def esta_em_aberto(status: str) -> bool:
     return texto.strip().upper() not in bd.STATUS_ENCERRADO
 
 
-# Uma proposta em aberto ha MAIS que isto (em dias) conta como "parada": e o limite do selo
-# na barra lateral e, depois, da lista "Precisa de atencao" do dashboard - um numero so, pros
-# dois nunca discordarem.
+# O limite de dias de "parada", em UM numero so: o selo da barra lateral, a lista "Precisa de atencao" do dashboard,
+# os alertas e os selos de parada das vendas e propostas leem daqui, na hora da chamada (nunca copiam o valor).
+# A conta de cada um, porem, nao e igual: o selo e o "Precisa de atencao" contam quem esta em aberto ha MAIS que isto
+# (dias da coluna TEMPO); os alertas e os selos da venda/proposta contam "isto ou mais" (dias desde a ultima troca
+# no historico). Por isso um mesmo 7 pode marcar uma proposta no alerta um dia antes de marcar no selo.
 DIAS_PROPOSTA_PARADA = 7
 
 

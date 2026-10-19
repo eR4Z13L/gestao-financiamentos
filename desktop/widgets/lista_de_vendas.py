@@ -37,6 +37,7 @@ _FRASE_STATUS = {  # (singular, plural) nas contagens
     vendas_mod.VENDA_AGUARDANDO: ("aguardando bancos", "aguardando bancos"),
     vendas_mod.VENDA_EM_ANDAMENTO: ("em andamento", "em andamento"),
     vendas_mod.VENDA_EFETIVADA: ("efetivada", "efetivadas"),
+    vendas_mod.VENDA_PENDENTE_ENTREGA: ("pendente de entrega", "pendentes de entrega"),
     vendas_mod.VENDA_NAO_EFETIVADA: ("não efetivada", "não efetivadas"),
     vendas_mod.VENDA_PERDIDA: ("perdida", "perdidas"),
 }
