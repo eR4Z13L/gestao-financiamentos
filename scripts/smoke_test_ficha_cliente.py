@@ -3,8 +3,8 @@ digitavel (com calendario como alternativa), endereco em campos separados com
 botao de copiar (retraido numa linha por padrao, expande nos 7 campos), campos
 novos (pai/mae/profissao), o "endereco a revisar" (editavel/apagavel) e o
 painel do cliente com barra de rolagem (campos sem espremer). Tudo com
-clientes FICTICIOS numa copia temporaria da planilha - nao depende dos dados
-reais.
+clientes FICTICIOS numa planilha 100% ficticia em pasta temporaria
+(scripts/fixture_ficticia.py) - nao toca dado real.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_ficha_cliente.py
 """
@@ -21,6 +21,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
 from PySide6.QtCore import QDate, QPoint, Qt
@@ -28,22 +29,14 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
-import os
-
-# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
-# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
-os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
-from config import CAMINHO_XLSX
-
-
 import config
+
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
-from core import bancos as bancos_mod
+import fixture_ficticia
 from core import clientes as clientes_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf, apenas_digitos
 from desktop import settings as settings_mod
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -53,8 +46,9 @@ from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.campo_data import CampoData
 from desktop.widgets.formatters import formatar_cep_parcial, formatar_data_parcial
 
-CPF_SEPARADO = "529.982.247-25"
-CPF_REVISAR = "390.533.447-05"
+# CPFs validos que NAO estao na fixture (os dela dariam "CPF duplicado" ao cadastrar)
+CPF_SEPARADO = fixture_ficticia.cpf_ficticio(200_000_001)
+CPF_REVISAR = fixture_ficticia.cpf_ficticio(200_000_002)
 
 # as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
 # esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
@@ -344,9 +338,6 @@ def testar_dados_sem_buraco_e_multiplos_emails(app: QApplication) -> None:
     # o formulario nunca deixaria digitar 2 e-mails grudados (adicionar_cliente valida) - mas o
     # campo pode ter vindo assim de uma edicao direta na planilha, ou de antes dessa validacao
     # existir; grava direto no arquivo (bypassa o core) pra simular esse dado ja existente.
-    # IMPORTANTE: usa clientes_mod.CAMINHO_XLSX (redirecionado pro `tmp` isolado em main()),
-    # NUNCA o `CAMINHO_XLSX` importado no topo deste arquivo - esse continua apontando pra
-    # planilha REAL (so serviu pra montar o `tmp` no main()).
     caminho_teste = clientes_mod.CAMINHO_XLSX
     # nunca openpyxl.load_workbook() direto - usa o "with" que desliga o gc por toda a
     # duracao do uso do workbook (ver o comentario em core.data_store._carregar_planilha)
@@ -965,12 +956,9 @@ def main() -> None:
     testar_mascaras()
     testar_campo_data(app)
 
-    tmp = PASTA_TEMPORARIA / "_smoke_test_ficha_cliente.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp)
-    clientes_mod.CAMINHO_XLSX = tmp
-    propostas_mod.CAMINHO_XLSX = tmp
-    bancos_mod.CAMINHO_XLSX = tmp
-    vendedores_mod.CAMINHO_XLSX = tmp
+    fixture_ficticia.isolar_preferencias(PASTA_TEMPORARIA)
+    tmp = fixture_ficticia.criar(PASTA_TEMPORARIA)
+    fixture_ficticia.apontar_modulos_para(tmp)
     try:
         with _Mensagens() as msgs:
             testar_ficha(app)
@@ -983,6 +971,7 @@ def main() -> None:
             testar_rolagem(app, cpfs)
         linha("TUDO OK")
     finally:
+        fixture_ficticia.restaurar_modulos()
         tmp.unlink(missing_ok=True)
         sessao_mod.encerrar()
 

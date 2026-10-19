@@ -1,6 +1,6 @@
 """Testa o FormularioProposta (o formulario de lancamento de proposta do card
 expandido), sem precisar abrir uma janela de verdade (QT_QPA_PLATFORM=offscreen)
-e sem mexer no arquivo real - tudo numa copia temporaria.
+numa planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py) - nao toca dado real.
 
 Chama dialogo._salvar() diretamente (em vez de clicar no botao OK de verdade),
 simulando o clique sem precisar de QTest/interacao real.
@@ -20,24 +20,17 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-import os
-
-# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
-# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
-os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
-from config import CAMINHO_XLSX
-
-
 import config
+
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
-from core import bancos as bancos_mod
+import fixture_ficticia
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
-from core import vendedores as vendedores_mod
 from desktop.widgets.formulario_proposta import FormularioProposta
 
 # as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
@@ -76,15 +69,12 @@ def main() -> None:
     QMessageBox.critical = staticmethod(_stub_mensagem)
     QMessageBox.information = staticmethod(_stub_mensagem)
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_formulario_proposta.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    bancos_mod.CAMINHO_XLSX = tmp_path
-    vendedores_mod.CAMINHO_XLSX = tmp_path
+    fixture_ficticia.isolar_preferencias(PASTA_TEMPORARIA)
+    tmp_path = fixture_ficticia.criar(PASTA_TEMPORARIA)
+    fixture_ficticia.apontar_modulos_para(tmp_path)
 
     try:
-        novo_cpf = "529.982.247-25"  # CPF valido (digito verificador correto), so pra teste
+        novo_cpf = fixture_ficticia.cpf_ficticio(300_000_001)  # CPF valido que NAO esta na fixture
         clientes_mod.adicionar_cliente({"CPF/CNPJ": novo_cpf, "CLIENTE": "Cliente Formulario Teste", "TIPO": "Cliente"})
 
         linha("1) FormularioProposta (card expandido) - sem equipamento (deve rejeitar)")
@@ -122,6 +112,7 @@ def main() -> None:
 
         linha("TUDO OK")
     finally:
+        fixture_ficticia.restaurar_modulos()
         tmp_path.unlink(missing_ok=True)
 
 

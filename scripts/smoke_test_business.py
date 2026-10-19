@@ -1,5 +1,5 @@
 """Testa a camada de regras de negocio (clientes/equipamentos/propostas/dashboard)
-numa COPIA temporaria do arquivo real - nunca mexe nos dados verdadeiros.
+numa planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py) - nunca toca dado real.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_business.py
 """
@@ -13,18 +13,12 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import os
-
-# este teste usa uma COPIA da planilha real como base (so le dela, nunca grava): o config_local.py
-# (planilha de teste, so pro desenvolvimento) nao pode valer aqui
-os.environ["GESTAO_IGNORAR_CONFIG_LOCAL"] = "1"
-from config import CAMINHO_XLSX
-
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
+
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
-from core import bancos as bancos_mod
+import fixture_ficticia
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
 from core import equipamentos as equipamentos_mod
@@ -38,6 +32,12 @@ PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
 atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
 
 
+# CPFs validos fora da fixture (CPF_MARIA/JOAO/ANA ja existem nela e dariam "CPF duplicado")
+CPF_NOVO = fixture_ficticia.cpf_ficticio(100_000_001)
+CPF_PARA_REMOVER = fixture_ficticia.cpf_ficticio(100_000_002)
+CPF_NOVO_EMAIL_INVALIDO = fixture_ficticia.cpf_ficticio(100_000_003)
+
+
 def linha(titulo: str) -> None:
     print(f"\n{'=' * 60}\n{titulo}\n{'=' * 60}")
 
@@ -48,15 +48,8 @@ def main() -> None:
     # CRUD, entao "loga" como admin igual a tela de login faria.
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_business.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-
-    # aponta todos os modulos pra copia temporaria, nao pro arquivo real
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    equipamentos_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    bancos_mod.CAMINHO_XLSX = tmp_path
-    vendedores_mod.CAMINHO_XLSX = tmp_path
+    tmp_path = fixture_ficticia.criar(PASTA_TEMPORARIA)
+    fixture_ficticia.apontar_modulos_para(tmp_path)
 
     try:
         linha("1) CLIENTES - busca e validacao")
@@ -87,14 +80,14 @@ def main() -> None:
 
         try:
             clientes_mod.adicionar_cliente(
-                {"CPF/CNPJ": "390.533.447-05", "CLIENTE": "EMAIL INVALIDO", "TIPO": "Cliente", "EMAIL": "nao-e-email"}
+                {"CPF/CNPJ": CPF_NOVO_EMAIL_INVALIDO, "CLIENTE": "EMAIL INVALIDO", "TIPO": "Cliente", "EMAIL": "nao-e-email"}
             )
             raise SystemExit("deveria ter rejeitado email invalido")
         except clientes_mod.ErroCliente as exc:
             assert "mail" in str(exc)
             print(f"validacao de e-mail invalido OK -> {exc}")
 
-        novo_cpf = "529.982.247-25"  # CPF valido (digito verificador correto) so pra teste
+        novo_cpf = CPF_NOVO  # CPF valido que NAO esta na fixture
         vendedores_mod.adicionar_vendedor("TESTE")  # precisa estar no cadastro oficial pra aparecer no dashboard
         clientes_mod.adicionar_cliente(
             {"CPF/CNPJ": novo_cpf, "CLIENTE": "Cliente Smoke Test", "TIPO": "Cliente", "VENDEDOR": "TESTE"}
@@ -108,7 +101,7 @@ def main() -> None:
         assert atualizado["EMAIL"] == "teste@teste.com"
         print("atualizar_cliente OK: email atualizado")
 
-        cpf_para_remover = "111.444.777-35"  # CPF valido (digito verificador correto), so pra teste
+        cpf_para_remover = CPF_PARA_REMOVER  # CPF valido que NAO esta na fixture
         clientes_mod.adicionar_cliente({"CPF/CNPJ": cpf_para_remover, "CLIENTE": "Cliente Para Remover", "TIPO": "Cliente"})
         assert clientes_mod.buscar_por_cpf(cpf_para_remover) is not None
         clientes_mod.remover_cliente(cpf_para_remover)
@@ -245,6 +238,7 @@ def main() -> None:
 
         linha("TUDO OK")
     finally:
+        fixture_ficticia.restaurar_modulos()
         tmp_path.unlink(missing_ok=True)
 
 

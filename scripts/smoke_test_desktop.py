@@ -2,8 +2,8 @@
 com QT_QPA_PLATFORM=offscreen) - confere se os valores exibidos nos cards e
 nas tabelas batem com o que core/dashboard.py e core/clientes.py calculam.
 
-Os dois primeiros testes so leem - nao mexem no arquivo real. Os demais
-(exclusao, edicao de proposta) escrevem, entao rodam numa copia temporaria.
+Tudo roda numa planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py): os dois primeiros
+testes so leem; os demais (exclusao, edicao de proposta) escrevem, cada um na sua propria copia.
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_desktop.py
 """
@@ -24,14 +24,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config import CAMINHO_XLSX
-
-
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture_ficticia as fx
 from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import dashboard as dashboard_mod
+from core import equipamentos as equipamentos_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
@@ -51,6 +51,20 @@ _TELAS_VIVAS: list = []
 # esbarrariam nelas, e a conferencia da pasta de dados acusaria arquivo a mais)
 PASTA_TEMPORARIA = Path(tempfile.mkdtemp(prefix="smoke_test_"))
 atexit.register(shutil.rmtree, PASTA_TEMPORARIA, True)
+
+
+def _planilha_ficticia(nome: str) -> Path:
+    """Uma planilha ficticia nova (na pasta temporaria) e as camadas de negocio apontadas pra ela. Alem dos
+    clientes da fixture (todos com proposta), ganha um cliente sem nenhuma proposta, que os testes pedem."""
+    pasta = PASTA_TEMPORARIA / nome
+    pasta.mkdir()
+    caminho = fx.criar(pasta)
+    fx.apontar_modulos_para(caminho)
+    clientes_mod.adicionar_cliente({"CPF/CNPJ": fx.cpf_ficticio(101), "CLIENTE": "CLIENTE SEM PROPOSTA TESTE", "TIPO": "Cliente"})
+    # e uma venda com uma proposta em analise (a fixture so tem propostas soltas, de antes das vendas)
+    equipamentos_mod.cadastrar({"EQUIPAMENTO": "Cadeira Exemplo"})
+    vendas_mod.criar_venda(fx.CPF_MARIA, ["Cadeira Exemplo"], {"BANCO": bancos_mod.nomes_ativos()[0], "VALOR (R$)": 40000, "MESES": 36})
+    return caminho
 
 
 def _manter_viva(tela):
@@ -171,11 +185,7 @@ def testar_ficha_cliente_screen(app: QApplication) -> None:
 def testar_exclusao_cliente(app: QApplication) -> None:
     linha("3) Exclusão de cliente (copia temporaria)")
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_exclusao.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    bancos_mod.CAMINHO_XLSX = tmp_path
+    tmp_path = _planilha_ficticia("_smoke_test_exclusao")
 
     # QMessageBox.question e modal (.exec() proprio) - em modo headless trava
     # esperando um clique que nunca vem. Troca por um stub que so responde "Sim".
@@ -227,11 +237,7 @@ def testar_exclusao_cliente(app: QApplication) -> None:
 def testar_edicao_proposta(app: QApplication) -> None:
     linha("4) Edição de proposta existente (cópia temporária)")
 
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_edicao_proposta.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    bancos_mod.CAMINHO_XLSX = tmp_path
+    tmp_path = _planilha_ficticia("_smoke_test_edicao_proposta")
 
     # QMessageBox.warning/critical/question sao modais - se a edicao for
     # rejeitada por algum motivo (valor em branco na proposta escolhida,
@@ -318,11 +324,7 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
     # bug real reportado: uma URL longa sem espaço em Rede Social fazia o
     # tamanho MINIMO da ficha inteira (e por tabela, da janela) crescer bem
     # alem da tela, empurrando ate a barra lateral pra fora da area visivel
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_texto_longo.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    clientes_mod.CAMINHO_XLSX = tmp_path
-    propostas_mod.CAMINHO_XLSX = tmp_path
-    bancos_mod.CAMINHO_XLSX = tmp_path
+    tmp_path = _planilha_ficticia("_smoke_test_texto_longo")
 
     # token de proposito sem "/", "-", "." ou espaço nenhum - o pior caso,
     # onde o Qt normalmente nao tem NENHUM ponto de quebra natural
@@ -375,20 +377,22 @@ def testar_texto_longo_sem_quebra(app: QApplication) -> None:
 
         print("\nOK: texto longo sem espaço não estica mais o layout da Ficha de Cliente.")
     finally:
-        clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        bancos_mod.CAMINHO_XLSX = CAMINHO_XLSX
         tmp_path.unlink(missing_ok=True)
 
 
 def main() -> None:
+    fx.isolar_preferencias(PASTA_TEMPORARIA)
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
     app = QApplication.instance() or QApplication(sys.argv)
-    testar_dashboard_screen(app)
-    testar_ficha_cliente_screen(app)
-    testar_exclusao_cliente(app)
-    testar_edicao_proposta(app)
-    testar_texto_longo_sem_quebra(app)
+    try:
+        _planilha_ficticia("_smoke_test_leitura")
+        testar_dashboard_screen(app)
+        testar_ficha_cliente_screen(app)
+        testar_exclusao_cliente(app)
+        testar_edicao_proposta(app)
+        testar_texto_longo_sem_quebra(app)
+    finally:
+        fx.restaurar_modulos()
     linha("TUDO OK")
 
 

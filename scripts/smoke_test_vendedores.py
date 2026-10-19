@@ -5,7 +5,7 @@
 2. Cadastro novo nao duplica por diferenca de maiusculas/espacos.
 3. Nome vazio e rejeitado.
 
-Nunca mexe no arquivo real - tudo numa copia temporaria.
+Nunca mexe em dado real - tudo numa planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py).
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_vendedores.py
 """
@@ -22,11 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 
-from config import CAMINHO_XLSX
 
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture_ficticia as fx
 from core import data_store as bd
 from core import sessao as sessao_mod
 from core import vendedores as vendedores_mod
@@ -92,12 +93,11 @@ def testar_cadastro_sem_duplicar(tmp_path: Path) -> None:
 
 def main() -> None:
     sessao_mod.iniciar(sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador"))
-    tmp_path = PASTA_TEMPORARIA / "_smoke_test_vendedores.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
-    # o arquivo real ja passou pela migracao (a aba VENDEDORES foi criada nele
-    # numa sessao anterior) - remove a aba da COPIA antes do teste, pra
-    # simular de proposito um arquivo "antigo" (pre-migracao), em vez de
-    # depender do arquivo real por acaso ainda nao ter a aba.
+    fx.isolar_preferencias(PASTA_TEMPORARIA)
+    tmp_path = fx.criar(PASTA_TEMPORARIA)
+    fx.apontar_modulos_para(tmp_path)
+    # a fixture ja tem a aba VENDEDORES - remove a aba antes do teste, pra simular
+    # de proposito um arquivo "antigo" (pre-migracao)
     wb = openpyxl.load_workbook(tmp_path)
     if bd.ABA_VENDEDORES in wb.sheetnames:
         del wb[bd.ABA_VENDEDORES]
@@ -108,7 +108,7 @@ def main() -> None:
         testar_cadastro_sem_duplicar(tmp_path)
         linha("TUDO OK")
     finally:
-        vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        fx.restaurar_modulos()
         tmp_path.unlink(missing_ok=True)
 
 

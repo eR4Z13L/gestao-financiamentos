@@ -1,6 +1,6 @@
 """Valida a camada core/data_store.py:
-1. Le as 3 abas do arquivo real (so leitura, nao mexe em nada).
-2. Faz um teste de escrita/round-trip numa COPIA temporaria (nunca no arquivo real).
+1. Le as 3 abas de uma planilha de exemplo 100% ficticia (scripts/fixture_ficticia.py; so leitura).
+2. Faz um teste de escrita/round-trip numa COPIA temporaria dela.
 3. Simula o arquivo aberto no Excel (cria o lock file ~$...) e confere que a
    escrita falha do jeito certo (ErroArquivoBloqueado), sem travar nem corromper nada.
 
@@ -16,12 +16,12 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from config import CAMINHO_XLSX
-
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config
+
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+import fixture_ficticia
 from core import data_store as bd
 
 # as copias que o teste grava ficam numa pasta temporaria, nunca ao lado da planilha (testes em paralelo
@@ -34,12 +34,12 @@ def linha(titulo: str) -> None:
     print(f"\n{'=' * 60}\n{titulo}\n{'=' * 60}")
 
 
-def testar_leitura_real() -> None:
-    linha("1) LEITURA DO ARQUIVO REAL (data/controle_financiamentos.xlsx)")
+def testar_leitura_do_exemplo(caminho_xlsx: Path) -> None:
+    linha("1) LEITURA DO ARQUIVO DE EXEMPLO (planilha ficticia)")
 
-    clientes = bd.ler_clientes(CAMINHO_XLSX)
-    equipamentos = bd.ler_equipamentos(CAMINHO_XLSX)
-    propostas = bd.ler_propostas(CAMINHO_XLSX, df_clientes=clientes)
+    clientes = bd.ler_clientes(caminho_xlsx)
+    equipamentos = bd.ler_equipamentos(caminho_xlsx)
+    propostas = bd.ler_propostas(caminho_xlsx, df_clientes=clientes)
 
     print(f"CLIENTES: {len(clientes)} linhas")
     print(f"EQUIPAMENTOS: {len(equipamentos)} linhas")
@@ -65,11 +65,11 @@ def testar_leitura_real() -> None:
     print("\nOK: leitura das 3 abas e calculo de VENDEDOR/CLIENTE/TEMPO batem com o esperado.")
 
 
-def testar_escrita_em_copia() -> Path:
+def testar_escrita_em_copia(caminho_xlsx: Path) -> Path:
     linha("2) ESCRITA (round-trip) EM UMA COPIA TEMPORARIA")
 
     tmp_path = PASTA_TEMPORARIA / "_smoke_test_copy.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_path)
+    shutil.copy(caminho_xlsx, tmp_path)
 
     clientes_antes = bd.ler_clientes(tmp_path)
     propostas_antes = bd.ler_propostas(tmp_path, df_clientes=clientes_antes)
@@ -123,8 +123,9 @@ def testar_deteccao_de_bloqueio(tmp_path: Path) -> None:
 
 
 def main() -> None:
-    testar_leitura_real()
-    tmp_path = testar_escrita_em_copia()
+    caminho_xlsx = fixture_ficticia.criar(PASTA_TEMPORARIA)
+    testar_leitura_do_exemplo(caminho_xlsx)
+    tmp_path = testar_escrita_em_copia(caminho_xlsx)
     try:
         testar_deteccao_de_bloqueio(tmp_path)
     finally:

@@ -3,7 +3,7 @@ com botao de copiar em cada campo, e so vira formulario de edicao depois de "Edi
 volta pra leitura, so Recolher recolhe o card. Tambem: o campo de DATA (o mesmo dos filtros:
 da pra selecionar tudo, apagar tudo e digitar a data inteira), a deteccao de alteracoes nao
 salvas e a protecao contra gravar por cima de outra proposta - sem abrir janela de verdade e
-sem mexer em nada real: tudo numa copia temporaria da planilha.
+sem mexer em nada real: tudo numa planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py).
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_proposta_leitura.py
 """
@@ -27,11 +27,12 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config import CAMINHO_XLSX
 
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture_ficticia as fx
 from core import bancos as bancos_mod
 from core import clientes as clientes_mod
 from core import propostas as propostas_mod
@@ -146,11 +147,9 @@ def main() -> None:
     QMessageBox.information = staticmethod(_stub)
     QMessageBox.question = staticmethod(_stub_question_sim)
 
-    tmp_xlsx = PASTA_TEMPORARIA / "_smoke_test_proposta_leitura.xlsx"
-    shutil.copy(CAMINHO_XLSX, tmp_xlsx)
-    clientes_mod.CAMINHO_XLSX = tmp_xlsx
-    propostas_mod.CAMINHO_XLSX = tmp_xlsx
-    bancos_mod.CAMINHO_XLSX = tmp_xlsx
+    fx.isolar_preferencias(PASTA_TEMPORARIA)
+    tmp_xlsx = fx.criar(PASTA_TEMPORARIA)
+    fx.apontar_modulos_para(tmp_xlsx)
     duracao_original = botao_copiar_mod.DURACAO_FEEDBACK_MS
 
     try:
@@ -485,9 +484,7 @@ def main() -> None:
     finally:
         botao_copiar_mod.DURACAO_FEEDBACK_MS = duracao_original
         (QMessageBox.warning, QMessageBox.critical, QMessageBox.information, QMessageBox.question) = original_msg
-        clientes_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        propostas_mod.CAMINHO_XLSX = CAMINHO_XLSX
-        bancos_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        fx.restaurar_modulos()
         tmp_xlsx.unlink(missing_ok=True)
         sessao_mod.encerrar()
 

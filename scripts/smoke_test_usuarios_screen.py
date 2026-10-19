@@ -1,6 +1,7 @@
 """Testa a tela Administração/Usuários (troca do PIN de entrada, cadastro de vendedor,
 status/carteira, redefinir senha, renomear, transferir carteira, desativar/reativar) sem
-abrir uma janela de verdade e sem mexer em nada real - tudo em cópias/arquivos temporários.
+abrir uma janela de verdade e sem mexer em nada real - tudo numa planilha 100% ficticia e em arquivos temporários
+(scripts/fixture_ficticia.py).
 
 Rodar com: venv/Scripts/python.exe scripts/smoke_test_usuarios_screen.py
 """
@@ -20,11 +21,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from config import CAMINHO_XLSX
 
 
 import config
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture_ficticia as fx
 from core import acesso, auth, conta_google
 from core import bancos as bancos_mod
 from core import clientes as clientes_mod
@@ -69,10 +71,10 @@ def main() -> None:
     QMessageBox.information = staticmethod(_stub)
     QMessageBox.question = staticmethod(_stub_question)
 
-    tmp_xlsx = PASTA_TEMPORARIA / "_smoke_test_usuarios.xlsx"
     tmp_admin_senha = PASTA_TEMPORARIA / "_smoke_test_usuarios_admin.json"
-    shutil.copy(CAMINHO_XLSX, tmp_xlsx)
-    bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = tmp_xlsx
+    fx.isolar_preferencias(PASTA_TEMPORARIA)
+    tmp_xlsx = fx.criar(PASTA_TEMPORARIA)
+    fx.apontar_modulos_para(tmp_xlsx)
     caminho_original_admin = auth.CAMINHO_CREDENCIAIS_ADMIN
     auth.CAMINHO_CREDENCIAIS_ADMIN = tmp_admin_senha
     pasta_acesso = Path(tempfile.mkdtemp(prefix="_smoke_usuarios_acesso_"))
@@ -246,7 +248,7 @@ def main() -> None:
         auth.CAMINHO_CREDENCIAIS_ADMIN = caminho_original_admin
         config.CAMINHO_CONTA_GOOGLE, config.CAMINHO_PIN_ACESSO = originais_acesso
         shutil.rmtree(pasta_acesso, ignore_errors=True)
-        bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = CAMINHO_XLSX
+        fx.restaurar_modulos()
         tmp_xlsx.unlink(missing_ok=True)
         tmp_admin_senha.unlink(missing_ok=True)
         sessao_mod.encerrar()
