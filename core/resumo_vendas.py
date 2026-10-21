@@ -1,15 +1,21 @@
-"""Resumo para colar no WhatsApp (plano 1.5-A): o resumo de um vendedor num periodo e o resumo de uma venda.
+"""Resumo para colar no WhatsApp (planos 1.5-A e 1.5-B): o resumo de um vendedor num periodo e o resumo de uma venda.
 
-So LE (core/vendas.py, core/data_store.py): nada e gravado. A tela (1.5-B) so mostra e copia o texto daqui.
+So LE (core/vendas.py, core/data_store.py): nada e gravado. A tela so mostra e copia o texto daqui.
 
-Regras do resumo por vendedor (rascunho da especificacao 1.5, ainda nao aprovado - se o formato mudar, muda so o
-formatador `texto_whatsapp`):
+Regras do resumo por vendedor (ajustes aprovados em 20/10/2026, docs/planos/1.5B_resumo_ajustes.md):
 - entra a venda CRIADA no periodo ou com MOVIMENTO nele (qualquer linha do HISTORICO da venda ou das propostas dela,
-  menos as do TIPO "conversao": a conversao dos dados antigos nao e trabalho do vendedor);
+  menos as do TIPO "conversao": a conversao dos dados antigos nao e trabalho do vendedor); o periodo e a semana, a
+  quinzena, o mes (atual ou anterior) ou DUAS DATAS LIVRES (periodo_das_datas);
 - o vendedor e o do cliente da venda;
-- cada venda cai em UM bloco, o do banco mais adiantado: Efetivadas, Aprovadas, Em análise, Negadas, Perdidas e não
-  efetivadas. A Pendencias so aponta de volta para vendas que ja estao num bloco (aprovadas sem assinar, pendentes de
-  entrega - que tambem ficam em Efetivadas - e as com observacoes).
+- cada venda cai em UM bloco, o do banco que esta sendo mostrado: Efetivadas, Aprovadas, Em análise, Negadas, Não
+  efetivadas (Perdida e Não efetivada contam como uma coisa so). Se um banco FECHADO ja chegou a Assinado (ou alem),
+  mostra esse(s) banco(s), cada um numa linha; senao, so o banco mais adiantado (Aprovado, Pré-aprovado, Em análise;
+  Negado so quando TODAS as propostas negaram). No empate: o banco fechado e, depois, o mais parado (o mais antigo) -
+  nunca a ordem da lista;
+- o bloco Pendencias: TODO banco fechado ainda em Aprovado (mesmo com outro fechado ja Assinado; sem nenhum fechado,
+  todo Aprovado), cada um com os seus dias parado, e, de cada venda, cada pendencia ABERTA (a lista do card, 1.2-B).
+  Observacoes nao entram em resumo nenhum (ficam so no card);
+- `blocos` escolhe o que entra no texto (todos, por padrao); sem emojis; negrito so nos titulos.
 """
 
 from __future__ import annotations
@@ -28,9 +34,17 @@ from core.formatting import formatar_reais
 from core.validators import apenas_digitos
 
 SEMANA, QUINZENA, MES = "semana", "quinzena", "mes"
+LIVRE = "livre"  # duas datas escolhidas a mao (periodo_das_datas)
 TIPOS_DE_PERIODO = [SEMANA, QUINZENA, MES]
 ATUAL, ANTERIOR = "atual", "anterior"
 QUAIS_PERIODOS = [ATUAL, ANTERIOR]
+
+# os blocos do texto (a ordem e a do texto) - `blocos` aceita qualquer subconjunto deles
+EFETIVADAS, APROVADAS, EM_ANALISE, NEGADAS, NAO_EFETIVADAS, PENDENCIAS = (
+    "efetivadas", "aprovadas", "em_analise", "negadas", "nao_efetivadas", "pendencias")
+BLOCOS = (EFETIVADAS, APROVADAS, EM_ANALISE, NEGADAS, NAO_EFETIVADAS, PENDENCIAS)
+TITULO_DO_BLOCO = {EFETIVADAS: "Efetivadas", APROVADAS: "Aprovadas", EM_ANALISE: "Em análise", NEGADAS: "Negadas",
+                   NAO_EFETIVADAS: "Não efetivadas", PENDENCIAS: "Pendências"}
 
 SEM_TELEFONE = "sem telefone"
 _SEM_CLIENTE = "Cliente sem cadastro"
@@ -60,11 +74,11 @@ class Periodo:
 
     @property
     def do_periodo(self) -> str:
-        return _DO_PERIODO[(self.tipo, self.qual)]
+        return "do período" if self.tipo == LIVRE else _DO_PERIODO[(self.tipo, self.qual)]
 
     @property
     def no_periodo(self) -> str:
-        return _NO_PERIODO[(self.tipo, self.qual)]
+        return f"no período de {self.datas}" if self.tipo == LIVRE else _NO_PERIODO[(self.tipo, self.qual)]
 
     @property
     def datas(self) -> str:
@@ -103,6 +117,19 @@ def periodo(tipo: str, qual: str = ATUAL, hoje: date | None = None) -> Periodo:
     if primeira_metade:
         return Periodo(tipo, qual, hoje.replace(day=1), hoje.replace(day=15))
     return Periodo(tipo, qual, hoje.replace(day=16), _fim_do_mes(hoje.year, hoje.month))
+
+
+def periodo_das_datas(inicio: date, fim: date, hoje: date | None = None) -> Periodo:
+    """O periodo de duas datas livres (inclusive). Se elas sao exatamente a semana, a quinzena ou o mes (atual ou
+    anterior) de `hoje`, e esse periodo (o texto diz "da semana"); senao, um periodo "livre"."""
+    if inicio > fim:
+        raise ErroResumo("O período começa depois de terminar.")
+    for tipo in TIPOS_DE_PERIODO:
+        for qual in QUAIS_PERIODOS:
+            sugerido = periodo(tipo, qual, hoje)
+            if (sugerido.inicio, sugerido.fim) == (inicio, fim):
+                return sugerido
+    return Periodo(LIVRE, "", inicio, fim)
 
 
 # -- leitura ---------------------------------------------------------------------------------------
@@ -152,22 +179,22 @@ class LinhaDaVenda:
     cliente: str
     telefone: str  # ja formatado, ou SEM_TELEFONE
     equipamentos: str
-    itens: tuple[str, ...]  # um por banco ("Banco X R$ 30.000: Aprovado"), ou um so texto ("Perdida: Desistiu")
+    itens: tuple[str, ...]  # um por banco ("Banco X R$ 30.000: Aprovado"), ou um so texto ("Não efetivada: Desistiu")
 
 
 @dataclass(frozen=True)
 class ResumoDoVendedor:
     periodo: Periodo
     vendedor: str | None  # None: todos
-    total: int
+    total: int  # as vendas do periodo (todas, estejam ou nao nos blocos escolhidos)
     efetivadas: tuple[LinhaDaVenda, ...]
     aprovadas: tuple[LinhaDaVenda, ...]
     em_analise: tuple[LinhaDaVenda, ...]
     negadas: tuple[LinhaDaVenda, ...]
-    perdidas: tuple[LinhaDaVenda, ...]  # Perdida e Não efetivada
-    aprovadas_sem_assinar: tuple[tuple[str, int], ...] = ()  # (cliente, dias parada)
-    pendentes_de_entrega: tuple[tuple[str, str], ...] = ()  # (cliente, motivo)
-    observacoes: tuple[tuple[str, str], ...] = ()  # (cliente, o que falta)
+    nao_efetivadas: tuple[LinhaDaVenda, ...]  # Perdida e Não efetivada
+    aprovadas_sem_assinar: tuple[tuple[str, str, int], ...] = ()  # (cliente, banco, dias parado)
+    com_pendencias: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (cliente, os textos das pendencias abertas)
+    blocos: tuple[str, ...] = BLOCOS  # o que entra no texto
 
     @property
     def vazio(self) -> bool:
@@ -175,7 +202,7 @@ class ResumoDoVendedor:
 
     @property
     def tem_pendencias(self) -> bool:
-        return bool(self.aprovadas_sem_assinar or self.pendentes_de_entrega or self.observacoes)
+        return bool(self.aprovadas_sem_assinar or self.com_pendencias)
 
 
 def _telefone(celular) -> str:
@@ -229,10 +256,6 @@ def _dias_parada(p: vendas_mod.PropostaNaVenda, ultimas: dict, hoje: pd.Timestam
     return (hoje - pd.Timestamp(desde).normalize()).days
 
 
-_ETAPAS_APROVADAS = {propostas_mod.ETAPA_APROVADO, propostas_mod.ETAPA_NF_ANEXADA,
-                     propostas_mod.ETAPA_GARANTIA_ASSINADA, propostas_mod.ETAPA_EFETIVADO}
-
-
 def _etapa(p: vendas_mod.PropostaNaVenda) -> str:
     return propostas_mod.etapa_status(p.status)
 
@@ -245,34 +268,92 @@ def _com_motivo(status: str, motivo: str) -> str:
     return f"{status}: {motivo}" if motivo else status
 
 
+# a resposta mais adiantada do banco: Aprovado (e o que veio depois dele), Pré-aprovado, Em análise, Negado
+_ETAPAS_DE_APROVADO = {propostas_mod.ETAPA_APROVADO, propostas_mod.ETAPA_NF_ANEXADA, propostas_mod.ETAPA_GARANTIA_ASSINADA,
+                       propostas_mod.ETAPA_EFETIVADO, propostas_mod.ETAPA_NAO_EFETIVADO}
+
+
+def _posto_da_resposta(p: vendas_mod.PropostaNaVenda) -> int:
+    etapa = _etapa(p)
+    if etapa in _ETAPAS_DE_APROVADO:
+        return 0
+    if etapa == propostas_mod.ETAPA_PRE_APROVADO:
+        return 1
+    if etapa == propostas_mod.ETAPA_EM_ANALISE:
+        return 2
+    if etapa == propostas_mod.ETAPA_NEGADO:
+        return 3
+    return 4  # sem status ou desconhecido
+
+
+def _assinado_ou_alem(p: vendas_mod.PropostaNaVenda) -> bool:
+    """Banco FECHADO que ja chegou a Assinado (Assinado, NF enviada, Efetivado - e os nomes de antes: Garantia
+    Assinada, Nota Fiscal Anexada)."""
+    if not p.fechada:
+        return False
+    indice = vendas_mod.indice_da_etapa(p.status)
+    return (indice is not None and indice >= 1) or _etapa(p) in {
+        propostas_mod.ETAPA_NF_ANEXADA, propostas_mod.ETAPA_GARANTIA_ASSINADA, propostas_mod.ETAPA_EFETIVADO}
+
+
+def _banco_mais_adiantado(propostas, ultimas: dict, hoje: pd.Timestamp) -> vendas_mod.PropostaNaVenda:
+    """A melhor resposta; no empate, o banco fechado e, depois, o mais parado (o mais antigo) - nunca a ordem da lista
+    (o resto do desempate, nome e id, so da um resultado sempre igual)."""
+    return min(propostas, key=lambda p: (_posto_da_resposta(p), not p.fechada, -(_dias_parada(p, ultimas, hoje) or 0),
+                                         (p.banco or "").casefold(), p.id))
+
+
+def _aprovadas_sem_assinar(venda: vendas_mod.ResumoDaVenda, ultimas: dict, hoje: pd.Timestamp) -> list[tuple[str, int]]:
+    """(banco, dias parado) de todo banco fechado ainda em Aprovado (mesmo quando outro fechado ja esta Assinado); sem
+    nenhum fechado, de todo banco Aprovado. Cada banco com os dias do pedido dele. Venda ja resolvida: nenhum."""
+    if venda.status == vendas_mod.VENDA_EFETIVADA or venda.status in vendas_mod.DESFECHOS_DA_VENDA:
+        return []
+    candidatos = [p for p in venda.propostas if p.fechada] or list(venda.propostas)
+    return [((p.banco or "").strip() or _SEM_BANCO, dias) for p in candidatos
+            if _eh_aprovado(p) and (dias := _dias_parada(p, ultimas, hoje)) is not None]
+
 def _classificar(venda: vendas_mod.ResumoDaVenda, ultimas: dict, hoje: pd.Timestamp):
-    """(bloco, itens, parada_das_aprovadas): o bloco do banco mais adiantado da venda."""
+    """(bloco, itens): o bloco do(s) banco(s) mostrado(s) da venda."""
     fechadas = [p for p in venda.propostas if p.fechada]
-    if venda.status in (vendas_mod.VENDA_EFETIVADA, vendas_mod.VENDA_PENDENTE_ENTREGA):
-        return "efetivadas", tuple(_banco_e_valor(p) for p in fechadas), ()  # todos os fechados ja efetivaram
-    if venda.status in vendas_mod.DESFECHOS_DA_VENDA:
-        return "perdidas", (_com_motivo(venda.status, venda.motivo),), ()
-    aprovadas = fechadas or [p for p in venda.propostas if _etapa(p) in _ETAPAS_APROVADAS]
-    if aprovadas:
-        paradas = [d for p in aprovadas if _eh_aprovado(p) and (d := _dias_parada(p, ultimas, hoje)) is not None]
-        itens = tuple(f"{_banco_e_valor(p)}: {p.status}" for p in aprovadas)
-        return "aprovadas", itens, tuple(paradas)
-    negadas = [p for p in venda.propostas if _etapa(p) == propostas_mod.ETAPA_NEGADO]
-    if venda.propostas and len(negadas) == len(venda.propostas):
-        nomes = list(dict.fromkeys((p.banco or "").strip() or _SEM_BANCO for p in negadas))
-        return "negadas", (f"{_lista_com_e(nomes)} {'negou' if len(nomes) == 1 else 'negaram'}",), ()
+    if venda.status == vendas_mod.VENDA_EFETIVADA:
+        return EFETIVADAS, tuple(_banco_e_valor(p) for p in fechadas)  # todos os fechados ja efetivaram
+    if venda.status in vendas_mod.DESFECHOS_DA_VENDA:  # Perdida e Não efetivada contam como uma coisa so
+        return NAO_EFETIVADAS, (_com_motivo(vendas_mod.VENDA_NAO_EFETIVADA, venda.motivo),)
     if not venda.propostas:
-        return "em_analise", ("ainda sem pedido a nenhum banco",), ()
-    esperando = [p for p in venda.propostas if _etapa(p) != propostas_mod.ETAPA_NEGADO]
-    return "em_analise", tuple(", ".join(t for t in (_banco_e_valor(p), _ha(p.dias_esperando)) if t) for p in esperando), ()
+        return EM_ANALISE, ("ainda sem pedido a nenhum banco",)
+    assinados = [p for p in fechadas if _assinado_ou_alem(p)]
+    # Negado so e o resultado quando TODAS negaram; status vazio ou desconhecido nao conta como negado
+    sem_negados = [p for p in venda.propostas if _posto_da_resposta(p) != 3]
+    if not sem_negados:
+        nomes = list(dict.fromkeys((p.banco or "").strip() or _SEM_BANCO for p in venda.propostas))
+        return NEGADAS, (f"{_lista_com_e(nomes)} {'negou' if len(nomes) == 1 else 'negaram'}",)
+    mostrados = assinados or [_banco_mais_adiantado(sem_negados, ultimas, hoje)]
+    posto = _posto_da_resposta(mostrados[0])
+    if posto == 0:
+        return APROVADAS, tuple(f"{_banco_e_valor(p)}: {p.status}" for p in mostrados)
+    banco = mostrados[0]
+    # Pré-aprovado (e um status desconhecido) diz o que e; Em análise e o proprio bloco
+    resposta = f": {banco.status}" if posto in (1, 4) and banco.status else ""
+    return EM_ANALISE, (", ".join(t for t in (_banco_e_valor(banco) + resposta, _ha(banco.dias_esperando)) if t),)
 
 
 def _uma_linha(texto: str) -> str:
     return " ".join(str(texto or "").split())
 
 
-def montar_resumo(per: Periodo, vendedor: str | None = None, hoje: date | None = None) -> ResumoDoVendedor:
-    """O resumo do `vendedor` (None: todos) no periodo `per`, estruturado; `texto_whatsapp` o transforma em texto."""
+def _blocos_validos(blocos) -> tuple[str, ...]:
+    escolhidos = BLOCOS if blocos is None else tuple(b for b in BLOCOS if b in set(blocos))
+    desconhecidos = set(blocos or ()) - set(BLOCOS)
+    if desconhecidos:
+        raise ErroResumo(f"Bloco desconhecido: {sorted(desconhecidos)[0]!r}.")
+    return escolhidos
+
+
+def montar_resumo(per: Periodo, vendedor: str | None = None, hoje: date | None = None,
+                  blocos=None) -> ResumoDoVendedor:
+    """O resumo do `vendedor` (None: todos) no periodo `per`, estruturado; `texto_whatsapp` o transforma em texto.
+    `blocos`: quais blocos levar (None: todos); os outros ficam vazios."""
+    escolhidos = _blocos_validos(blocos)
     hoje = hoje or date.today()
     historico = _ler_historico()
     vendas = _escolher_vendas(vendas_mod.listar_vendas(hoje), historico, per.inicio, per.fim, vendedor)
@@ -280,24 +361,23 @@ def montar_resumo(per: Periodo, vendedor: str | None = None, hoje: date | None =
     ultimas = _ultimas_por_id(historico)
     agora = pd.Timestamp(hoje)
 
-    blocos: dict[str, list[LinhaDaVenda]] = {nome: [] for nome in
-                                              ("efetivadas", "aprovadas", "em_analise", "negadas", "perdidas")}
-    sem_assinar, pendentes, observacoes = [], [], []
+    por_bloco: dict[str, list[LinhaDaVenda]] = {nome: [] for nome in BLOCOS if nome != PENDENCIAS}
+    sem_assinar, com_pendencias = [], []
     for venda in sorted(vendas, key=lambda v: ((v.cliente or "").casefold(), v.id)):
         nome = venda.cliente or _SEM_CLIENTE
-        bloco, itens, paradas = _classificar(venda, ultimas, agora)
+        bloco, itens = _classificar(venda, ultimas, agora)
         telefone = _telefone(celulares.get(apenas_digitos(venda.cpf)))
-        blocos[bloco].append(LinhaDaVenda(venda.id, nome, telefone, venda.equipamentos, itens))
-        if paradas:
-            sem_assinar.append((nome, max(paradas)))
-        if venda.status == vendas_mod.VENDA_PENDENTE_ENTREGA:
-            pendentes.append((nome, venda.motivo))
-        if _uma_linha(venda.observacoes):
-            observacoes.append((nome, _uma_linha(venda.observacoes)))
+        por_bloco[bloco].append(LinhaDaVenda(venda.id, nome, telefone, venda.equipamentos, itens))
+        sem_assinar += [(nome, nome_do_banco, dias) for nome_do_banco, dias in _aprovadas_sem_assinar(venda, ultimas, agora)]
+        abertas = tuple(t for p in venda.pendencias if p.aberta and (t := _uma_linha(p.texto)))
+        if abertas:
+            com_pendencias.append((nome, abertas))
+    de_cada = {b: (tuple(por_bloco[b]) if b in escolhidos else ()) for b in por_bloco}
+    pendencias_incluidas = PENDENCIAS in escolhidos
     return ResumoDoVendedor(
-        per, vendedor, len(vendas), *(tuple(blocos[n]) for n in ("efetivadas", "aprovadas", "em_analise", "negadas",
-                                                                  "perdidas")),
-        tuple(sem_assinar), tuple(pendentes), tuple(observacoes),
+        per, vendedor, len(vendas), de_cada[EFETIVADAS], de_cada[APROVADAS], de_cada[EM_ANALISE], de_cada[NEGADAS],
+        de_cada[NAO_EFETIVADAS], tuple(sem_assinar) if pendencias_incluidas else (),
+        tuple(com_pendencias) if pendencias_incluidas else (), escolhidos,
     )
 
 
@@ -316,97 +396,74 @@ def _bloco_em_texto(titulo: str, linhas: tuple[LinhaDaVenda, ...]) -> list[str]:
         itens = [i for i in linha.itens if i]
         if len(itens) <= 1:  # equipamento e banco na mesma linha
             saida.append("  " + " · ".join(p for p in (linha.equipamentos, *itens) if p))
-        else:
+        else:  # cada banco na sua linha, um embaixo do outro
             if linha.equipamentos:
                 saida.append(f"  {linha.equipamentos}")
-            saida.append("  " + " · ".join(itens))
+            saida += [f"  {item}" for item in itens]
     saida.append("")
     return saida
 
 
-def texto_whatsapp(resumo: ResumoDoVendedor) -> str:
-    """O resumo no formato do WhatsApp (*negrito* so nos titulos). Sem vendas no periodo, so um aviso (veja `vazio`)."""
+def texto_whatsapp(resumo: ResumoDoVendedor, blocos=None) -> str:
+    """O resumo no formato do WhatsApp (*negrito* so nos titulos, sem emojis). `blocos`: so esses (None: os do
+    resumo). Sem vendas no periodo, so um aviso (veja `vazio`)."""
+    escolhidos = resumo.blocos if blocos is None else tuple(b for b in _blocos_validos(blocos) if b in resumo.blocos)
+    if not escolhidos:
+        raise ErroResumo("Marque pelo menos um bloco para o resumo.")
     per = resumo.periodo
     if resumo.vazio:
         de = f" de {resumo.vendedor}" if resumo.vendedor else ""
         return f"Nenhuma venda{de} {per.no_periodo}"
     quem = resumo.vendedor or "Todos os vendedores"
     saida = [f"*Resumo {per.do_periodo} — {quem}*", f"{per.datas} · {_vendas(resumo.total)}", ""]
-    saida += _bloco_em_texto("✅ Efetivadas", resumo.efetivadas)
-    saida += _bloco_em_texto("🟢 Aprovadas", resumo.aprovadas)
-    saida += _bloco_em_texto("⏳ Em análise", resumo.em_analise)
-    saida += _bloco_em_texto("❌ Negadas", resumo.negadas)
-    saida += _bloco_em_texto("🚫 Perdidas e não efetivadas", resumo.perdidas)
-    if resumo.tem_pendencias:
-        saida.append("*⚠️ Pendências*")
+    for bloco in (EFETIVADAS, APROVADAS, EM_ANALISE, NEGADAS, NAO_EFETIVADAS):
+        if bloco in escolhidos:
+            saida += _bloco_em_texto(TITULO_DO_BLOCO[bloco], getattr(resumo, bloco))
+    if PENDENCIAS in escolhidos and resumo.tem_pendencias:
+        saida.append(f"*{TITULO_DO_BLOCO[PENDENCIAS]}*")
         if resumo.aprovadas_sem_assinar:
             saida.append("Aprovadas que ainda não assinaram:")
-            saida += [f"• {nome}, parada {_ha(dias)}" for nome, dias in resumo.aprovadas_sem_assinar]
-        if resumo.pendentes_de_entrega:
-            saida.append("Pendentes de entrega:")
-            saida += [f"• {nome}: {motivo}" if motivo else f"• {nome}" for nome, motivo in resumo.pendentes_de_entrega]
-        if resumo.observacoes:
-            saida.append("Observações (o que falta):")
-            saida += [f"• {nome}: {texto}" for nome, texto in resumo.observacoes]
+            saida += [f"• {nome}, {banco}: parada {_ha(dias)}" for nome, banco, dias in resumo.aprovadas_sem_assinar]
+        if resumo.com_pendencias:
+            saida.append("Pendências em aberto:")
+            saida += [f"• {nome}: {texto}" for nome, textos in resumo.com_pendencias for texto in textos]
     while saida and saida[-1] == "":
         saida.pop()
+    if len(saida) == 2:  # so o titulo: nenhum dos blocos escolhidos tem venda
+        saida.append("")
+        saida.append("Nada nos blocos escolhidos neste período.")
     return "\n".join(saida)
 
 
 # -- o resumo de uma venda ---------------------------------------------------------------------------
 
-def _data_da_efetivacao(historico: pd.DataFrame, id_proposta: str) -> pd.Timestamp | None:
-    if historico.empty or not id_proposta:
-        return None
-    h = historico.dropna(subset=["QUANDO"])
-    h = h[(h["ID"] == id_proposta) & (h["TIPO"] == vendas_mod.TIPO_PROPOSTA)
-          & (h["PARA"].str.strip().str.casefold() == vendas_mod.PROPOSTA_EFETIVADA.casefold())]
-    return h["QUANDO"].max() if len(h) else None
-
-
-def _banco_da_venda(p: vendas_mod.PropostaNaVenda, historico: pd.DataFrame, ultimas: dict, hoje: pd.Timestamp) -> str:
+def _banco_da_venda(p: vendas_mod.PropostaNaVenda) -> str:
+    """"• Banco X R$ 52.000 (36x): NF enviada, seguiu com este": so o status (sem datas nem "parada ha N dias")."""
     meses = f" ({p.meses}x)" if p.meses else ""
-    base = f"• {_banco_e_valor(p)}{meses}: "
-    parada = _dias_parada(p, ultimas, hoje)
-    if p.fechada:
-        texto = "Aprovado, seguiu com este"
-        if p.status == vendas_mod.PROPOSTA_EFETIVADA:
-            quando = _data_da_efetivacao(historico, p.id)
-            return base + texto + " · Efetivado" + (f" em {quando:%d/%m}" if quando is not None else "")
-        etapa = "" if _eh_aprovado(p) else p.status
-        parou = f"parada há {parada} dias" if parada is not None and parada >= propostas_mod.DIAS_PROPOSTA_PARADA else ""
-        extra = ", ".join(t for t in (etapa, parou) if t)
-        return base + texto + (f" · {extra}" if extra else "")
-    etapa = _etapa(p)
-    if etapa == propostas_mod.ETAPA_NEGADO:
-        return base + "Negado"
-    if p.dias_esperando is not None:
-        return base + f"{p.status} {_ha(p.dias_esperando)}".strip()
-    return base + (p.status or "sem status")
+    status = p.status or "sem status"
+    return f"• {_banco_e_valor(p)}{meses}: {status}" + (", seguiu com este" if p.fechada else "")
 
 
 def texto_da_venda(id_venda: str, hoje: date | None = None) -> str:
-    """O resumo de uma venda para o WhatsApp: os bancos tentados, o resultado de cada um, com qual a venda seguiu e as
-    observacoes."""
+    """O resumo de uma venda para o WhatsApp: os bancos tentados, o resultado de cada um (so o status), com qual a
+    venda seguiu e as pendencias abertas. Sem observacoes, sem datas e sem "parada ha N dias"."""
     hoje = hoje or date.today()
     venda = next((v for v in vendas_mod.listar_vendas(hoje) if v.id == id_venda), None)
     if venda is None:
         raise ErroResumo("Venda não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
-    historico = _ler_historico()
-    ultimas = _ultimas_por_id(historico)
-    agora = pd.Timestamp(hoje)
     telefone = _telefone(_celulares().get(apenas_digitos(venda.cpf)))
     cabecalho = f"*Venda de {venda.cliente or _SEM_CLIENTE}* · {telefone}"
     quem = " · ".join(p for p in (venda.equipamentos, venda.vendedor) if p)
-    desde = f"Desde {venda.data_criacao:%d/%m/%Y} · " if venda.data_criacao is not None else ""
     saida = [cabecalho]
     if quem:
         saida.append(quem)
-    saida += [desde + _com_motivo(venda.status, venda.motivo), "", "Bancos tentados:"]
+    saida += [_com_motivo(venda.status, venda.motivo), "", "Bancos tentados:"]
     if venda.propostas:
-        saida += [_banco_da_venda(p, historico, ultimas, agora) for p in venda.propostas]
+        saida += [_banco_da_venda(p) for p in venda.propostas]
     else:
         saida.append("Nenhum banco ainda.")
-    if _uma_linha(venda.observacoes):
-        saida += ["", f"Obs.: {_uma_linha(venda.observacoes)}"]
+    abertas = [_uma_linha(p.texto) for p in venda.pendencias if p.aberta and _uma_linha(p.texto)]
+    if abertas:
+        saida += ["", "Pendências em aberto:"]
+        saida += [f"• {texto}" for texto in abertas]
     return "\n".join(saida)

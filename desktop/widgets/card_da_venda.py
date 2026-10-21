@@ -4,12 +4,16 @@ Fechado, ele serve pra VER e trocar status (desenhado com o usuario em 02 e 03/1
 varios bancos, e cada financiamento anda no seu tempo (core/vendas.py), entao quase tudo e por banco:
 - a etiqueta de status: um clique abre a lista (no banco, as respostas; na venda, os desfechos manuais);
 - as bolinhas ao lado do banco: avancam direto, na cor do destino - Aprovado e Negado enquanto ele nao respondeu
-  (Pré-aprovado so pela lista); Efetivado num banco fechado;
+  (Pré-aprovado so pela lista); num banco fechado, UMA etapa de cada vez (Aprovado -> Assinado -> NF enviada ->
+  Efetivado; pular etapa so pela lista da etiqueta), com a trilha de 4 pontos e a data de quando entrou na etapa;
 - o anel verde ao lado de cada banco APROVADO: marca o banco como fechado (o cliente fechou com ele) - pode haver
   varios; o ✓ desmarca;
 - a setinha ↩: volta ao status de antes da ultima troca (pelo HISTÓRICO; de novo, mais um passo); na venda, so num
   desfecho, e reabre.
 A etiqueta da venda nao tem bolinha: o status dela sai dos bancos (Aguardando bancos / Em andamento / Efetivada).
+O selo "parada ha N dias" aparece no banco parado na etapa e, no topo, a maior parada (so etapa: pendencia nunca
+conta). As pendencias (1.2-B) sao uma etiqueta "N pendencias" ao lado do status; no card aberto ha a lista, com o
+"Resolvida" de cada uma e o "+ Pendência".
 
 Aberto (dois cliques no card, ou a setinha ⌄ do canto), ele serve pra EDITAR: cada banco ganha o ✎ (ou dois cliques
 nele) que abre o formulario da proposta ali dentro, embaixo do banco - o MESMO formulario de toda tela
@@ -23,15 +27,17 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QHelpEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -43,6 +49,7 @@ from PySide6.QtWidgets import (
 
 from core import data_store as bd
 from core import propostas as propostas_mod
+from core import resumo_vendas as resumo_mod
 from core import sessao as sessao_mod
 from core import vendas as vendas_mod
 from core.formatting import formatar_data, formatar_reais
@@ -173,8 +180,8 @@ class Bolinha(_ComDica):
 
     LADO = 17
 
-    def __init__(self, destino: str, cor: str, parent: QWidget | None = None):
-        super().__init__(f"→ {destino}", parent)
+    def __init__(self, destino: str, cor: str, parent: QWidget | None = None, dica: str | None = None):
+        super().__init__(dica or f"→ {destino}", parent)
         self.destino = destino
         self.cor = cor
         self.setFixedSize(self.LADO, self.LADO)
@@ -245,6 +252,184 @@ class BotaoVoltar(_ComDica):
         curva.lineTo(9, 16)
         pintor.drawPath(curva)
         pintor.drawPolyline([QPointF(10, 5), QPointF(7, 8), QPointF(10, 11)])
+
+
+class Selo(QWidget):
+    """O selo "parada há N dias": borda e fundo de aviso (ambar), so mostra."""
+
+    def __init__(self, texto: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.texto = texto
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def sizeHint(self) -> QSize:
+        metricas = QFontMetrics(self._fonte())
+        return QSize(metricas.horizontalAdvance(self.texto) + 14, metricas.height() + 4)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def _fonte(self) -> QFont:
+        fonte = QFont(self.font())
+        fonte.setBold(True)
+        fonte.setPointSizeF(max(7.0, fonte.pointSizeF() - 1))
+        return fonte
+
+    def paintEvent(self, _evento) -> None:
+        cor = CORES_STATUS[_tema()]["em_analise"]
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pintor.setPen(QPen(QColor(cor["faixa"]), 1))
+        pintor.setBrush(QColor(cor["fundo"]))
+        pintor.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        pintor.setFont(self._fonte())
+        pintor.setPen(QColor(cor["texto"]))
+        pintor.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.texto)
+
+
+class EtiquetaDePendencias(Pilula):
+    """"2 pendências" ao lado do status no card fechado (ambar). Um clique abre o card, onde esta a lista."""
+
+    def __init__(self, abertas: int, parent: QWidget | None = None):
+        super().__init__(f"{abertas} pendência{'s' if abertas > 1 else ''}", "em_analise", parent, clicavel=False)
+        self.abertas = abertas
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def definir_dica(self, dica: str) -> None:
+        self.dica = dica  # (a que _ComDica mostra assim que o mouse passa)
+        self.setToolTip(dica)
+
+
+class Trilha(QWidget):
+    """A trilha de 4 pontos de um banco fechado (Aprovado, Assinado, NF enviada, Efetivado): cheio = ja passou, anel =
+    onde esta. Passar o mouse num ponto diz a etapa e, havendo, a data em que chegou nela."""
+
+    PONTO = 10
+    LIGACAO = 12
+
+    def __init__(self, proposta: vendas_mod.PropostaNaVenda, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.atual = vendas_mod.indice_da_etapa(proposta.status)
+        self.datas: dict[int, object] = {}
+        for status, quando in proposta.datas_das_etapas:
+            indice = vendas_mod.indice_da_etapa(status)
+            if indice is not None:
+                self.datas[indice] = quando
+        if self.atual is not None and self.atual not in self.datas and proposta.desde is not None:
+            self.datas[self.atual] = proposta.desde
+        n = len(vendas_mod.ETAPAS_DO_FECHADO)
+        self.setFixedSize(n * self.PONTO + (n - 1) * self.LIGACAO + 2, self.PONTO + 4)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
+
+    def dica_do_ponto(self, indice: int) -> str:
+        etapa = vendas_mod.ETAPAS_DO_FECHADO[indice]
+        quando = self.datas.get(indice)
+        return f"{etapa} em {quando:%d/%m}" if quando is not None else etapa
+
+    def _ponto_em(self, x: float) -> int | None:
+        passo = self.PONTO + self.LIGACAO
+        indice = int((x - 1) // passo)
+        dentro = (x - 1) - indice * passo <= self.PONTO
+        return indice if 0 <= indice < len(vendas_mod.ETAPAS_DO_FECHADO) and dentro else None
+
+    def event(self, evento) -> bool:
+        if evento.type() == QEvent.Type.ToolTip:
+            indice = self._ponto_em(evento.pos().x())
+            if indice is not None:
+                QToolTip.showText(evento.globalPos(), self.dica_do_ponto(indice), self)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().event(evento)
+
+    def paintEvent(self, _evento) -> None:
+        paleta = PALETAS[_tema()]
+        cor = QColor(CORES_STATUS[_tema()]["aprovado"]["faixa"])
+        vazio = QColor(paleta["borda"])
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
+        atual = -1 if self.atual is None else self.atual
+        ultimo = len(vendas_mod.ETAPAS_DO_FECHADO) - 1
+        y = self.height() / 2
+        for i in range(ultimo + 1):
+            x = 1 + i * (self.PONTO + self.LIGACAO)
+            if i:
+                pintor.setPen(QPen(cor if i <= atual else vazio, 2))
+                pintor.drawLine(QPointF(x - self.LIGACAO, y), QPointF(x, y))
+            caixa = QRectF(x + 1, y - self.PONTO / 2 + 1, self.PONTO - 2, self.PONTO - 2)
+            if i < atual or (i == atual and i == ultimo):
+                pintor.setPen(QPen(cor, 2))
+                pintor.setBrush(cor)
+            elif i == atual:  # onde esta: anel
+                pintor.setPen(QPen(cor, 2))
+                pintor.setBrush(QColor(paleta["bg_card"]))
+            else:
+                pintor.setPen(QPen(vazio, 2))
+                pintor.setBrush(Qt.BrushStyle.NoBrush)
+            pintor.drawEllipse(caixa)
+
+
+class RotuloDeAteDuasLinhas(QLabel):
+    """Texto de ate 2 linhas: o que passa disso termina em "…" (o texto inteiro fica na dica)."""
+
+    def __init__(self, texto: str, parent: QWidget | None = None):
+        super().__init__(texto, parent)
+        self.completo = texto
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.setToolTip(texto)
+        self.setMaximumHeight(2 * self.fontMetrics().lineSpacing() + 2)
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self._ajustar()
+
+    def _cabe(self, texto: str, largura: int) -> bool:
+        metricas = self.fontMetrics()
+        altura = metricas.boundingRect(QRect(0, 0, largura, 10_000), Qt.TextFlag.TextWordWrap.value, texto).height()
+        return altura <= 2 * metricas.lineSpacing() + 2
+
+    def _ajustar(self) -> None:
+        largura = self.width()
+        if largura < 40:
+            return
+        texto = self.completo
+        if not self._cabe(texto, largura):
+            baixo, alto = 0, len(self.completo)
+            while baixo < alto:  # o maior pedaco que, com "…", cabe em 2 linhas
+                meio = (baixo + alto + 1) // 2
+                if self._cabe(self.completo[:meio].rstrip() + "…", largura):
+                    baixo = meio
+                else:
+                    alto = meio - 1
+            texto = self.completo[:baixo].rstrip() + "…"
+        if texto != self.text():
+            self.setText(texto)
+
+
+class PendenciaDialog(QDialog):
+    """Pede o texto de uma pendência da venda (obrigatório)."""
+
+    def __init__(self, venda: vendas_mod.ResumoDaVenda, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Adicionar pendência")
+        layout = QVBoxLayout(self)
+        titulo = QLabel(f"O que está pendente na venda de <b>{venda.cliente or venda.cpf}</b>?")
+        titulo.setWordWrap(True)
+        layout.addWidget(titulo)
+        self.texto = QLineEdit()
+        self.texto.setPlaceholderText("Ex.: equipamento ainda não chegou; falta comprovante de renda")
+        self.texto.setMinimumWidth(380)
+        layout.addWidget(self.texto)
+        self.botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.botoes.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
+        self.ok = self.botoes.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok.setText("Adicionar pendência")
+        self.ok.setEnabled(False)
+        self.texto.textChanged.connect(lambda t: self.ok.setEnabled(bool(t.strip())))
+        self.botoes.accepted.connect(self.accept)
+        self.botoes.rejected.connect(self.reject)
+        layout.addWidget(self.botoes)
 
 
 class _BotaoIcone(_ComDica):
@@ -334,14 +519,41 @@ def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDa
             bolinha.clicked.connect(lambda _=False, d=destino: card.resposta_pedida.emit(venda, proposta, d))
             caixa.addWidget(bolinha)
             itens["bolinhas"].append(bolinha)
-    elif (acoes and proposta.fechada and venda.status not in vendas_mod.DESFECHOS_DA_VENDA
-          and propostas_mod.etapa_status(proposta.status) == propostas_mod.ETAPA_APROVADO):
-        bolinha = Bolinha(EFETIVAR, chave_cor_status(vendas_mod.PROPOSTA_EFETIVADA), parent)
-        bolinha.clicked.connect(lambda: card.efetivacao_pedida.emit(venda, proposta))
-        caixa.addWidget(bolinha)
-        itens["bolinhas"].append(bolinha)
+    elif acoes and proposta.fechada and venda.status not in vendas_mod.DESFECHOS_DA_VENDA:
+        destino = vendas_mod.proxima_etapa(proposta.status)  # so UMA etapa; pular so pela lista da etiqueta
+        if destino is not None:
+            efetiva = destino == vendas_mod.PROPOSTA_EFETIVADA
+            bolinha = Bolinha(destino, chave_cor_status(destino), parent,
+                              dica=f"Avançar para {destino}" + (" (pede confirmação)" if efetiva else ""))
+            if efetiva:
+                bolinha.clicked.connect(lambda: card.efetivacao_pedida.emit(venda, proposta))
+            else:
+                bolinha.clicked.connect(lambda _=False, d=destino: card.resposta_pedida.emit(venda, proposta, d))
+            caixa.addWidget(bolinha)
+            itens["bolinhas"].append(bolinha)
     caixa.addSpacing((len(RESPOSTAS_RAPIDAS) - len(itens["bolinhas"])) * (Bolinha.LADO + caixa.spacing()))
     linha.addLayout(caixa)
+
+
+def por_data_da_etapa(linha: QHBoxLayout, venda: vendas_mod.ResumoDaVenda | None, proposta: vendas_mod.PropostaNaVenda,
+                      parent: QWidget, itens: dict) -> None:
+    """Num banco fechado, em `linha`: o selo "parada há N dias" (so etapa, e so numa venda que nao desistiu/perdeu) e
+    "desde 15/10 · há 3 dias" (Efetivado: so "desde 17/10"); os widgets vao para `itens` ("selo", "data")."""
+    itens.setdefault("selo", None)
+    itens.setdefault("data", None)
+    if not proposta.fechada or proposta.desde is None:
+        return
+    if proposta.parada and (venda is None or venda.status not in vendas_mod.DESFECHOS_DA_VENDA):
+        itens["selo"] = Selo(f"parada há {proposta.dias_na_etapa} dias", parent)
+        linha.addWidget(itens["selo"])
+    texto = f"desde {proposta.desde:%d/%m}"
+    if propostas_mod.etapa_status(proposta.status) != propostas_mod.ETAPA_EFETIVADO:
+        texto += f" · {ha_quanto(proposta.dias_na_etapa)}"
+    data = QLabel(texto, parent)
+    data.setProperty("role", "secundario")
+    data.setToolTip("Há quanto tempo o banco está nesta etapa")
+    linha.addWidget(data)
+    itens["data"] = data
 
 
 class CardDaVenda(QFrame):
@@ -361,6 +573,9 @@ class CardDaVenda(QFrame):
     exclusao_pedida = Signal(object, object)  # (ResumoDaVenda, PropostaNaVenda)
     edicao_da_venda_pedida = Signal(object)
     ficha_pedida = Signal(str)  # cpf
+    pendencia_pedida = Signal(object)  # ResumoDaVenda: o "+ Pendência"
+    pendencia_resolvida = Signal(object, object)  # (ResumoDaVenda, Pendencia): o "Resolvida" de uma pendencia aberta
+    resumo_pedido = Signal(object)  # ResumoDaVenda: o "Copiar resumo da venda"
 
     def __init__(self, venda: vendas_mod.ResumoDaVenda, parent: QWidget | None = None, *, aberto: bool = False):
         super().__init__(parent)
@@ -388,10 +603,20 @@ class CardDaVenda(QFrame):
         cliente.setWordWrap(True)
         topo.addWidget(cliente, stretch=1)
         self.voltar: BotaoVoltar | None = None
-        if venda.anterior:  # so num desfecho (reabrir) ou Pendente de entrega (voltar a Efetivada)
+        if venda.anterior:  # so num desfecho (reabrir)
             self.voltar = BotaoVoltar(venda.anterior, self)
             self.voltar.clicked.connect(lambda: self.volta_da_venda_pedida.emit(self.venda))
             topo.addWidget(self.voltar, alignment=Qt.AlignmentFlag.AlignTop)
+        self.selo: Selo | None = None  # a maior parada da venda (so etapa: pendencia nunca conta)
+        if venda.dias_parada is not None:
+            self.selo = Selo(f"parada há {venda.dias_parada} dias", self)
+            topo.addWidget(self.selo, alignment=Qt.AlignmentFlag.AlignTop)
+        self.etiqueta_pendencias: EtiquetaDePendencias | None = None
+        if venda.pendencias_abertas:
+            self.etiqueta_pendencias = EtiquetaDePendencias(venda.pendencias_abertas, self)
+            self.etiqueta_pendencias.definir_dica("\n".join(f"• {p.texto}" for p in venda.pendencias if p.aberta))
+            self.etiqueta_pendencias.clicked.connect(self._abrir_pelas_pendencias)
+            topo.addWidget(self.etiqueta_pendencias, alignment=Qt.AlignmentFlag.AlignTop)
         self.pilula = Pilula(venda.status or "Sem status", COR_DA_VENDA.get(venda.status, "neutro"), self)
         self.pilula.clicked.connect(lambda: self.lista_da_venda_pedida.emit(self.venda, self.pilula))
         topo.addWidget(self.pilula, alignment=Qt.AlignmentFlag.AlignTop)
@@ -402,8 +627,21 @@ class CardDaVenda(QFrame):
         detalhe.setWordWrap(True)
         self._layout.addWidget(detalhe)
 
+        # as observacoes logo abaixo do equipamento: ate 2 linhas no card fechado, inteiras no aberto
+        self.observacoes: QLabel | None = None
+        if venda.observacoes.strip():
+            texto_obs = f"Observações: {venda.observacoes.strip()}"
+            if aberto:
+                self.observacoes = QLabel(texto_obs, self)
+                self.observacoes.setTextFormat(Qt.TextFormat.PlainText)
+                self.observacoes.setWordWrap(True)
+            else:
+                self.observacoes = RotuloDeAteDuasLinhas(texto_obs, self)
+            self.observacoes.setProperty("role", "secundario")
+            self._layout.addWidget(self.observacoes)
+
         self.andamento = QLabel(self._texto_andamento(), self)
-        self.andamento.setProperty("role", "aviso" if venda.parada else "secundario")
+        self.andamento.setProperty("role", "secundario")
         self.andamento.setWordWrap(True)
         self._layout.addWidget(self.andamento)
         aprovadas = len(venda.aprovadas())
@@ -418,11 +656,15 @@ class CardDaVenda(QFrame):
             motivo = QLabel(f"Motivo: {venda.motivo}", self)
             motivo.setProperty("role", "secundario")
             self._layout.addWidget(motivo)
-        if aberto and venda.observacoes:
-            observacoes = QLabel(f"Observações: {venda.observacoes}", self)
-            observacoes.setProperty("role", "secundario")
-            observacoes.setWordWrap(True)
-            self._layout.addWidget(observacoes)
+        self.aviso_pendencias: QLabel | None = None  # a celula PENDENCIAS desta venda esta ilegivel (core/vendas.py)
+        if venda.erro_pendencias:
+            self.aviso_pendencias = QLabel(f"Pendências indisponíveis: {venda.erro_pendencias}", self)
+            self.aviso_pendencias.setProperty("role", "aviso")
+            self.aviso_pendencias.setWordWrap(True)
+            self._layout.addWidget(self.aviso_pendencias)
+        self.pendencias_na_lista: list[dict] = []  # no card aberto: por pendencia, o texto e o botao "Resolvida"
+        if aberto and venda.pendencias:
+            self._layout.addWidget(self._caixa_das_pendencias())
 
         divisor = QFrame(self)
         divisor.setFrameShape(QFrame.Shape.HLine)
@@ -449,6 +691,8 @@ class CardDaVenda(QFrame):
         self.adicionar: QPushButton | None = None
         self.editar_venda: QPushButton | None = None
         self.abrir_ficha: QPushButton | None = None
+        self.nova_pendencia: QPushButton | None = None
+        self.copiar_resumo: QPushButton | None = None
         if aberto:
             divisor2 = QFrame(self)
             divisor2.setFrameShape(QFrame.Shape.HLine)
@@ -462,10 +706,20 @@ class CardDaVenda(QFrame):
             self.editar_venda = _botao_link("Editar a venda", self, lambda: self.edicao_da_venda_pedida.emit(self.venda))
             self.editar_venda.setToolTip("Equipamentos e observações da venda")
             rodape.addWidget(self.editar_venda)
+            self.nova_pendencia = _botao_link("+ Pendência", self, lambda: self.pendencia_pedida.emit(self.venda))
+            self.nova_pendencia.setToolTip("Anota algo que falta nesta venda (em qualquer etapa); não muda o status")
+            rodape.addWidget(self.nova_pendencia)
+            self.copiar_resumo = _botao_link("Copiar resumo da venda", self, lambda: self.resumo_pedido.emit(self.venda))
+            self.copiar_resumo.setToolTip("Copia o resumo desta venda (bancos tentados e pendências) para colar no WhatsApp")
+            rodape.addWidget(self.copiar_resumo)
             rodape.addStretch()
             self.abrir_ficha = _botao_link("Abrir a ficha", self, lambda: self.ficha_pedida.emit(self.venda.cpf))
             rodape.addWidget(self.abrir_ficha)
         canto = QHBoxLayout()
+        if not aberto:  # o atalho do card fechado (no aberto, ele esta no rodape)
+            self.nova_pendencia = _botao_link("+ Pendência", self, lambda: self.pendencia_pedida.emit(self.venda))
+            self.nova_pendencia.setToolTip("Anota algo que falta nesta venda (em qualquer etapa); não muda o status")
+            canto.addWidget(self.nova_pendencia)
         canto.addStretch()
         self.alternar = _botao_link("⌃ fechar" if aberto else "⌄", self, self._alternar)
         self.alternar.setToolTip("Fechar a venda" if aberto else "Abrir a venda para editar (ou dois cliques no card)")
@@ -475,6 +729,48 @@ class CardDaVenda(QFrame):
 
     def _alternar(self) -> None:
         (self.fechar_pedido if self.aberto else self.abrir_pedido).emit(self.venda)
+
+    def _abrir_pelas_pendencias(self) -> None:
+        if not self.aberto:
+            self.abrir_pedido.emit(self.venda)
+
+    def _caixa_das_pendencias(self) -> QWidget:
+        """No card aberto: as pendencias abertas (texto, desde quando, "Resolvida") e, em cinza, as resolvidas."""
+        caixa = QFrame(self)
+        caixa.setProperty("role", "transparente")
+        corpo = QVBoxLayout(caixa)
+        corpo.setContentsMargins(0, 2, 0, 2)
+        corpo.setSpacing(2)
+        titulo = QLabel("Pendências", caixa)
+        titulo.setProperty("role", "rotulo_do_cartao")
+        corpo.addWidget(titulo)
+        for pendencia in sorted(self.venda.pendencias, key=lambda p: not p.aberta):  # as abertas primeiro
+            linha = QHBoxLayout()
+            linha.setSpacing(8)
+            if pendencia.aberta:
+                texto = QLabel(f"• {pendencia.texto}", caixa)
+                texto.setProperty("role", "aviso")
+                quando = QLabel(f"desde {pendencia.criada:%d/%m}", caixa)
+                quando.setProperty("role", "secundario")
+                botao = QPushButton("Resolvida", caixa)
+                botao.setCursor(Qt.CursorShape.PointingHandCursor)
+                botao.setToolTip("Marca esta pendência como resolvida")
+                botao.clicked.connect(lambda _=False, p=pendencia: self.pendencia_resolvida.emit(self.venda, p))
+            else:
+                texto = QLabel(f"✓ {pendencia.texto}", caixa)
+                texto.setProperty("role", "secundario")
+                quando = QLabel(f"resolvida em {pendencia.resolvida:%d/%m}", caixa)
+                quando.setProperty("role", "secundario")
+                botao = None
+            texto.setTextFormat(Qt.TextFormat.PlainText)
+            texto.setWordWrap(True)
+            linha.addWidget(texto, stretch=1)
+            linha.addWidget(quando)
+            if botao is not None:
+                linha.addWidget(botao)
+            corpo.addLayout(linha)
+            self.pendencias_na_lista.append({"pendencia": pendencia, "texto": texto, "botao": botao})
+        return caixa
 
     def mouseDoubleClickEvent(self, evento) -> None:
         if not self.aberto:
@@ -488,7 +784,7 @@ class CardDaVenda(QFrame):
         partes = [f"desde {formatar_data(v.data_criacao)}"] if v.data_criacao is not None else []
         if v.dias_na_etapa is not None and not v.finalizada:
             quanto = ha_quanto(v.dias_na_etapa)
-            partes.append(f"{'parada ' + quanto if v.parada else quanto} em \"{v.status}\"")
+            partes.append(f"{quanto} em \"{v.status}\"")
         fechados = v.bancos_fechados()
         if fechados and v.status not in vendas_mod.DESFECHOS_DA_VENDA:
             partes.append(f"{len(v.efetivados())} de {len(fechados)} banco{'s' if len(fechados) > 1 else ''} "
@@ -512,6 +808,10 @@ class CardDaVenda(QFrame):
         fonte.setWeight(QFont.Weight.DemiBold)
         banco.setFont(fonte)
         linha.addWidget(banco)
+        itens["trilha"] = None
+        if proposta.fechada and vendas_mod.indice_da_etapa(proposta.status) is not None:
+            itens["trilha"] = Trilha(proposta, widget)
+            linha.addWidget(itens["trilha"])
         linha.addStretch(1)
         valores = QLabel(condicoes_da_proposta(proposta, self.venda.equipamentos), widget)
         valores.setProperty("role", "secundario")
@@ -519,6 +819,7 @@ class CardDaVenda(QFrame):
         condicoes = QHBoxLayout()
         condicoes.addSpacing(AnelDoBanco.LADO + linha.spacing())
         condicoes.addWidget(valores, stretch=1)
+        por_data_da_etapa(condicoes, self.venda, proposta, widget, itens)
         bloco.addLayout(condicoes)
         if proposta.dias_esperando is not None:
             espera = QLabel(ha_quanto(proposta.dias_esperando), widget)
@@ -654,14 +955,19 @@ class ControleDasVendas(QObject):
     """As acoes dos cards de venda, iguais em toda tela que os mostra: menus de status, bolinhas, anel, voltar,
     confirmacoes e as perguntas. Grava pelo core e chama `ao_gravar(aviso)` (a tela rele e mostra o aviso)."""
 
-    def __init__(self, tela: QWidget, ao_gravar: Callable[[str], None]):
+    def __init__(self, tela: QWidget, ao_gravar: Callable[[str], None], ao_avisar: Callable[[str], None] | None = None):
+        """`ao_avisar(texto)`: o aviso de algo que nao grava (copiar um resumo); sem ele, nao ha aviso."""
         super().__init__(tela)
         self._tela = tela
         self._ao_gravar = ao_gravar
+        self._ao_avisar = ao_avisar
 
     def conectar(self, card: CardDaVenda) -> None:
         card.lista_da_venda_pedida.connect(self._lista_da_venda)
         card.volta_da_venda_pedida.connect(self.voltar_venda)
+        card.pendencia_pedida.connect(self.adicionar_pendencia)
+        card.pendencia_resolvida.connect(self.resolver_pendencia)
+        card.resumo_pedido.connect(self.copiar_resumo_da_venda)
         self.conectar_proposta(card)
 
     def conectar_proposta(self, card) -> None:
@@ -705,17 +1011,13 @@ class ControleDasVendas(QObject):
         """A lista da etiqueta da venda: so os desfechos manuais (o resto do status vem dos bancos) e, num desfecho,
         "Reabrir"."""
         menu = QMenu(self._tela)
-        pendente = venda.status == vendas_mod.VENDA_PENDENTE_ENTREGA
         if venda.status in vendas_mod.DESFECHOS_DA_VENDA:
             menu.addAction(f"Reabrir a venda (volta para \"{venda.anterior}\")", lambda: self.voltar_venda(venda))
-        elif pendente:
-            menu.addAction(f"Voltar a venda (volta para \"{venda.anterior}\")", lambda: self.voltar_venda(venda))
         menu.addSection("Desfechos")
         for status in vendas_mod.DESFECHOS_DA_VENDA:
             acao = menu.addAction(f"{status}…", lambda s=status: self.escolher_status_da_venda(venda, s))
             acao.setCheckable(True)
             acao.setChecked(status == venda.status)
-            acao.setEnabled(not pendente)  # o core tambem recusa: marque como entregue antes
         aviso = menu.addAction("O resto vem dos bancos: o anel e o Efetivado de cada um")
         aviso.setEnabled(False)
         return menu
@@ -729,19 +1031,52 @@ class ControleDasVendas(QObject):
         return self._desfecho(venda, status)
 
     def voltar_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
-        """O ↩ da venda (num desfecho ou Pendente de entrega): reabrir / voltar - nunca por um clique sem querer.
-        vendas_mod.voltar_venda decide: o desfecho reabre; o Pendente de entrega volta a Efetivada."""
-        pendente = venda.status == vendas_mod.VENDA_PENDENTE_ENTREGA
-        titulo, acao = ("Voltar a venda", "Voltar") if pendente else ("Reabrir a venda", "Reabrir")
+        """O ↩ da venda (num desfecho): reabrir - nunca por um clique sem querer."""
         resposta = QMessageBox.question(
-            self._tela, titulo,
-            f"A venda de {self.nome(venda)} está \"{venda.status}\". {acao} (volta para \"{venda.anterior}\")?",
+            self._tela, "Reabrir a venda",
+            f"A venda de {self.nome(venda)} está \"{venda.status}\". Reabrir (volta para \"{venda.anterior}\")?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
         if resposta != QMessageBox.StandardButton.Yes:
             return False
-        return self._gravar(f"Não foi possível {acao.lower()}", lambda: vendas_mod.voltar_venda(venda.id),
-                            lambda para: f"{self.nome(venda)}: {'voltou a' if pendente else 'reaberta'} (\"{para}\").")
+        return self._gravar("Não foi possível reabrir", lambda: vendas_mod.voltar_venda(venda.id),
+                            lambda para: f"{self.nome(venda)}: reaberta (\"{para}\").")
+
+    def copiar_resumo_da_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
+        """O "Copiar resumo da venda": o texto de core/resumo_vendas.py vai para a area de transferencia (nada grava)."""
+        try:
+            texto = resumo_mod.texto_da_venda(venda.id)
+        except resumo_mod.ErroResumo as exc:
+            QMessageBox.warning(self._tela, "Não foi possível copiar o resumo", str(exc))
+            return False
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(self._tela, "Erro inesperado: copiar o resumo", f"{type(exc).__name__}: {exc}")
+            return False
+        QApplication.clipboard().setText(texto)
+        if self._ao_avisar is not None:
+            self._ao_avisar(f"{self.nome(venda)}: resumo copiado.")
+        return True
+
+    # -- pendencias ---------------------------------------------------------------------------------
+
+    def _pedir_pendencia(self, venda: vendas_mod.ResumoDaVenda) -> str | None:
+        dialogo = PendenciaDialog(venda, self._tela)
+        if dialogo.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialogo.texto.text().strip()
+
+    def adicionar_pendencia(self, venda: vendas_mod.ResumoDaVenda) -> bool:
+        texto = self._pedir_pendencia(venda)
+        if texto is None:
+            return False
+        return self._gravar("Não foi possível adicionar a pendência",
+                            lambda: vendas_mod.adicionar_pendencia(venda.id, texto),
+                            f"{self.nome(venda)}: pendência adicionada.")
+
+    def resolver_pendencia(self, venda: vendas_mod.ResumoDaVenda, pendencia: vendas_mod.Pendencia) -> bool:
+        return self._gravar("Não foi possível resolver a pendência",
+                            lambda: vendas_mod.resolver_pendencia(venda.id, pendencia.id),
+                            f"{self.nome(venda)}: pendência resolvida.")
 
     def fechar_banco(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         return self._gravar("Não foi possível marcar como fechado", lambda: vendas_mod.fechar_proposta(proposta.id),
@@ -787,10 +1122,16 @@ class ControleDasVendas(QObject):
             if proposta.fechada and status not in vendas_mod.STATUS_DE_FECHADA:
                 acao.setEnabled(False)  # o core tambem recusa: a venda contaria com um banco que nao aprovou
         if proposta.fechada:
-            efetivado = menu.addAction(vendas_mod.PROPOSTA_EFETIVADA + "…", lambda: self.efetivar_banco(venda, proposta))
-            efetivado.setCheckable(True)
-            efetivado.setChecked(proposta.status == vendas_mod.PROPOSTA_EFETIVADA)
-            efetivado.setEnabled(proposta.status != vendas_mod.PROPOSTA_EFETIVADA)
+            atual = vendas_mod.indice_da_etapa(proposta.status)
+            menu.addSection("Etapa do banco fechado")
+            for etapa in vendas_mod.ETAPAS_DEPOIS_DO_APROVADO:  # pode pular etapa: so a bolinha avanca uma por vez
+                if etapa == vendas_mod.PROPOSTA_EFETIVADA:
+                    acao = menu.addAction(etapa + "…", lambda: self.efetivar_banco(venda, proposta))
+                else:
+                    acao = menu.addAction(etapa, lambda e=etapa: self.mudar_proposta(venda, proposta, e))
+                acao.setCheckable(True)
+                acao.setChecked(vendas_mod.indice_da_etapa(etapa) == atual)
+                acao.setEnabled(vendas_mod.indice_da_etapa(etapa) != atual)
             aviso = menu.addAction("Banco fechado: desmarque o anel para mudar a resposta")
             aviso.setEnabled(False)
         return menu

@@ -81,7 +81,7 @@ PROPOSTAS = [
     _p(A, 100, "Mesa V", "Banco A", "Xpto", "P-U1", "V-U"),  # 14 (numa venda) -> Assinado
     # orfa sozinha no grupo dela: respondida "criar venda so para ela", o grupo esvazia e nao pode virar venda vazia
     _p(J, 30, "Torno C", "Banco A", "Em Análise", "P-O3", "V-SUMIU3"),  # 15
-    _p(A, 130, "Mesa Z", "Banco A", "Yyy"),  # 16 (sem venda) -> Nota fiscal enviada
+    _p(A, 130, "Mesa Z", "Banco A", "Yyy"),  # 16 (sem venda) -> NF enviada
 ]
 VENDAS = [
     _v("V-A", M, "Cadeira A", v.VENDA_EM_ANDAMENTO, "P-A3", criada=40),
@@ -158,7 +158,7 @@ def main() -> None:
         linha("2) Responder e converter")
         decisoes = {"O3": "juntar como proposta sem venda", "O5": "criar venda só para ela", "N9": "venda Não efetivada",
                     "N10": "só Aprovado", chave_v: "Perdida", "S12": "Efetivado", "S13": "Assinado", "S14": "Assinado",
-                    "O15": "criar venda só para ela", "S16": "Nota fiscal enviada"}
+                    "O15": "criar venda só para ela", "S16": "NF enviada"}
         resumo = leg.aplicar(plano, decisoes)
         propostas = bd.ler_propostas(caminho)
         por_id = propostas.set_index("ID_PROPOSTA")
@@ -182,7 +182,7 @@ def main() -> None:
         mesa_u = propostas[propostas["EQUIPAMENTO"] == "Mesa U"].iloc[0]
         mesa_t = propostas[propostas["EQUIPAMENTO"] == "Mesa T"].iloc[0]
         mesa_z = propostas[propostas["EQUIPAMENTO"] == "Mesa Z"].iloc[0]
-        assert mesa_u["STATUS"] == "Efetivado" and mesa_t["STATUS"] == "Assinado" and mesa_z["STATUS"] == "Nota fiscal enviada"
+        assert mesa_u["STATUS"] == "Efetivado" and mesa_t["STATUS"] == "Assinado" and mesa_z["STATUS"] == "NF enviada"
         assert vendas.at[mesa_z["ID_VENDA"], "STATUS"] == v.VENDA_EM_ANDAMENTO
         assert v.fechadas_da_venda(vendas.at[mesa_z["ID_VENDA"], "BANCO_ESCOLHIDO"]) == [mesa_z["ID_PROPOSTA"]]
         assert v.fechadas_da_venda(vendas.at[mesa_t["ID_VENDA"], "BANCO_ESCOLHIDO"]) == [mesa_t["ID_PROPOSTA"]]

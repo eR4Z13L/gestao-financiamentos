@@ -86,7 +86,7 @@ def _df(statuses: list[str], vendedores: list[str] | None = None) -> pd.DataFram
 def testar_regras() -> None:
     linha("1) Lista de status e categorias")
     assert propostas_mod.STATUS_OFICIAIS == [
-        "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "Nota fiscal enviada", "Efetivado",
+        "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "NF enviada", "Efetivado",
     ], propostas_mod.STATUS_OFICIAIS
     assert propostas_mod.STATUS_OFICIAIS.index("Efetivado") > propostas_mod.STATUS_OFICIAIS.index("Aprovado"), "vem DEPOIS de Aprovado"
     for s in ("Efetivado", "EFETIVADO", " efetivada "):

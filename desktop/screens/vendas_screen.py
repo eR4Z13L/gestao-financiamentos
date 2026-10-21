@@ -29,23 +29,27 @@ from PySide6.QtWidgets import (
 from core import propostas as propostas_mod
 from core import vendas as vendas_mod
 from core.validators import apenas_digitos
+from desktop.dialogs.resumo_vendedor_dialog import ResumoPorVendedorDialog
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.lista_de_vendas import FaixaDeAviso, ListaDeVendas, resumo_por_status
 
 FILTRO_EM_ANDAMENTO = "Em andamento"
 FILTRO_PARADAS = f"Paradas há {propostas_mod.DIAS_PROPOSTA_PARADA} dias ou mais"
+FILTRO_COM_PENDENCIAS = "Com pendências"
 FILTRO_EFETIVADAS = "Efetivadas"
 FILTRO_PERDIDAS = "Perdidas e não efetivadas"
 FILTRO_TODAS = "Todas"
-FILTROS = [FILTRO_EM_ANDAMENTO, FILTRO_PARADAS, FILTRO_EFETIVADAS, FILTRO_PERDIDAS, FILTRO_TODAS]
+FILTROS = [FILTRO_EM_ANDAMENTO, FILTRO_PARADAS, FILTRO_COM_PENDENCIAS, FILTRO_EFETIVADAS, FILTRO_PERDIDAS, FILTRO_TODAS]
 
 
 def passa_no_filtro(venda: vendas_mod.ResumoDaVenda, filtro: str) -> bool:
-    if filtro == FILTRO_EM_ANDAMENTO:
-        return not venda.finalizada
+    if filtro == FILTRO_EM_ANDAMENTO:  # (o filtro padrao: uma venda Efetivada com pendencia aberta ainda tem o que fazer)
+        return not venda.finalizada or venda.pendencias_abertas > 0
     if filtro == FILTRO_PARADAS:
         return venda.parada
+    if filtro == FILTRO_COM_PENDENCIAS:
+        return venda.pendencias_abertas > 0
     if filtro == FILTRO_EFETIVADAS:
         return venda.status == vendas_mod.VENDA_EFETIVADA
     if filtro == FILTRO_PERDIDAS:
@@ -71,6 +75,7 @@ class VendasScreen(QWidget):
         super().__init__(parent)
         self._vigia = VigiaDoArquivo()
         self._vendas: list[vendas_mod.ResumoDaVenda] = []
+        self.dialogo_resumo: ResumoPorVendedorDialog | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -83,6 +88,10 @@ class VendasScreen(QWidget):
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
         cabecalho.addWidget(criar_botao_recarregar(lambda *_: self._ao_recarregar()))
+        self.botao_resumo = QPushButton("Resumo por vendedor")
+        self.botao_resumo.setToolTip("Monta o resumo de um vendedor num período para colar no WhatsApp")
+        self.botao_resumo.clicked.connect(lambda: self.abrir_resumo())
+        cabecalho.addWidget(self.botao_resumo)
         self.botao_nova = QPushButton("+ Nova venda")
         self.botao_nova.setProperty("role", "botao_primario")
         self.botao_nova.clicked.connect(lambda: self.nova_venda())
@@ -115,6 +124,7 @@ class VendasScreen(QWidget):
         self.rolagem.setWidget(conteudo)
         self.lista = ListaDeVendas(self.rolagem, conteudo)
         self.lista.gravou.connect(self._depois_de_gravar)
+        self.lista.avisou.connect(lambda texto: self.faixa_aviso.avisar(texto))
         self.lista.ficha_pedida.connect(self.ficha_pedida)
         coluna.addWidget(self.lista)
         coluna.addStretch()
@@ -181,6 +191,21 @@ class VendasScreen(QWidget):
 
     def avisar(self, texto: str) -> None:
         self.faixa_aviso.avisar(texto)
+
+    def abrir_resumo(self) -> ResumoPorVendedorDialog | None:
+        """O "Resumo por vendedor": o dialogo (vendedor, periodo, blocos, previa e Copiar). Devolve o dialogo (None
+        se nao abriu: a mensagem do erro aparece)."""
+        try:
+            dialogo = ResumoPorVendedorDialog(self)
+        except Exception as exc:  # nunca falhar em silencio (ex.: a planilha de vendedores nao abriu)
+            QMessageBox.critical(self, "Não foi possível abrir o resumo", f"{type(exc).__name__}: {exc}")
+            return None
+        self.dialogo_resumo = dialogo
+        self._mostrar_dialogo(dialogo)
+        return dialogo
+
+    def _mostrar_dialogo(self, dialogo: ResumoPorVendedorDialog) -> None:
+        dialogo.exec()
 
     def nova_venda(self, cpf: str | None = None) -> bool:
         """O card "Nova venda" no topo da lista (fica mesmo com a busca e o filtro: o digitado nao some). Criada, a

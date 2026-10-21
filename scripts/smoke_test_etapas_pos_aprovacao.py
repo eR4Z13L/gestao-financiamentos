@@ -1,11 +1,11 @@
-"""Testa as etapas de um banco fechado depois de Aprovado e o Pendente de entrega (plano 1.2-A, regra em core/):
+"""Testa as etapas de um banco fechado depois de Aprovado (plano 1.2-A, regra em core/; a pendencia e o smoke_test_pendencias):
 
-- Aprovado -> Assinado -> Nota fiscal enviada -> Efetivado (pode pular etapa; so num banco FECHADO), com a venda
+- Aprovado -> Assinado -> NF enviada -> Efetivado (pode pular etapa; so num banco FECHADO), com a venda
   Efetivada so quando todos os bancos fechados efetivaram (dois bancos em etapas diferentes: Em andamento);
 - desmarcar o fechamento so com o banco em Aprovado; o ↩ volta etapa por etapa;
-- Pendente de entrega: so a partir de Efetivada, com motivo; Entregue e o ↩ voltam a Efetivada; nao recebe proposta nova;
+- o Pendente de entrega saiu (pendencia em qualquer etapa nao trava nada);
 - alertas de 7 dias em qualquer etapa (e a venda Em andamento sem alerta proprio); um limite so em todo o app;
-- Assinado / Nota fiscal enviada contam como Aprovado nas taxas e no funil; ida e volta com a nuvem simulada.
+- Assinado / NF enviada contam como Aprovado nas taxas e no funil; ida e volta com a nuvem simulada.
 
 Planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py), preferencias isoladas e o Google desligado.
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -97,16 +97,16 @@ def main() -> None:
 
     try:
         linha("1) A ordem das etapas e as listas")
-        assert (ASSINADO, NOTA) == ("Assinado", "Nota fiscal enviada")
+        assert (ASSINADO, NOTA) == ("Assinado", "NF enviada")
         assert v.ETAPAS_DO_FECHADO == [APROVADO, ASSINADO, NOTA, EFETIVADO], v.ETAPAS_DO_FECHADO
         assert v.STATUS_DE_FECHADA == v.ETAPAS_DO_FECHADO
         assert v.STATUS_DA_PROPOSTA == [propostas_mod.STATUS_EM_ANALISE, propostas_mod.STATUS_PRE_APROVADO, APROVADO,
                                         propostas_mod.STATUS_NEGADO], "a resposta do banco continua so com as 4"
         assert not set(v.ETAPAS_DEPOIS_DO_APROVADO) & set(v.STATUS_DA_PROPOSTA)
         assert not hasattr(v, "DIAS_PARA_ALERTA"), "o limite de dias e um so (propostas.DIAS_PROPOSTA_PARADA)"
-        print("OK: Aprovado -> Assinado -> Nota fiscal enviada -> Efetivado; a lista da resposta do banco segue com as 4.")
+        print("OK: Aprovado -> Assinado -> NF enviada -> Efetivado; a lista da resposta do banco segue com as 4.")
 
-        linha("2) Um banco: Aprovado -> Assinado -> Nota fiscal enviada -> Efetivado, e a venda vira Efetivada")
+        linha("2) Um banco: Aprovado -> Assinado -> NF enviada -> Efetivado, e a venda vira Efetivada")
         id_v1, id_p1 = com_banco_fechado(fx.CPF_MARIA, "Cadeira Exemplo")
         assert venda_(id_v1)["STATUS"] == v.VENDA_EM_ANDAMENTO
         for etapa in (ASSINADO, NOTA):
@@ -127,7 +127,7 @@ def main() -> None:
         assert status_de(id_p1b) == NOTA
         v.mudar_status_proposta(id_p1b, EFETIVADO)
         assert venda_(id_v1b)["STATUS"] == v.VENDA_EFETIVADA
-        print("OK: pode pular etapa (Aprovado -> Nota fiscal enviada -> Efetivado).")
+        print("OK: pode pular etapa (Aprovado -> NF enviada -> Efetivado).")
 
         linha("3) Dois bancos fechados em etapas diferentes: a venda fica Em andamento até os dois efetivarem")
         id_v2, id_a = v.criar_venda(fx.CPF_JOAO, ["Cadeira Exemplo", "Laser Exemplo"],
@@ -142,9 +142,9 @@ def main() -> None:
         v.mudar_status_proposta(id_a, NOTA)
         assert venda_(id_v2)["STATUS"] == v.VENDA_EM_ANDAMENTO
         assert v.efetivar_proposta(id_a) == v.VENDA_EFETIVADA
-        print("OK: um Efetivado e o outro em Assinado / Nota fiscal enviada: Em andamento; os dois Efetivado: Efetivada.")
+        print("OK: um Efetivado e o outro em Assinado / NF enviada: Em andamento; os dois Efetivado: Efetivada.")
 
-        linha("4) Só um banco FECHADO chega a Assinado, Nota fiscal enviada ou Efetivado")
+        linha("4) Só um banco FECHADO chega a Assinado, NF enviada ou Efetivado")
         id_v3, id_c = v.criar_venda(fx.CPF_ANA, ["Autoclave Exemplo"], _pedido("Banco Exemplo"))
         for etapa in (ASSINADO, NOTA, EFETIVADO):  # em análise
             _recusa("marcado como fechado", v.mudar_status_proposta, id_c, etapa)
@@ -166,7 +166,7 @@ def main() -> None:
         _recusa("Desmarque o anel", v.mudar_status_proposta, id_c, propostas_mod.STATUS_NEGADO)
         _recusa("Desmarque o anel", v.mudar_status_proposta, id_c, propostas_mod.STATUS_EM_ANALISE)
         v.mudar_status_proposta(id_c, NOTA)
-        _recusa("já está Nota fiscal enviada", v.desfazer_fechamento, id_c)
+        _recusa("já está NF enviada", v.desfazer_fechamento, id_c)
         v.mudar_status_proposta(id_c, EFETIVADO)
         _recusa("já está Efetivado", v.desfazer_fechamento, id_c)
         assert v.fechadas_da_venda(venda_(id_v3)["BANCO_ESCOLHIDO"]) == [id_c]
@@ -186,7 +186,7 @@ def main() -> None:
         forcar_status(id_c2, "APROVADO")
         v.desfazer_fechamento(id_c2)
         assert venda_(id_v3b)["BANCO_ESCOLHIDO"] == ""
-        print("OK: Assinado / Nota fiscal enviada / Efetivado não desmarcam (a mensagem pede a setinha); em Aprovado desmarca; "
+        print("OK: Assinado / NF enviada / Efetivado não desmarcam (a mensagem pede a setinha); em Aprovado desmarca; "
               "status antigos (Garantia Assinada, EFETIVADO...) também pedem a setinha, e APROVADO em caixa alta desmarca.")
 
         linha("6) O ↩ volta etapa por etapa")
@@ -205,71 +205,31 @@ def main() -> None:
         assert resumo(id_v4).propostas[0].anterior == APROVADO
         v.voltar_proposta(id_d)
         assert status_de(id_d) == APROVADO
-        print("OK: Efetivado ← Nota fiscal enviada ← Assinado ← Aprovado, um passo de cada vez; a venda reabre; pulou, volta de onde saiu.")
+        print("OK: Efetivado ← NF enviada ← Assinado ← Aprovado, um passo de cada vez; a venda reabre; pulou, volta de onde saiu.")
 
-        linha("7) Pendente de entrega")
+        linha("7) O Pendente de entrega saiu: a pendência é uma etiqueta (ver smoke_test_pendencias.py)")
         id_v5, id_e = com_banco_fechado(fx.CPF_JOAO, "Cadeira Exemplo")
-        _recusa("Só uma venda Efetivada", v.marcar_pendente_entrega, id_v5, "Aguardando a obra")  # Em andamento
-        _recusa("não está pendente", v.marcar_entregue, id_v5)
-        _recusa("vem dos bancos", v.mudar_status_venda, id_v5, v.VENDA_PENDENTE_ENTREGA)
-        id_extra = v.mandar_a_outro_banco(id_v5, _pedido("Banco Terceiro"))  # um pedido que nao fechou
+        id_extra = v.mandar_a_outro_banco(id_v5, _pedido("Banco Terceiro", EQUIPAMENTO="Laser Exemplo"))  # outro equipamento
         v.efetivar_proposta(id_e)
         assert venda_(id_v5)["STATUS"] == v.VENDA_EFETIVADA
-        for motivo in ("", "   ", None):
-            _recusa("motivo", v.marcar_pendente_entrega, id_v5, motivo)
-        assert venda_(id_v5)["STATUS"] == v.VENDA_EFETIVADA, "a recusa não grava"
-        v.marcar_pendente_entrega(id_v5, "  Obra do consultório atrasada  ")
-        assert venda_(id_v5)["STATUS"] == v.VENDA_PENDENTE_ENTREGA and venda_(id_v5)["MOTIVO"] == "Obra do consultório atrasada"
-        ultimo = bd.ler_historico(caminho).iloc[-1]
-        assert (ultimo["TIPO"], ultimo["ID"], ultimo["DE"], ultimo["PARA"], ultimo["MOTIVO"]) == (
-            v.TIPO_VENDA, id_v5, v.VENDA_EFETIVADA, v.VENDA_PENDENTE_ENTREGA, "Obra do consultório atrasada")
-        _recusa("Só uma venda Efetivada", v.marcar_pendente_entrega, id_v5, "de novo")  # ja esta pendente
-        for desfecho in v.DESFECHOS_DA_VENDA:  # o desfecho so depois de entregar
-            _recusa("marque como entregue antes", v.mudar_status_venda, id_v5, desfecho, motivo="Desistiu")
-            _recusa("marque como entregue antes", v.mudar_status_venda, id_v5, desfecho)
-        assert venda_(id_v5)["STATUS"] == v.VENDA_PENDENTE_ENTREGA and venda_(id_v5)["MOTIVO"] == "Obra do consultório atrasada"
-        r = resumo(id_v5)
-        assert r.status == v.VENDA_PENDENTE_ENTREGA and not r.finalizada and r.motivo == "Obra do consultório atrasada"
-        assert r.anterior == v.VENDA_EFETIVADA, "o ↩ aparece e leva a Efetivada"
-        assert v.VENDA_PENDENTE_ENTREGA in v.STATUS_DA_VENDA and v.VENDA_PENDENTE_ENTREGA not in v.VENDA_FINALIZADA
-        assert id_v5 not in [x.id for x in v.vendas_em_aberto_do_cliente(fx.CPF_JOAO)], "não recebe proposta nova"
-        # o Pendente e manual: os bancos nao o recalculam
-        v.mudar_status_proposta(id_extra, propostas_mod.STATUS_NEGADO)
-        assert venda_(id_v5)["STATUS"] == v.VENDA_PENDENTE_ENTREGA
-        _recusa("marque como entregue", v.mandar_a_outro_banco, id_v5, _pedido("Banco Quarto"))
-        _recusa("marque como entregue", v.mudar_status_proposta, id_e, ASSINADO)
-        _recusa("marque como entregue", v.voltar_proposta, id_e)
+        for saiu in ("VENDA_PENDENTE_ENTREGA", "marcar_pendente_entrega", "marcar_entregue", "_sair_de_pendente"):
+            assert not hasattr(v, saiu), saiu
+        assert v.STATUS_DA_VENDA == [v.VENDA_AGUARDANDO, v.VENDA_EM_ANDAMENTO, v.VENDA_EFETIVADA, v.VENDA_NAO_EFETIVADA,
+                                     v.VENDA_PERDIDA]
+        _recusa("vem dos bancos", v.mudar_status_venda, id_v5, "Pendente de entrega")
+        # com uma pendência aberta nada trava (o que o Pendente travava)
+        v.adicionar_pendencia(id_v5, "Obra do consultório atrasada")
+        assert resumo(id_v5).status == v.VENDA_EFETIVADA and resumo(id_v5).pendencias_abertas == 1
+        v.mandar_a_outro_banco(id_v5, _pedido("Banco Quarto"))
         v.mudar_status_proposta(id_extra, propostas_mod.STATUS_APROVADO)
-        _recusa("marque como entregue", v.fechar_proposta, id_extra)
-        assert venda_(id_v5)["STATUS"] == v.VENDA_PENDENTE_ENTREGA
-        # Entregue: volta a Efetivada, limpa o motivo e registra
-        v.marcar_entregue(id_v5)
-        assert venda_(id_v5)["STATUS"] == v.VENDA_EFETIVADA and venda_(id_v5)["MOTIVO"] == ""
-        ultimo = bd.ler_historico(caminho).iloc[-1]
-        assert (ultimo["ID"], ultimo["DE"], ultimo["PARA"], ultimo["MOTIVO"]) == (
-            id_v5, v.VENDA_PENDENTE_ENTREGA, v.VENDA_EFETIVADA, "Entregue")
-        _recusa("não está pendente", v.marcar_entregue, id_v5)
-        assert id_v5 not in [x.id for x in v.vendas_em_aberto_do_cliente(fx.CPF_JOAO)], "Efetivada segue fora"
-        # o ↩ de Pendente volta a Efetivada
-        v.marcar_pendente_entrega(id_v5, "Cliente pediu para entregar em março")
-        assert v.voltar_venda(id_v5) == v.VENDA_EFETIVADA
-        assert venda_(id_v5)["STATUS"] == v.VENDA_EFETIVADA and venda_(id_v5)["MOTIVO"] == ""
-        ultimo = bd.ler_historico(caminho).iloc[-1]
-        assert (ultimo["DE"], ultimo["PARA"], ultimo["MOTIVO"]) == (v.VENDA_PENDENTE_ENTREGA, v.VENDA_EFETIVADA, "")
-        assert resumo(id_v5).anterior is None
-        # os desfechos seguem como eram
+        v.fechar_proposta(id_extra)
+        assert venda_(id_v5)["STATUS"] == v.VENDA_EM_ANDAMENTO
+        v.desfazer_fechamento(id_extra)
+        v.mudar_status_proposta(id_e, ASSINADO)
+        v.voltar_proposta(id_e)
         v.mudar_status_venda(id_v5, v.VENDA_NAO_EFETIVADA, motivo="Desistiu")
-        assert v.voltar_venda(id_v5) == v.VENDA_EFETIVADA
-        # sem ser administrador, nada disso grava
-        sessao_mod.encerrar()
-        try:
-            v.marcar_pendente_entrega(id_v5, "x")
-            raise AssertionError("sem sessão não pode gravar")
-        except sessao_mod.PermissaoNegada:
-            pass
-        sessao_mod.iniciar(ADMIN)
-        print("OK: Pendente só a partir de Efetivada, com motivo; Entregue e o ↩ voltam a Efetivada (motivo limpo, histórico); "
-              "os bancos não o recalculam; não recebe proposta nova.")
+        assert v.voltar_venda(id_v5) in (v.VENDA_EFETIVADA, v.VENDA_EM_ANDAMENTO)
+        print("OK: sem status Pendente de entrega; a pendência aberta não trava mandar a outro banco, fechar, mudar etapa nem desfecho.")
 
         linha("8) Alertas de 7 dias, em qualquer etapa")
         limite = propostas_mod.DIAS_PROPOSTA_PARADA
@@ -284,7 +244,7 @@ def main() -> None:
         v.efetivar_proposta(e_prop)
         f_venda, f_prop = com_banco_fechado(fx.CPF_ANA, "Item F", "Banco Zeta")
         v.efetivar_proposta(f_prop)
-        v.marcar_pendente_entrega(f_venda, "Aguardando a obra")
+        v.adicionar_pendencia(f_venda, "Aguardando a obra")  # pendencia aberta: nunca alerta
         g_venda, g_efetivado = com_banco_fechado(fx.CPF_ANA, "Item G1", "Banco Eta")  # 2 bancos: um efetivado, outro em Nota
         v.efetivar_proposta(g_efetivado)
         g_nota = v.mandar_a_outro_banco(g_venda, _pedido("Banco Teta", EQUIPAMENTO="Item G2"))
@@ -303,7 +263,7 @@ def main() -> None:
         forcar_status(k_prop, "Nota Fiscal Anexada")
         l_venda, l_prop = com_banco_fechado(fx.CPF_ANA, "Item L", "Banco Lima")
         forcar_status(l_prop, "EFETIVADO")  # em caixa alta, conta como efetivado: nao alerta
-        assert resumo(g_venda).status == v.VENDA_EM_ANDAMENTO and resumo(f_venda).status == v.VENDA_PENDENTE_ENTREGA
+        assert resumo(g_venda).status == v.VENDA_EM_ANDAMENTO and resumo(f_venda).status == v.VENDA_EFETIVADA
 
         def alertas_em(dias):
             return {(a.tipo, a.id): a for a in v.alertas(date.today() + timedelta(days=dias))}
@@ -319,7 +279,6 @@ def main() -> None:
             (v.TIPO_PROPOSTA, a_prop), (v.TIPO_VENDA, a_venda),            # sem resposta + venda aguardando bancos
             (v.TIPO_PROPOSTA, b_prop), (v.TIPO_PROPOSTA, c_prop), (v.TIPO_PROPOSTA, d_prop),  # fechado parado
             (v.TIPO_PROPOSTA, j_prop), (v.TIPO_PROPOSTA, k_prop),           # fechado com status antigo
-            (v.TIPO_VENDA, f_venda),                                        # pendente de entrega
             (v.TIPO_PROPOSTA, g_nota),                                      # so o banco que falta
             (v.TIPO_VENDA, h_venda),                                        # aguardando bancos (aprovado, nao fechado)
         }
@@ -327,13 +286,14 @@ def main() -> None:
         assert em_7[(v.TIPO_PROPOSTA, a_prop)].texto == f"Banco Alfa: sem resposta há {limite} dias"
         assert em_7[(v.TIPO_PROPOSTA, b_prop)].texto == f"Banco Beta: parado em Aprovado há {limite} dias"
         assert em_7[(v.TIPO_PROPOSTA, c_prop)].texto == f"Banco Gama: parado em Assinado há {limite} dias"
-        assert em_7[(v.TIPO_PROPOSTA, d_prop)].texto == f"Banco Delta: parado em Nota fiscal enviada há {limite} dias"
+        assert em_7[(v.TIPO_PROPOSTA, d_prop)].texto == f"Banco Delta: parado em NF enviada há {limite} dias"
         assert em_7[(v.TIPO_PROPOSTA, j_prop)].texto == f"Banco Jota: parado em Garantia Assinada há {limite} dias"
         assert em_7[(v.TIPO_PROPOSTA, k_prop)].texto == f"Banco Kilo: parado em Nota Fiscal Anexada há {limite} dias"
         em_30 = alertas_em(30)
         assert em_30[(v.TIPO_PROPOSTA, j_prop)].dias == 30 and "Garantia Assinada há 30 dias" in em_30[(v.TIPO_PROPOSTA, j_prop)].texto
         assert (v.TIPO_PROPOSTA, l_prop) not in em_7 and (v.TIPO_PROPOSTA, l_prop) not in em_30, "EFETIVADO em caixa alta: efetivado"
-        assert em_7[(v.TIPO_VENDA, f_venda)].texto == f"parada em \"Pendente de entrega\" há {limite} dias"
+        assert (v.TIPO_VENDA, f_venda) not in em_7 and (v.TIPO_PROPOSTA, f_prop) not in em_7, "pendência aberta não alerta"
+        assert (v.TIPO_VENDA, f_venda) not in alertas_em(60), "nem 60 dias depois"
         assert em_7[(v.TIPO_VENDA, a_venda)].texto == f"parada em \"Aguardando bancos\" há {limite} dias"
         assert all(a.dias == limite for k, a in em_7.items() if k[1] in meus)
         for venda_em_andamento in (b_venda, c_venda, d_venda, g_venda):
@@ -345,10 +305,11 @@ def main() -> None:
         v.mudar_status_proposta(c_prop, NOTA)
         assert (v.TIPO_PROPOSTA, c_prop) not in alertas_em(0), "mudou hoje: zera a contagem"
         assert (v.TIPO_PROPOSTA, c_prop) in alertas_em(limite), "e volta a contar 7 dias depois"
-        def pendente_em(dias):  # a venda Pendente de entrega, como a tela a lê daqui a `dias` dias
-            return next(r for r in v.listar_vendas(date.today() + timedelta(days=dias)) if r.id == f_venda)
+        def venda_em(id_, dias):  # a venda como a tela a lê daqui a `dias` dias
+            return next(r for r in v.listar_vendas(date.today() + timedelta(days=dias)) if r.id == id_)
 
-        assert pendente_em(limite).parada and not pendente_em(limite - 1).parada
+        assert venda_em(a_venda, limite).parada and not venda_em(a_venda, limite - 1).parada
+        assert not venda_em(f_venda, 60).parada, "venda com pendência aberta não fica 'parada' por causa dela"
         # um limite so: quem muda a constante muda os alertas, o "Precisa de atenção" do Dashboard e os filtros dele
         antiga = fx.montar_propostas({"STATUS": propostas_mod.STATUS_EM_ANALISE, "DATA": pd.Timestamp(date.today() - timedelta(days=5))})
         assert not [i for i in dashboard_mod.precisa_de_atencao(antiga) if i.chave == dashboard_mod.ATENCAO_PARADAS], "5 dias < 7"
@@ -368,16 +329,16 @@ def main() -> None:
             propostas_mod.DIAS_PROPOSTA_PARADA = 3
             em_3 = alertas_em(3)
             assert {(v.TIPO_PROPOSTA, a_prop), (v.TIPO_PROPOSTA, b_prop), (v.TIPO_PROPOSTA, d_prop),
-                    (v.TIPO_VENDA, f_venda), (v.TIPO_VENDA, a_venda)} <= set(em_3), "limite 3"
+                    (v.TIPO_VENDA, a_venda)} <= set(em_3), "limite 3"
             assert not {k for k in alertas_em(2) if k[1] in meus}, "limite 3: 2 dias não alerta"
-            assert pendente_em(3).parada and not pendente_em(2).parada, "o selo de 'parada' da venda lê o mesmo limite"
+            assert venda_em(a_venda, 3).parada and not venda_em(a_venda, 2).parada, "o selo de 'parada' da venda lê o mesmo limite"
         finally:
             propostas_mod.DIAS_PROPOSTA_PARADA = original
-        print("OK: cada etapa parada há 7 dias alerta (6 não); Em andamento não duplica; Pendente alerta; "
+        print("OK: cada etapa parada há 7 dias alerta (6 não); Em andamento não duplica; pendência não alerta; "
               "o limite vem de uma constante só.")
 
-        linha("9) Assinado e Nota fiscal enviada contam como Aprovado")
-        for status in (ASSINADO, NOTA, "ASSINADO", "nota fiscal enviada"):
+        linha("9) Assinado e NF enviada contam como Aprovado")
+        for status in (ASSINADO, NOTA, "ASSINADO", "nf enviada", "Nota fiscal enviada", "NOTA FISCAL ENVIADA"):  # as duas grafias
             assert propostas_mod.etapa_status(status) == propostas_mod.ETAPA_APROVADO, status
             assert propostas_mod.categoria_status(status) == "Aprovado", status
             assert propostas_mod.eh_aprovado_nao_efetivado(status), status
@@ -415,7 +376,7 @@ def main() -> None:
         assert list(nuvem_p["STATUS"]) == list(locais_p["STATUS"]) and list(nuvem_p["ID_PROPOSTA"]) == list(locais_p["ID_PROPOSTA"])
         assert {ASSINADO, NOTA, EFETIVADO} <= set(nuvem_p["STATUS"]), "os status novos foram na ida"
         nuvem_v, locais_v = da_nuvem[bd.ABA_VENDAS], locais[bd.ABA_VENDAS]
-        assert list(nuvem_v["STATUS"]) == list(locais_v["STATUS"]) and v.VENDA_PENDENTE_ENTREGA in set(nuvem_v["STATUS"])
+        assert list(nuvem_v["STATUS"]) == list(locais_v["STATUS"]) and list(nuvem_v["PENDENCIAS"]) == list(locais_v["PENDENCIAS"])
         assert list(nuvem_v["MOTIVO"]) == list(locais_v["MOTIVO"]) and list(nuvem_v["BANCO_ESCOLHIDO"]) == list(locais_v["BANCO_ESCOLHIDO"])
         assert list(da_nuvem[bd.ABA_HISTORICO]["PARA"]) == list(locais[bd.ABA_HISTORICO]["PARA"])
         assert list(da_nuvem[bd.ABA_HISTORICO]["MOTIVO"]) == list(locais[bd.ABA_HISTORICO]["MOTIVO"])
@@ -424,8 +385,80 @@ def main() -> None:
                          nuvem_p, vendas=nuvem_v, historico=da_nuvem[bd.ABA_HISTORICO])
         assert list(bd.ler_propostas(caminho)["STATUS"]) == list(locais_p["STATUS"])
         assert list(bd.ler_vendas(caminho)["STATUS"]) == list(locais_v["STATUS"])
-        assert [r.status for r in v.listar_vendas()].count(v.VENDA_PENDENTE_ENTREGA) == 1
-        print("OK: os status novos e o Pendente (com o motivo) vão e voltam pela nuvem simulada; nenhuma coluna nova.")
+        assert sum(r.pendencias_abertas for r in v.listar_vendas()) == 2
+        print("OK: os status novos e a pendência vão e voltam pela nuvem simulada.")
+
+        linha("11) O que a tela das etapas le: proxima etapa, parada por banco e por venda, desde e datas das etapas")
+        assert [v.indice_da_etapa(s) for s in (APROVADO, ASSINADO, NOTA, EFETIVADO)] == [0, 1, 2, 3]
+        for escrito in ("Nota fiscal enviada", " nf ENVIADA ", "NOTA FISCAL ENVIADA", "nf  enviada"):
+            assert v.indice_da_etapa(escrito) == 2, escrito  # o nome de antes e o novo, sem diferenciar maiusculas/espacos
+        for nao_e_etapa in ("Em Análise", "Pré-aprovado", "Negado", "Garantia Assinada", "Nota Fiscal Anexada", "", None):
+            assert v.indice_da_etapa(nao_e_etapa) is None and v.proxima_etapa(nao_e_etapa) is None, nao_e_etapa
+        assert [v.proxima_etapa(s) for s in (APROVADO, ASSINADO, NOTA, EFETIVADO)] == [ASSINADO, NOTA, EFETIVADO, None]
+        assert v.proxima_etapa("Nota fiscal enviada") == EFETIVADO, "uma etapa so: de NF enviada, Efetivado"
+
+        class _Relogio(datetime):
+            agora_combinado = datetime(2026, 1, 1)
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls.agora_combinado
+
+        def _em(dias_atras: int) -> None:
+            _Relogio.agora_combinado = datetime.combine(date.today() - timedelta(days=dias_atras), datetime.min.time()) \
+                + timedelta(hours=9)
+
+        datetime_original = v.datetime
+        v.datetime = _Relogio
+        try:
+            _em(12)  # dois bancos fechados: um parado ha 12 dias em Aprovado, outro ha 9 em Assinado
+            id_t, p_t1 = v.criar_venda(fx.CPF_MARIA, ["Item T1", "Item T2"], _pedido("Banco Alfa", EQUIPAMENTO="Item T1"))
+            p_t2 = v.mandar_a_outro_banco(id_t, _pedido("Banco Beta", EQUIPAMENTO="Item T2"))
+            for p in (p_t1, p_t2):
+                v.mudar_status_proposta(p, APROVADO)
+                v.fechar_proposta(p)
+            _em(9)
+            v.mudar_status_proposta(p_t2, ASSINADO)
+            _em(6)  # um terceiro, fechado ha 6 dias: ainda nao esta parado
+            id_u, p_u = com_banco_fechado(fx.CPF_JOAO, "Item U", "Banco Gama")
+            _em(30)  # fechado e efetivado ha muito tempo: Efetivado nunca fica parado
+            id_w, p_w = com_banco_fechado(fx.CPF_ANA, "Item W", "Banco Delta")
+            v.efetivar_proposta(p_w)
+        finally:
+            v.datetime = datetime_original
+        agora = date.today()
+        r = resumo(id_t)
+        b1, b2 = r.propostas
+        assert (b1.dias_na_etapa, b2.dias_na_etapa) == (12, 9) and b1.parada and b2.parada
+        assert b1.desde.date() == agora - timedelta(days=12) and b2.desde.date() == agora - timedelta(days=9)
+        assert dict(b2.datas_das_etapas)[APROVADO].date() == agora - timedelta(days=12)
+        assert dict(b2.datas_das_etapas)[ASSINADO].date() == agora - timedelta(days=9)
+        assert r.dias_parada == 12 and r.parada and r.bancos_parados() == [b1, b2], "a maior parada, nao a menor"
+        assert resumo(id_u).propostas[0].dias_na_etapa == 6 and not resumo(id_u).propostas[0].parada and not resumo(id_u).parada
+        efetivada = resumo(id_w)
+        assert efetivada.propostas[0].dias_na_etapa == 30 and not efetivada.propostas[0].parada and efetivada.dias_parada is None
+        # exatamente 7 dias e parada; 6 nao (um limite so)
+        for dias, esperado in ((limite - 1, False), (limite, True)):
+            visto = next(x for x in v.listar_vendas(agora - timedelta(days=6) + timedelta(days=dias)) if x.id == id_u)
+            assert visto.propostas[0].parada is esperado and visto.parada is esperado, dias
+        # um banco que nao e o fechado nunca fica parado (nem com dias na etapa)
+        solto = v.PropostaNaVenda("P-x", 0, "Banco", APROVADO, None, None, None, "", False, None, dias_na_etapa=40)
+        assert not solto.parada
+        # venda desistida/perdida: os bancos dela nao alertam (nem selo)
+        v.mudar_status_venda(id_t, v.VENDA_PERDIDA, motivo="Desistiu")
+        perdida = resumo(id_t)
+        assert perdida.bancos_parados() == [] and perdida.dias_parada is None and not perdida.parada
+        v.reabrir_venda(id_t)
+        # Aguardando bancos: a propria venda
+        _em(10)
+        v.datetime = _Relogio
+        try:
+            id_x, _ = v.criar_venda(fx.CPF_ANA, ["Item X"])
+        finally:
+            v.datetime = datetime_original
+        assert resumo(id_x).dias_parada == 10 and resumo(id_x).parada
+        print("OK: proxima etapa e indice (nome antigo incluso); parada por banco (7 dias, só fechado, nunca Efetivado) e "
+              "por venda (a maior; perdida não); desde e a data de cada etapa.")
 
         linha("TUDO OK")
     finally:

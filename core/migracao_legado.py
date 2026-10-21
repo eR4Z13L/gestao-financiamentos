@@ -5,18 +5,18 @@ Dois passos, numa gravacao so:
 1. juntar as propostas sem venda em vendas (core/migracao_vendas.py: as duvidas de la - varios equipamentos,
    propostas espacadas - entram aqui, e a resposta e "juntar" ou "separar");
 2. converter o status de cada proposta para um dos oficiais (propostas.STATUS_OFICIAIS): Garantia assinada vira
-   Assinado, Nota fiscal anexada vira Nota fiscal enviada, Não efetivado vira Aprovado, e as grafias diferentes dos
+   Assinado, Nota fiscal anexada vira NF enviada, Não efetivado vira Aprovado, e as grafias diferentes dos
    oficiais so sao normalizadas. "Encerrada" e qualquer texto desconhecido (ou vazio) viram DUVIDA, que o usuario
    responde com o status certo: nunca se chuta.
 
 Alem disso, a conversao pergunta (nunca chuta): a proposta Encerrada ou de status desconhecido (resposta: um status
-oficial; Assinado / Nota fiscal enviada / Efetivado ja marcam o banco como fechado da venda), a proposta orfa (ID_VENDA
+oficial; Assinado / NF enviada / Efetivado ja marcam o banco como fechado da venda), a proposta orfa (ID_VENDA
 de venda que nao existe: juntar como proposta sem venda ou criar venda so para ela), "Não efetivado" numa venda que nao
-esta Não efetivada, banco em Assinado / Nota fiscal enviada / Efetivado que nao esta fechado na venda, e venda com
+esta Não efetivada, banco em Assinado / NF enviada / Efetivado que nao esta fechado na venda, e venda com
 status de antes sem banco fechado (com banco fechado, o status se recalcula por eles).
 
 Depois da conversao: nenhuma proposta fica sem venda, nenhum status fica fora dos oficiais, nenhum banco nao fechado
-fica em Assinado / Nota fiscal enviada / Efetivado e o total de propostas e a soma dos valores continuam iguais.
+fica em Assinado / NF enviada / Efetivado e o total de propostas e a soma dos valores continuam iguais.
 Nenhuma proposta ou venda e apagada. O HISTORICO ganha uma linha por conversao (TIPO "conversao", que o "voltar"
 ignora) datada de onde o relogio de cada proposta ja contava, para nunca zerar "esperando ha N dias".
 
@@ -66,7 +66,7 @@ RESPOSTA_ORFA_SOZINHA = "criar venda só para ela"
 RESPOSTA_VENDA_NAO_EFETIVADA = "venda Não efetivada"
 RESPOSTA_SO_APROVADO = "só Aprovado"
 
-# o status desconhecido aceita qualquer um dos oficiais; uma resposta de banco fechado (Assinado, Nota fiscal enviada,
+# o status desconhecido aceita qualquer um dos oficiais; uma resposta de banco fechado (Assinado, NF enviada,
 # Efetivado) ja marca o banco como fechado da venda (nunca fica sem saida)
 _RESPOSTAS_DE_STATUS = tuple(propostas_mod.STATUS_OFICIAIS)
 _RESPOSTAS_DE_VENDA_SEM_BANCO = (vendas_mod.VENDA_AGUARDANDO, vendas_mod.VENDA_PERDIDA, vendas_mod.VENDA_NAO_EFETIVADA)
@@ -77,7 +77,7 @@ _STATUS_DE_BANCO_FECHADO = {propostas_mod.STATUS_ASSINADO, propostas_mod.STATUS_
 
 # (texto normalizado) -> (status novo, grafia antiga canonica). A grafia antiga e a que o resto do app reconhece como
 # etapa: e ela que a juncao em vendas le para saber quais bancos estao FECHADOS (Garantia assinada, Nota fiscal
-# anexada, Efetivado). Assinado / Nota fiscal enviada (novos) NAO fecham banco: se aparecerem sem venda viram duvida.
+# anexada, Efetivado). Assinado / NF enviada (novos) NAO fecham banco: se aparecerem sem venda viram duvida.
 _TABELA = {
     "garantia assinada": (propostas_mod.STATUS_ASSINADO, propostas_mod.STATUS_GARANTIA_ASSINADA),
     "nota fiscal anexada": (propostas_mod.STATUS_NOTA_ENVIADA, propostas_mod.STATUS_NF_ANEXADA),
@@ -92,7 +92,8 @@ _TABELA = {
     "negado": (propostas_mod.STATUS_NEGADO, propostas_mod.STATUS_NEGADO),
     "negada": (propostas_mod.STATUS_NEGADO, propostas_mod.STATUS_NEGADO),
     "assinado": (propostas_mod.STATUS_ASSINADO, propostas_mod.STATUS_ASSINADO),
-    "nota fiscal enviada": (propostas_mod.STATUS_NOTA_ENVIADA, propostas_mod.STATUS_NOTA_ENVIADA),
+    "nf enviada": (propostas_mod.STATUS_NOTA_ENVIADA, propostas_mod.STATUS_NOTA_ENVIADA),
+    "nota fiscal enviada": (propostas_mod.STATUS_NOTA_ENVIADA, propostas_mod.STATUS_NOTA_ENVIADA),  # o nome de antes (20/10)
 }
 _TEXTO_DE_ENCERRADA = "encerrada"
 
@@ -378,7 +379,7 @@ def _construir(caminho: Path, plano_vendas: migracao_vendas_mod.Plano, decisoes:
     fixas = [*duvidas_status.values(), *duvidas_orfas.values(), *duvidas_nao_efetivado.values()]
 
     # 1) o status final de cada proposta. Para juntar em vendas, o banco FECHADO se reconhece pela grafia antiga; uma
-    # resposta Assinado / Nota fiscal enviada / Efetivado a uma duvida ja marca o banco como fechado (no passo 3).
+    # resposta Assinado / NF enviada / Efetivado a uma duvida ja marca o banco como fechado (no passo 3).
     finais, para_agrupar, fechar_de_vez = {}, propostas.copy(), set()
     for indice in propostas.index:
         bruto = originais[indice]
@@ -446,7 +447,7 @@ def _construir(caminho: Path, plano_vendas: migracao_vendas_mod.Plano, decisoes:
     for indice in propostas.index:
         propostas.at[indice, "STATUS"] = finais[indice]
 
-    # 3) banco em Assinado / Nota fiscal enviada / Efetivado que nao esta fechado na venda
+    # 3) banco em Assinado / NF enviada / Efetivado que nao esta fechado na venda
     pendentes = []
     for indice in propostas.index:
         status = propostas.at[indice, "STATUS"]
@@ -573,7 +574,7 @@ def _problemas_do_resultado(resultado: Resultado, antes: dict) -> list[str]:
     soltas = resultado.propostas[resultado.propostas["STATUS"].isin(_STATUS_DE_BANCO_FECHADO)
                                  & ~resultado.propostas["ID_PROPOSTA"].isin(fechadas)]
     if len(soltas):
-        problemas.append(f"{len(soltas)} proposta(s) ficariam em Assinado, Nota fiscal enviada ou Efetivado sem banco fechado")
+        problemas.append(f"{len(soltas)} proposta(s) ficariam em Assinado, NF enviada ou Efetivado sem banco fechado")
     if len(resultado.propostas) != antes["propostas"]:
         problemas.append("o total de propostas mudaria")
     soma = round(float(pd.to_numeric(resultado.propostas["VALOR (R$)"], errors="coerce").sum()), 2)

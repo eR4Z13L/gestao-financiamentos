@@ -21,11 +21,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import config
 
 config.SINCRONIZACAO_GOOGLE_ATIVADA = False  # nunca manda dado de teste pra planilha real na nuvem
+config.CONFIG_LOCAL_ATIVA = False  # os trechos 1 a 8 valem para a planilha real (sem caixinha); o 4b liga o modo de teste
 import fixture_ficticia as fx
 from ambiente_de_teste import Ambiente, Mensagens
 from core import data_store as bd
@@ -33,7 +34,8 @@ from core import migracao_legado as leg
 from core import propostas as propostas_mod
 from core import vendas as vendas_mod
 from desktop import main as main_mod
-from desktop.main_window import PAGINA_PROPOSTAS
+from desktop import settings as settings_mod
+from desktop.main_window import PAGINA_PROPOSTAS, PASTAS_COM_DADOS_REAIS
 from desktop.theme import TEMA_ESCURO
 from desktop.widgets.card_da_proposta import CardDaProposta
 from desktop.widgets.formulario_proposta import FormularioProposta
@@ -50,8 +52,15 @@ class _AppFalso:
         pass
 
 
+def _exec_proibido(self) -> int:
+    # QMessageBox.exec bloqueia o teste para sempre: so a caixa da 4b (trocada ali) pode abrir; qualquer outra e erro
+    raise AssertionError(f"abriu uma caixa bloqueante no teste: {self.windowTitle()!r}")
+
+
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
+    exec_de_verdade = QMessageBox.exec
+    QMessageBox.exec = _exec_proibido
     with Mensagens() as msgs:
         amb = Ambiente()
         try:
@@ -116,6 +125,110 @@ def main() -> None:
                 leg.contar_dados_antigos = original
             print("OK: se a conferência falha, a mensagem diz o motivo e devolve False.")
 
+            linha("4b) Planilha de teste (config local): caixinha 'Não avisar de novo', por caminho da planilha")
+            exec_original = QMessageBox.exec
+            exibidos: list[tuple[str, str, bool]] = []  # (titulo, texto, tinha_caixinha)
+            marcar = [False]
+
+            def _exec_falso(self) -> int:
+                caixinha = self.checkBox()
+                exibidos.append((self.windowTitle(), self.text(), caixinha is not None))
+                if caixinha is not None and marcar[0]:
+                    caixinha.setChecked(True)
+                return int(QMessageBox.StandardButton.Ok)
+
+            QMessageBox.exec = _exec_falso
+            try:
+                # modo real: sem caixinha, avisa sempre (e nunca grava a preferencia)
+                config.CONFIG_LOCAL_ATIVA = False
+                marcar[0] = True
+                msgs.limpar()
+                for _ in range(2):
+                    assert janela.avisar_dados_antigos() is True
+                assert [m[1] for m in msgs.registro] == ["Dados de uma versão antiga"] * 2 and not exibidos
+                assert not settings_mod.obter_sem_aviso_dados_antigos(caminho), "o modo real nunca silencia"
+                # modo de teste, sem marcar: avisa de novo
+                config.CONFIG_LOCAL_ATIVA = True
+                marcar[0] = False
+                msgs.limpar()
+                for _ in range(2):
+                    assert janela.avisar_dados_antigos() is True
+                assert len(exibidos) == 2 and all(e[2] and "versão antiga" in e[0] for e in exibidos), exibidos
+                assert not msgs.registro and not settings_mod.obter_sem_aviso_dados_antigos(caminho)
+                # modo de teste, marcando: avisa essa vez e nunca mais naquele caminho
+                exibidos.clear()
+                marcar[0] = True
+                assert janela.avisar_dados_antigos() is True and len(exibidos) == 1
+                assert exibidos[0][2] and str(total + 3) in exibidos[0][1]
+                assert settings_mod.obter_sem_aviso_dados_antigos(caminho)
+                assert janela.avisar_dados_antigos() is False and len(exibidos) == 1, "marcou: não avisa mais"
+                assert amb.nova_janela("admin", TEMA_ESCURO).avisar_dados_antigos() is False, "vale para a janela seguinte"
+                # a escolha é por caminho: outra planilha continua avisando
+                outro = caminho.with_name("outra_planilha.dat")
+                assert not settings_mod.obter_sem_aviso_dados_antigos(outro)
+                original_caminho = propostas_mod.CAMINHO_XLSX
+                propostas_mod.CAMINHO_XLSX = outro
+                try:
+                    leg_original = leg.contar_dados_antigos
+                    leg.contar_dados_antigos = lambda _c: leg.DadosAntigos(2, 0)
+                    try:
+                        marcar[0] = False
+                        assert janela.avisar_dados_antigos() is True and len(exibidos) == 2
+                    finally:
+                        leg.contar_dados_antigos = leg_original
+                finally:
+                    propostas_mod.CAMINHO_XLSX = original_caminho
+                # config local carregado, mas a planilha e a REAL (data/) ou a do dev com Sheets oficial (data_dev_oficial/):
+                # dados reais, entao sem caixinha (e nada se grava); outra pasta (data_teste/) continua com a caixinha
+                config.CONFIG_LOCAL_ATIVA = True
+                raiz = Path(config.__file__).resolve().parent
+                original_caminho = propostas_mod.CAMINHO_XLSX
+                leg_original = leg.contar_dados_antigos
+                leg.contar_dados_antigos = lambda _c: leg.DadosAntigos(2, 0)
+                try:
+                    assert len(PASTAS_COM_DADOS_REAIS) == 2 and "data" in PASTAS_COM_DADOS_REAIS
+                    for pasta in PASTAS_COM_DADOS_REAIS:
+                        propostas_mod.CAMINHO_XLSX = raiz / pasta / "controle_financiamentos.dat"
+                        exibidos.clear()
+                        msgs.limpar()
+                        marcar[0] = True
+                        assert janela.avisar_dados_antigos() is True, pasta
+                        assert not exibidos and len(msgs.registro) == 1 and msgs.registro[0][1] == "Dados de uma versão antiga", pasta
+                        assert not settings_mod.obter_sem_aviso_dados_antigos(propostas_mod.CAMINHO_XLSX), pasta
+                    propostas_mod.CAMINHO_XLSX = raiz / "data_teste" / "controle_financiamentos_teste.dat"
+                    exibidos.clear()
+                    marcar[0] = False
+                    assert janela.avisar_dados_antigos() is True and len(exibidos) == 1 and exibidos[0][2], "data_teste: caixinha"
+                finally:
+                    propostas_mod.CAMINHO_XLSX = original_caminho
+                    leg.contar_dados_antigos = leg_original
+                # em modo real, mesmo com o caminho marcado, o aviso aparece
+                config.CONFIG_LOCAL_ATIVA = False
+                msgs.limpar()
+                assert janela.avisar_dados_antigos() is True and len(msgs.registro) == 1
+            finally:
+                QMessageBox.exec = exec_original
+                config.CONFIG_LOCAL_ATIVA = False
+            print("OK: modo de teste -> caixinha; marcada, não avisa mais naquele caminho; sem marcar avisa de novo; "
+                  "outro caminho avisa; planilha real sem caixinha e sempre avisando.")
+
+            linha("4c) O flag do config local (config.CONFIG_LOCAL_ATIVA)")
+            import shutil
+            import subprocess
+            import tempfile
+            # o config.py numa pasta so dele: sem config_local.py o flag e False; com um config_local.py vazio, True
+            with tempfile.TemporaryDirectory() as pasta_flag:
+                shutil.copy(Path(config.__file__), pasta_flag)
+                for fake, esperado in ((False, "False"), (True, "True")):
+                    destino = Path(pasta_flag) / "config_local.py"
+                    if fake:
+                        destino.write_text("# config local de teste, sem nada dentro\n", encoding="utf-8")
+                    saida = subprocess.run([sys.executable, "-c", "import config; print(config.CONFIG_LOCAL_ATIVA)"],
+                                           cwd=pasta_flag, capture_output=True, text=True)
+                    assert saida.returncode == 0, saida.stderr
+                    assert saida.stdout.strip() == esperado, (fake, saida.stdout)
+            print("OK: sem config local o flag é False; com o config_local.py carregado é True.")
+
             linha("5) O VENDEDOR não tem o arquivo local: sem aviso")
             vendedor = amb.nova_janela("vendedor", TEMA_ESCURO)
             msgs.limpar()
@@ -167,6 +280,7 @@ def main() -> None:
             print("OK: a lista tem as 4 respostas do banco (e o status de agora, se for outro); a proposta nova só as 4.")
             linha("TUDO OK")
         finally:
+            QMessageBox.exec = exec_de_verdade
             amb.encerrar()
 
 

@@ -292,10 +292,11 @@ def main() -> None:
             card = _card(tela, "MARIA")
             l1, l2 = card.linhas_de_banco
             assert l1["anel"].fechado and not l2["anel"].fechado and card.bolinha is None, "a venda não tem bolinha"
-            assert [b.destino for b in l1["bolinhas"]] == [card_mod.EFETIVAR], "banco fechado: a bolinha é o Efetivado"
+            assert [b.destino for b in l1["bolinhas"]] == ["Assinado"], "banco fechado: a bolinha é a próxima etapa (1.2-B)"
+            assert l1["bolinhas"][0].dica == "Avançar para Assinado"
             menu_p = _acoes(tela.lista.controle.montar_menu_da_proposta(card.venda, l1["proposta"]))
             assert not menu_p[propostas_mod.STATUS_NEGADO].isEnabled() and menu_p[propostas_mod.STATUS_APROVADO].isEnabled()
-            assert card_mod.EFETIVAR in menu_p
+            assert card_mod.EFETIVAR in menu_p and "Assinado" in menu_p and "NF enviada" in menu_p, "a lista tem todas as etapas"
             l2["anel"].click()  # a Cadeira já está no pedido do 1º banco
             assert "já está coberto" in msgs.ultima()[2] and v.fechadas_da_venda(_venda(id_maria)["BANCO_ESCOLHIDO"]) == [p1.id]
             l1["voltar"].click()  # o ↩ (para Em Análise) de um banco fechado é recusado
@@ -317,13 +318,20 @@ def main() -> None:
             linha_de(p_laser)["anel"].click()
             p_cadeira = _card(tela, "MARIA").linhas_de_banco[1]["proposta"].id
             assert v.fechadas_da_venda(_venda(id_maria)["BANCO_ESCOLHIDO"]) == [p_cadeira, p_laser], "dois bancos fechados"
+            status_de = lambda id_: bd.ler_propostas(caminho).loc[v.indice_da_proposta(id_), "STATUS"]  # noqa: E731
+            for esperado in ("Assinado", "NF enviada"):  # a bolinha avança UMA etapa de cada vez
+                linha_de(p_cadeira)["bolinhas"][0].click()
+                assert status_de(p_cadeira) == esperado
+            assert linha_de(p_cadeira)["bolinhas"][0].destino == "Efetivado"
             msgs.resposta_pergunta = QMessageBox.StandardButton.No
             linha_de(p_cadeira)["bolinhas"][0].click()
-            assert bd.ler_propostas(caminho).loc[v.indice_da_proposta(p_cadeira), "STATUS"] == propostas_mod.STATUS_APROVADO
+            assert status_de(p_cadeira) == "NF enviada", "'Não' no 'saiu o financiamento?': nada muda"
             msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
             linha_de(p_cadeira)["bolinhas"][0].click()
             assert _venda(id_maria)["STATUS"] == v.VENDA_EM_ANDAMENTO, "falta o outro banco"
             assert "1 de 2 bancos efetivados" in _card(tela, "MARIA").andamento.text()
+            for _ in range(2):
+                linha_de(p_laser)["bolinhas"][0].click()  # Assinado, NF enviada
             linha_de(p_laser)["bolinhas"][0].click()
             assert _venda(id_maria)["STATUS"] == v.VENDA_EFETIVADA and "A venda está Efetivada" in tela.texto_aviso.text()
             assert all(c.venda.id != id_maria for c in tela.lista.cards), "efetivada sai de 'Em andamento'"
@@ -397,14 +405,13 @@ def main() -> None:
                 tela.filtro.setCurrentText(tela_mod.FILTRO_PARADAS)
                 tela.carregar()
                 parados = [c for c in tela.lista.cards if c.venda.id == id_parada]
-                assert len(parados) == 1 and parados[0].andamento.property("role") == "aviso"
-                assert "parada há 7 dias" in parados[0].andamento.text()
+                assert len(parados) == 1 and parados[0].selo is not None and parados[0].selo.texto == "parada há 7 dias"
             finally:
                 v.listar_vendas = listar_original
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             tela.carregar()
-            assert all(c.andamento.property("role") == "secundario" for c in tela.lista.cards), "hoje nada está parado"
-            print("OK: 7 dias sem mudar de etapa: o card avisa ('parada há 7 dias') e entra no filtro 'Paradas'.")
+            assert all(c.selo is None for c in tela.lista.cards), "hoje nada está parado"
+            print("OK: 7 dias sem mudar de etapa: o card mostra o selo 'parada há 7 dias' e entra no filtro 'Paradas'.")
 
             linha("11) Equipamento só da lista; o formulário solto cria a venda; numa venda, as caixinhas dela")
             antes = len(bd.ler_vendas(caminho))
@@ -477,27 +484,17 @@ def main() -> None:
             card.voltar.click()
             assert _venda(id_rx)["STATUS"] == v.VENDA_EM_ANDAMENTO and _venda(id_rx)["MOTIVO"] == ""
             assert next(c for c in tela.lista.cards if c.venda.id == id_rx).voltar is None, "fora de um desfecho, a venda não tem ↩"
-            # Pendente de entrega: o ↩ da venda volta a Efetivada (voltar_venda, e não o reabrir de desfecho)
+            # uma venda Efetivada com pendencia aberta (1.2-B) continua Efetivada: sem ↩ e sem item de "voltar" no menu
             id_rp, pp = v.criar_venda(fx.CPF_JOAO, ["Mesa Exemplo"], _pedido(b1))
             v.mudar_status_proposta(pp, propostas_mod.STATUS_APROVADO)
             v.fechar_proposta(pp)
             v.efetivar_proposta(pp)
-            v.marcar_pendente_entrega(id_rp, "Aguardando a obra")
+            v.adicionar_pendencia(id_rp, "Aguardando a obra")
             tela.carregar()
             card = next(c for c in tela.lista.cards if c.venda.id == id_rp)
-            assert card.venda.status == v.VENDA_PENDENTE_ENTREGA and card.voltar.anterior == v.VENDA_EFETIVADA
+            assert card.venda.status == v.VENDA_EFETIVADA and card.venda.pendencias_abertas == 1 and card.voltar is None
             menu_p = _acoes(tela.lista.controle.montar_menu_da_venda(card.venda))
-            assert any(t.startswith("Voltar a venda") for t in menu_p) and not any(t.startswith("Reabrir") for t in menu_p)
-            msgs.resposta_pergunta = QMessageBox.StandardButton.No
-            card.voltar.click()
-            assert msgs.ultima()[1] == "Voltar a venda", "Pendente: pergunta de voltar, não de reabrir"
-            assert "Pendente de entrega" in msgs.ultima()[2] and "Efetivada" in msgs.ultima()[2]
-            assert _venda(id_rp)["STATUS"] == v.VENDA_PENDENTE_ENTREGA
-            msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
-            msgs.limpar()
-            card.voltar.click()
-            assert _venda(id_rp)["STATUS"] == v.VENDA_EFETIVADA and _venda(id_rp)["MOTIVO"] == ""
-            msgs.exigir_sem_erros("voltar de Pendente de entrega")
+            assert not any(t.startswith(("Voltar a venda", "Reabrir")) for t in menu_p)
             # proposta com status de antes das vendas: depois de trocar, o ↩ não oferece voltar a ele
             id_ry, py_ = v.criar_venda(fx.CPF_ANA, ["Laser Exemplo"], _pedido(b2))
             propostas_mod.atualizar_proposta(v.indice_da_proposta(py_), {"STATUS": "Nota Fiscal Anexada"})

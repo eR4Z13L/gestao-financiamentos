@@ -37,7 +37,6 @@ _FRASE_STATUS = {  # (singular, plural) nas contagens
     vendas_mod.VENDA_AGUARDANDO: ("aguardando bancos", "aguardando bancos"),
     vendas_mod.VENDA_EM_ANDAMENTO: ("em andamento", "em andamento"),
     vendas_mod.VENDA_EFETIVADA: ("efetivada", "efetivadas"),
-    vendas_mod.VENDA_PENDENTE_ENTREGA: ("pendente de entrega", "pendentes de entrega"),
     vendas_mod.VENDA_NAO_EFETIVADA: ("não efetivada", "não efetivadas"),
     vendas_mod.VENDA_PERDIDA: ("perdida", "perdidas"),
 }
@@ -79,6 +78,7 @@ class FaixaDeAviso(QFrame):
 
 class ListaDeVendas(ListaEmColunas):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
+    avisou = Signal(str)  # so um aviso (ex.: "resumo copiado"): nada gravou, ninguem precisa reler
     ficha_pedida = Signal(str)  # cpf
 
     def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
@@ -92,7 +92,7 @@ class ListaDeVendas(ListaEmColunas):
         self.rascunho: dict | None = None  # o card "Nova venda" no topo: {"cpf"} (None: o cliente se escolhe nele)
         self._vendas: list[vendas_mod.ResumoDaVenda] = []
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre o formulario (ver abrir_venda)
-        self.controle = ControleDasVendas(self, self.gravou.emit)
+        self.controle = ControleDasVendas(self, self.gravou.emit, self.avisou.emit)
 
     # -- vendas -------------------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-"""Testa que as propostas de uma venda já RESOLVIDA (Efetivada, Não efetivada, Perdida, Pendente de entrega) saem de
+"""Testa que as propostas de uma venda já RESOLVIDA (Efetivada, Não efetivada, Perdida) saem de
 "Precisa de atenção" (paradas, a efetivar), de "A efetivar" (cartão, por vendedor, topo) e do selo da barra lateral
 (contar_paradas), e que o aviso "Cliente já efetivou em outro banco" não vale para proposta que está numa venda (a venda
 já resolve isso). Proposta sem venda continua como sempre; sem a coluna VENDA_RESOLVIDA (VENDEDOR, tabelas de teste)
@@ -80,13 +80,13 @@ def main() -> None:
         # VP: Perdida
         vp, pp = v.criar_venda(fx.CPF_JOAO, ["Torno P"], pedido(b1, equipamento="Torno P"))
         v.mudar_status_venda(vp, v.VENDA_PERDIDA, motivo="Outro")
-        # VD: Pendente de entrega (efetivada, falta entregar); o segundo banco ficou Aprovado
+        # VD: Efetivada com uma pendencia aberta (falta entregar); o segundo banco ficou Aprovado
         vd, pd1 = v.criar_venda(fx.CPF_JOAO, ["Torno D"], pedido(b1, equipamento="Torno D"))
         pd2 = v.mandar_a_outro_banco(vd, pedido(b2, "Aprovado", "Torno D"))
         v.mudar_status_proposta(pd1, "Aprovado")
         v.fechar_proposta(pd1)
         v.efetivar_proposta(pd1)
-        v.marcar_pendente_entrega(vd, "Equipamento ainda na fábrica")
+        v.adicionar_pendencia(vd, "Equipamento ainda na fábrica")
         # VA: venda ainda aberta (Aguardando bancos): continua contando
         va, pa1 = v.criar_venda(fx.CPF_ANA, ["Torno A"], pedido(b1, "Aprovado", "Torno A"))
         pa2 = v.mandar_a_outro_banco(va, pedido(b2, "Em Análise", "Torno A"))
@@ -107,7 +107,7 @@ def main() -> None:
         assert not propostas_mod.fora_do_fluxo(df).loc[list(abertas)].any()
         sem_coluna = df.drop(columns=[propostas_mod.COLUNA_VENDA_RESOLVIDA])
         assert not propostas_mod.fora_do_fluxo(sem_coluna).any(), "sem a coluna nada sai (VENDEDOR, tabelas de teste)"
-        print("OK: Efetivada, Não efetivada, Perdida e Pendente de entrega marcam as propostas delas; venda aberta e proposta "
+        print("OK: Efetivada (com ou sem pendência), Não efetivada e Perdida marcam as propostas delas; venda aberta e proposta "
               "sem venda não.")
 
         linha("2) 'Precisa de atenção': paradas e a efetivar")

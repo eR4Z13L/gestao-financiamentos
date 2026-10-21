@@ -90,6 +90,10 @@ class Ambiente:
         self.caminho = fx.criar_volumoso(self.pasta) if volumoso else fx.criar(self.pasta)
         fx.apontar_modulos_para(self.caminho)
         self.janelas: list[MainWindow] = []
+        # o teste simula a planilha real: sem o config local, o aviso de dados antigos nao abre a caixa com
+        # a caixinha "Nao avisar de novo" (QMessageBox.exec bloqueia o teste)
+        self._config_local_ativa = config.CONFIG_LOCAL_ATIVA
+        config.CONFIG_LOCAL_ATIVA = False
         self._tema_aplicado: str | None = None
         self._fontes = (clientes_mod._ler_da_fonte_ativa, propostas_mod._ler_da_fonte_ativa)
         self._clientes_sheets = leitura_sheets._obter_cliente
@@ -138,6 +142,7 @@ class Ambiente:
         leitura_sheets._obter_cliente = self._clientes_sheets
         sheets_sync._obter_cliente = self._envio_sheets
         fx.restaurar_modulos()
+        config.CONFIG_LOCAL_ATIVA = self._config_local_ativa
         sessao_mod.encerrar()
         assert fx.instantaneo_do_registro() == self.registro_antes, (
             "o teste mexeu nas preferencias REAIS do app (registro do Windows)"

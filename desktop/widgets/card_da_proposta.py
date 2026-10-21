@@ -29,11 +29,13 @@ from desktop.theme import CORES_STATUS
 from desktop.widgets.card_da_venda import (
     LARGURA_CARD,
     AnelDoBanco,
+    Trilha,
     _botao_link,
     _tema,
     condicoes_da_proposta,
     por_anel,
     por_controles_de_status,
+    por_data_da_etapa,
 )
 from desktop.widgets.formulario_proposta import FormularioProposta
 from desktop.widgets.lista_cartoes import chave_cor_status
@@ -104,6 +106,10 @@ class CardDaProposta(QFrame):
         self.banco.setFont(fonte)
         self.banco.setWordWrap(True)
         topo.addWidget(self.banco, stretch=1)
+        self.controles["trilha"] = None
+        if venda is not None and proposta.fechada and vendas_mod.indice_da_etapa(proposta.status) is not None:
+            self.controles["trilha"] = Trilha(proposta, self)
+            topo.addWidget(self.controles["trilha"])
         por_controles_de_status(topo, self, venda, proposta, self, self.controles)
         self.pilula = self.controles["pilula"]
 
@@ -133,6 +139,7 @@ class CardDaProposta(QFrame):
             parada = proposta.dias_esperando >= propostas_mod.DIAS_PROPOSTA_PARADA
             self.espera.setProperty("role", "aviso" if parada else "secundario")
             ultima.addWidget(self.espera, alignment=Qt.AlignmentFlag.AlignTop)
+        por_data_da_etapa(ultima, venda, proposta, self, self.controles)  # banco fechado: selo e "desde 15/10 · há 3 dias"
         self._layout.addLayout(ultima)
         self.alternar = _botao_link("⌃ fechar" if aberto else "⌄", self, self._alternar)
         self.alternar.setToolTip("Fechar a proposta" if aberto else "Abrir a proposta (ou dois cliques no card)")

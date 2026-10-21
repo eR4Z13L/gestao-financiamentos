@@ -1,12 +1,17 @@
-"""Testa o resumo para o WhatsApp (plano 1.5-A, core/resumo_vendas.py):
+"""Testa o resumo para o WhatsApp (planos 1.5-A e 1.5-B, core/resumo_vendas.py):
 
 - periodo(): semana (segunda a domingo), quinzena (1-15 / 16-fim) e mes, o atual e o anterior (virada de mes e de ano,
   fevereiro bissexto);
 - quais vendas entram: criada no periodo OU com movimento nele (venda ou proposta), limites inclusivos, a linha
   "conversao" que nao conta; filtro por vendedor (sem diferenciar maiusculas) e "todos";
 - o texto exato de um caso pequeno (cada bloco, a etapa, os dias, o motivo, telefone ausente, o bloco Pendencias) e de
-  outros dois (venda sem banco, venda com 2 bancos aprovados);
-- periodo sem vendas: aviso e sinal de "vazio"; texto_da_venda (os bancos tentados e o resultado de cada um);
+  outros (venda sem banco, venda com 2 bancos aprovados) e o ajuste de 20/10: qual banco aparece (o fechado ja
+  Assinado ou alem, cada um numa linha; senao so o mais adiantado);
+- 1.5-B: Perdida e Não efetivada num bloco so ("Não efetivadas"); periodo de duas datas livres (e as sugestoes
+  como atalho); escolher os blocos do texto; Pendencias = as pendencias abertas da venda (nao as observacoes);
+  nenhuma observacao em resumo algum; sem emojis; um banco por linha;
+- periodo sem vendas: aviso e sinal de "vazio"; texto_da_venda (os bancos tentados e so o status de cada um, sem datas
+  nem "parada ha N dias", com as pendencias abertas);
 - nada e gravado (a planilha fica identica).
 
 Planilha 100% ficticia em pasta temporaria (scripts/fixture_ficticia.py), preferencias isoladas e o Google desligado.
@@ -47,7 +52,7 @@ from core import vendedores as vendedores_mod
 
 ADMIN = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador")
 HOJE = date(2026, 10, 21)
-VENDEDOR_A, VENDEDOR_B, VENDEDOR_C = "Vendedor Exemplo", "Vendedora Teste Dois", "Vendedor Tres"
+VENDEDOR_A, VENDEDOR_B, VENDEDOR_C, VENDEDOR_D = "Vendedor Exemplo", "Vendedora Teste Dois", "Vendedor Tres", "Vendedor Quatro"
 APROVADO, ASSINADO, NOTA = propostas_mod.STATUS_APROVADO, propostas_mod.STATUS_ASSINADO, propostas_mod.STATUS_NOTA_ENVIADA
 EFETIVADO, NEGADO = propostas_mod.STATUS_EFETIVADO, propostas_mod.STATUS_NEGADO
 
@@ -114,6 +119,7 @@ def main() -> None:
     fx.apontar_modulos_para(caminho)
     sessao_mod.iniciar(ADMIN)
     vendedores_mod.adicionar_vendedor(VENDEDOR_C)
+    vendedores_mod.adicionar_vendedor(VENDEDOR_D)
 
     testar_periodos()
 
@@ -176,6 +182,7 @@ def main() -> None:
                               date(2026, 10, 10), "(21) 90000-0003", em=d(20), nas_propostas=d(12))
     v.mudar_status_proposta(p_c, APROVADO)
     v.editar_venda(venda_c, ["Mesa Exemplo"], "falta anexar a biometria\n  do avalista")
+    v.adicionar_pendencia(venda_c, "Cliente vai trazer\n  o avalista")  # pendencia em qualquer etapa (aqui: Aprovado)
 
     venda_d, (p_d,) = venda("CLIENTE 04 ANALISE", VENDEDOR_A, ["Cadeira Exemplo"], [ped("Banco Y", 25000)],
                               date(2026, 10, 19), "", nas_propostas=d(18))
@@ -196,7 +203,10 @@ def main() -> None:
     v.mudar_status_proposta(p_g, APROVADO)
     v.fechar_proposta(p_g)
     v.efetivar_proposta(p_g)
-    v.marcar_pendente_entrega(venda_g, "Aguardando a obra")
+    v.adicionar_pendencia(venda_g, "Aguardando a obra")
+    ja_resolvida = v.adicionar_pendencia(venda_g, "Comprovante de renda")
+    v.resolver_pendencia(venda_g, ja_resolvida)  # resolvida: nao aparece
+    v.adicionar_pendencia(venda_g, "Falta o contrato assinado")
 
     # Vendedora B: os limites do periodo (a semana e 19/10 a 25/10)
     def limite(nome, criada, em, nas_propostas=None):
@@ -237,6 +247,38 @@ def main() -> None:
                               date(2026, 10, 21), "11900000013")
     v.mudar_status_proposta(p_m, NEGADO)
 
+    # Vendedor D: qual banco aparece (ajuste de 20/10)
+    venda_p, (p_p1, p_p2, p_p3) = venda(
+        "CLIENTE 14 ASSINADO E APROVADO", VENDEDOR_D, ["Laser Exemplo", "Mesa Exemplo"],
+        [ped("Banco Alfa", 10000, 36, "Laser Exemplo"), ped("Banco Beta", 12000, 36, "Mesa Exemplo"), ped("Banco Gama", 9000)],
+        date(2026, 10, 20), "11900000020")
+    for id_proposta in (p_p1, p_p2):
+        v.mudar_status_proposta(id_proposta, APROVADO)
+        v.fechar_proposta(id_proposta)
+    v.mudar_status_proposta(p_p1, ASSINADO)  # o fechado ja Assinado aparece; o outro (so Aprovado) e o Negado, nao
+    v.mudar_status_proposta(p_p3, NEGADO)
+    venda_q, (p_q1, p_q2) = venda(
+        "CLIENTE 15 DOIS ASSINADOS", VENDEDOR_D, ["Laser Exemplo", "Mesa Exemplo"],
+        [ped("Banco Alfa", 11000, 36, "Laser Exemplo"), ped("Banco Beta", 12000, 36, "Mesa Exemplo")],
+        date(2026, 10, 20), "11900000021")
+    for id_proposta in (p_q1, p_q2):
+        v.mudar_status_proposta(id_proposta, APROVADO)
+        v.fechar_proposta(id_proposta)
+    v.mudar_status_proposta(p_q1, NOTA)
+    v.mudar_status_proposta(p_q2, ASSINADO)
+    venda_r, (p_r1, p_r2, p_r3) = venda(
+        "CLIENTE 16 SO RESPONDERAM", VENDEDOR_D, ["Cadeira Exemplo"],
+        [ped("Banco Alfa", 9000), ped("Banco Beta", 9500), ped("Banco Gama", 9800)], date(2026, 10, 20), "11900000022")
+    v.mudar_status_proposta(p_r1, propostas_mod.STATUS_PRE_APROVADO)  # o mais adiantado (os outros: Em Análise e Negado)
+    v.mudar_status_proposta(p_r3, NEGADO)
+    venda_s, (p_s1, p_s2) = venda(
+        "CLIENTE 17 NEGADO E APROVADO", VENDEDOR_D, ["Mesa Exemplo"],
+        [ped("Banco Alfa", 8000), ped("Banco Beta", 8200)], date(2026, 10, 20), "11900000023")
+    v.mudar_status_proposta(p_s1, NEGADO)
+    v.mudar_status_proposta(p_s2, APROVADO)
+    venda_t, _ = venda("CLIENTE 18 DE HOJE", VENDEDOR_D, ["Mesa Exemplo"], [ped("Banco Alfa", 7000)], date(2026, 10, 21),
+                       "11900000024")
+
     # datas combinadas: as linhas do historico de cada ID levam o QUANDO acima, e a venda leva a DATA_CRIACAO
     vendas_df = bd.ler_vendas(caminho)
     vendas_df["DATA_CRIACAO"] = [pd.Timestamp(criadas[i]) for i in vendas_df["ID_VENDA"]]
@@ -270,8 +312,9 @@ def main() -> None:
     assert ids(r.vendas_do_periodo(semana.inicio, semana.fim, "vendedor EXEMPLO ", HOJE)) == ids(
         r.vendas_do_periodo(semana.inicio, semana.fim, VENDEDOR_A, HOJE)), "o vendedor nao diferencia maiusculas"
     assert ids(r.vendas_do_periodo(semana.inicio, semana.fim, VENDEDOR_C, HOJE)) == {venda_i, venda_j, venda_k, venda_l, venda_m}
+    assert ids(r.vendas_do_periodo(semana.inicio, semana.fim, VENDEDOR_D, HOJE)) == {venda_p, venda_q, venda_r, venda_s, venda_t}
     todos = r.vendas_do_periodo(semana.inicio, semana.fim, None, HOJE)
-    assert len(todos) == 8 + 5 + 5, len(todos)
+    assert len(todos) == 8 + 5 + 5 + 5, len(todos)
     assert ids(r.vendas_do_periodo(semana.inicio, semana.fim, "Ninguem", HOJE)) == set()
     # a semana passada (12 a 18/10): so o movimento de antes
     passada = r.periodo(r.SEMANA, r.ANTERIOR, HOJE)
@@ -284,49 +327,57 @@ def main() -> None:
     linha("texto_whatsapp: Vendedor A (um caso de cada bloco)")
     resumo_a = r.montar_resumo(semana, VENDEDOR_A, HOJE)
     assert resumo_a.total == 8 and not resumo_a.vazio
-    _igual(r.texto_whatsapp(resumo_a), """\
+    texto_a = r.texto_whatsapp(resumo_a)
+    _igual(texto_a, """\
 *Resumo da semana — Vendedor Exemplo*
 19/10 a 25/10/2026 · 8 vendas
 
-*✅ Efetivadas (2)*
+*Efetivadas (2)*
 • CLIENTE 01 EFETIVADA · (11) 90000-0001
   Laser Exemplo · Banco Omega R$ 30.000
 • CLIENTE 07 PENDENTE · (11) 3333-4444
   Laser Exemplo · Banco Alfa R$ 40.000
 
-*🟢 Aprovadas (2)*
+*Aprovadas (2)*
 • CLIENTE 02 DUAS · (11) 90000-0002
   Cadeira Exemplo + Laser Exemplo
-  Banco Omega R$ 30.000: Efetivado · Banco Alfa R$ 52.000: Nota fiscal enviada
+  Banco Omega R$ 30.000: Efetivado
+  Banco Alfa R$ 52.000: NF enviada
 • CLIENTE 03 APROVADA · (21) 90000-0003
   Mesa Exemplo · Banco Alfa R$ 18.000: Aprovado
 
-*⏳ Em análise (1)*
+*Em análise (1)*
 • CLIENTE 04 ANALISE · sem telefone
   Cadeira Exemplo · Banco Y R$ 25.000, há 3 dias
 
-*❌ Negadas (1)*
+*Negadas (1)*
 • CLIENTE 05 NEGADA · (11) 90000-0005
   Laser Exemplo · Banco Alfa e Banco Beta negaram
 
-*🚫 Perdidas e não efetivadas (2)*
+*Não efetivadas (2)*
 • CLIENTE 06 PERDIDO · (11) 90000-0006
-  Mesa Exemplo · Perdida: Desistiu
+  Mesa Exemplo · Não efetivada: Desistiu
 • CLIENTE 08 NAO EFETIVADA · (11) 90000-0008
   Mesa Exemplo · Não efetivada
 
-*⚠️ Pendências*
+*Pendências*
 Aprovadas que ainda não assinaram:
-• CLIENTE 03 APROVADA, parada há 9 dias
-Pendentes de entrega:
+• CLIENTE 03 APROVADA, Banco Alfa: parada há 9 dias
+Pendências em aberto:
+• CLIENTE 03 APROVADA: Cliente vai trazer o avalista
 • CLIENTE 07 PENDENTE: Aguardando a obra
-Observações (o que falta):
-• CLIENTE 03 APROVADA: falta anexar a biometria do avalista""")
+• CLIENTE 07 PENDENTE: Falta o contrato assinado""")
     # estruturado: cada venda em UM bloco so
-    blocos = [resumo_a.efetivadas, resumo_a.aprovadas, resumo_a.em_analise, resumo_a.negadas, resumo_a.perdidas]
+    blocos = [resumo_a.efetivadas, resumo_a.aprovadas, resumo_a.em_analise, resumo_a.negadas, resumo_a.nao_efetivadas]
     todas_as_linhas = [x.id_venda for b in blocos for x in b]
     assert len(todas_as_linhas) == len(set(todas_as_linhas)) == resumo_a.total
-    assert resumo_a.aprovadas_sem_assinar == (("CLIENTE 03 APROVADA", 9),)
+    assert resumo_a.aprovadas_sem_assinar == (("CLIENTE 03 APROVADA", "Banco Alfa", 9),)
+    assert resumo_a.blocos == r.BLOCOS == ("efetivadas", "aprovadas", "em_analise", "negadas", "nao_efetivadas", "pendencias")
+    # nenhuma observacao em resumo algum (so no card), e nenhum emoji
+    assert "biometria" not in texto_a and "Observações" not in texto_a and "Obs." not in texto_a
+    for emoji in ("✅", "🟢", "⏳", "❌", "🚫", "⚠"):
+        assert emoji not in texto_a, emoji
+    assert not hasattr(resumo_a, "observacoes") and not hasattr(resumo_a, "perdidas")
     print("OK")
 
     linha("texto_whatsapp: Vendedor C (sem banco, banco negado + outro esperando, dois aprovados) e blocos vazios")
@@ -334,38 +385,163 @@ Observações (o que falta):
 *Resumo da semana — Vendedor Tres*
 19/10 a 25/10/2026 · 5 vendas
 
-*🟢 Aprovadas (2)*
+*Aprovadas (2)*
 • CLIENTE 11 DOIS APROVADOS · (11) 90000-0012
-  Mesa Exemplo
-  Banco Alfa R$ 10.000: Aprovado · Banco Beta R$ 12.000,50: Aprovado
+  Mesa Exemplo · Banco Beta R$ 12.000,50: Aprovado
 • CLIENTE 12 FECHOU UM · (11) 90000-0014
   Mesa Exemplo · Banco Alfa R$ 10.000: Aprovado
 
-*⏳ Em análise (2)*
+*Em análise (2)*
 • CLIENTE 09 SEM BANCO · sem telefone
   Mesa Exemplo · ainda sem pedido a nenhum banco
 • CLIENTE 10 MISTA · (11) 90000-0011
   Laser Exemplo · Banco Beta R$ 20.000, há 1 dia
 
-*❌ Negadas (1)*
+*Negadas (1)*
 • CLIENTE 13 UM BANCO NEGOU · (11) 90000-0013
   Laser Exemplo · Banco Alfa negou
 
-*⚠️ Pendências*
+*Pendências*
 Aprovadas que ainda não assinaram:
-• CLIENTE 11 DOIS APROVADOS, parada há 9 dias
-• CLIENTE 12 FECHOU UM, parada há 2 dias""")
+• CLIENTE 11 DOIS APROVADOS, Banco Alfa: parada há 6 dias
+• CLIENTE 11 DOIS APROVADOS, Banco Beta: parada há 9 dias
+• CLIENTE 12 FECHOU UM, Banco Alfa: parada há 2 dias""")
     # todos os vendedores, a venda singular e a semana passada (uma venda so)
     um_dia = r.Periodo(r.SEMANA, r.ATUAL, date(2026, 10, 19), date(2026, 10, 19))
     texto_um = r.texto_whatsapp(r.montar_resumo(um_dia, VENDEDOR_B, HOJE))
     assert texto_um.splitlines()[:2] == ["*Resumo da semana — Vendedora Teste Dois*", "19/10 a 19/10/2026 · 1 venda"], texto_um
     texto_todos = r.texto_whatsapp(r.montar_resumo(semana, None, HOJE))
-    assert texto_todos.splitlines()[:2] == ["*Resumo da semana — Todos os vendedores*", "19/10 a 25/10/2026 · 18 vendas"], texto_todos
+    assert texto_todos.splitlines()[:2] == ["*Resumo da semana — Todos os vendedores*", "19/10 a 25/10/2026 · 23 vendas"], texto_todos
     assert "*Resumo da semana passada — Vendedora Teste Dois*" in r.texto_whatsapp(r.montar_resumo(passada, VENDEDOR_B, HOJE))
     assert "Pendências" not in texto_um, "sem pendencias, o bloco nao aparece"
     # negrito so nos titulos: asteriscos so no inicio das linhas de titulo
     for linha_t in texto_todos.splitlines():
         assert ("*" not in linha_t) or (linha_t.startswith("*") and linha_t.endswith("*") and linha_t.count("*") == 2), linha_t
+    print("OK")
+
+    linha("Qual banco aparece (ajuste de 20/10): o fechado ja Assinado ou alem; senao so o mais adiantado")
+    _igual(r.texto_whatsapp(r.montar_resumo(semana, VENDEDOR_D, HOJE)), """\
+*Resumo da semana — Vendedor Quatro*
+19/10 a 25/10/2026 · 5 vendas
+
+*Aprovadas (3)*
+• CLIENTE 14 ASSINADO E APROVADO · (11) 90000-0020
+  Laser Exemplo + Mesa Exemplo · Banco Alfa R$ 10.000: Assinado
+• CLIENTE 15 DOIS ASSINADOS · (11) 90000-0021
+  Laser Exemplo + Mesa Exemplo
+  Banco Alfa R$ 11.000: NF enviada
+  Banco Beta R$ 12.000: Assinado
+• CLIENTE 17 NEGADO E APROVADO · (11) 90000-0023
+  Mesa Exemplo · Banco Beta R$ 8.200: Aprovado
+
+*Em análise (2)*
+• CLIENTE 16 SO RESPONDERAM · (11) 90000-0022
+  Cadeira Exemplo · Banco Alfa R$ 9.000: Pré-aprovado, há 1 dia
+• CLIENTE 18 DE HOJE · (11) 90000-0024
+  Mesa Exemplo · Banco Alfa R$ 7.000, desde hoje
+
+*Pendências*
+Aprovadas que ainda não assinaram:
+• CLIENTE 14 ASSINADO E APROVADO, Banco Beta: parada há 1 dia
+• CLIENTE 17 NEGADO E APROVADO, Banco Beta: parada há 1 dia""")
+    # o "hoje" da chamada manda (nao o do relogio): os dias esperando contam dele
+    amanha = r.texto_whatsapp(r.montar_resumo(semana, VENDEDOR_D, date(2026, 10, 22)))
+    assert "Banco Alfa R$ 9.000: Pré-aprovado, há 2 dias" in amanha and "Banco Alfa R$ 7.000, há 1 dia" in amanha, amanha
+    assert "• CLIENTE 17 NEGADO E APROVADO, Banco Beta: parada há 2 dias" in amanha
+    resumo_d = r.montar_resumo(semana, VENDEDOR_D, HOJE)
+    assert [x.id_venda for x in resumo_d.aprovadas] == [venda_p, venda_q, venda_s] and [x.id_venda for x in resumo_d.em_analise] == [venda_r, venda_t]
+    # o banco fechado so Aprovado da venda 14 nao aparece na linha, mas TAMBEM conta como "ainda nao assinou"
+    assert resumo_d.aprovadas_sem_assinar == (("CLIENTE 14 ASSINADO E APROVADO", "Banco Beta", 1),
+                                              ("CLIENTE 17 NEGADO E APROVADO", "Banco Beta", 1))
+    # o desempate do "mais adiantado" e o mais parado (nunca a ordem da lista) e Negado so quando TODOS negaram
+    agora = pd.Timestamp(HOJE)
+
+    def banco_(id_, nome, status, data, fechada=False):
+        return v.PropostaNaVenda(id_, 0, nome, status, 1000.0, None, pd.Timestamp(data), "", fechada, None)
+
+    def venda_com(*propostas, status=v.VENDA_AGUARDANDO):
+        return v.ResumoDaVenda("V-x", "cpf", "Cli", "Vend", "Eq", status, "", (), None, None, "", tuple(propostas))
+
+    novo, antigo = banco_("P-1", "Banco Alfa", APROVADO, "2026-10-15"), banco_("P-2", "Banco Zeta", APROVADO, "2026-10-12")
+    for ordem in ((novo, antigo), (antigo, novo)):
+        assert r._classificar(venda_com(*ordem), {}, agora) == (r.APROVADAS, ("Banco Zeta R$ 1.000: Aprovado",)), ordem
+        assert r._aprovadas_sem_assinar(venda_com(*ordem), {}, agora) == (
+            [("Banco Alfa", 6), ("Banco Zeta", 9)] if ordem[0] is novo else [("Banco Zeta", 9), ("Banco Alfa", 6)])
+    fechado_novo = banco_("P-1", "Banco Alfa", APROVADO, "2026-10-15", fechada=True)
+    assert r._classificar(venda_com(antigo, fechado_novo), {}, agora)[1] == ("Banco Alfa R$ 1.000: Aprovado",), "empate: o fechado"
+    assert r._aprovadas_sem_assinar(venda_com(antigo, fechado_novo), {}, agora) == [("Banco Alfa", 6)], "com fechado, so os fechados"
+    em_analise_velho = banco_("P-3", "Banco X", propostas_mod.STATUS_EM_ANALISE, "2026-10-01")
+    assert r._classificar(venda_com(em_analise_velho, novo), {}, agora)[0] == r.APROVADAS
+    # Negado so quando TODAS as propostas negaram; vazio ou desconhecido nao conta como negado
+    negado_a, negado_b = banco_("P-4", "Banco A", NEGADO, "2026-10-15"), banco_("P-5", "Banco B", NEGADO, "2026-10-15")
+    assert r._classificar(venda_com(negado_a, negado_b), {}, agora) == (r.NEGADAS, ("Banco A e Banco B negaram",))
+    assert r._classificar(venda_com(negado_a), {}, agora) == (r.NEGADAS, ("Banco A negou",))
+    sem_status = banco_("P-6", "Banco B", "", "2026-10-15")
+    assert r._classificar(venda_com(negado_a, sem_status), {}, agora) == (r.EM_ANALISE, ("Banco B R$ 1.000",))
+    esquisito = banco_("P-7", "Banco B", "Status Esquisito", "2026-10-15")
+    assert r._classificar(venda_com(negado_a, esquisito), {}, agora) == (r.EM_ANALISE, ("Banco B R$ 1.000: Status Esquisito",))
+    assert r._classificar(venda_com(negado_a, novo), {}, agora)[0] == r.APROVADAS
+    # as aprovadas sem assinar: nenhuma numa venda ja resolvida
+    for resolvida in (v.VENDA_EFETIVADA, v.VENDA_PERDIDA, v.VENDA_NAO_EFETIVADA):
+        assert r._aprovadas_sem_assinar(venda_com(novo, status=resolvida), {}, agora) == []
+
+    # as regras de "banco assinado ou alem", direto (dado de antes da 1.2 incluso)
+    def banco(status, fechada):
+        return v.PropostaNaVenda("P-x", 0, "Banco", status, None, None, None, "", fechada, None)
+
+    for status in (ASSINADO, NOTA, EFETIVADO, "Nota fiscal enviada", "Garantia Assinada", "Nota Fiscal Anexada"):
+        assert r._assinado_ou_alem(banco(status, True)), status
+        assert not r._assinado_ou_alem(banco(status, False)), f"{status}: so um banco FECHADO conta"
+    for status in (APROVADO, propostas_mod.STATUS_PRE_APROVADO, NEGADO, ""):
+        assert not r._assinado_ou_alem(banco(status, True)), status
+    # o bloco Pendencias so com pendencia de venda (nenhuma "aprovada sem assinar")
+    so_da_venda = r.ResumoDoVendedor(semana, None, 1, (), (), (), (), (), com_pendencias=(("CLIENTE X", ("falta a obra", "falta o contrato")),))
+    assert so_da_venda.tem_pendencias and not r.ResumoDoVendedor(semana, None, 1, (), (), (), (), ()).tem_pendencias
+    assert r.texto_whatsapp(so_da_venda).endswith(
+        "*Pendências*\nPendências em aberto:\n• CLIENTE X: falta a obra\n• CLIENTE X: falta o contrato")
+    print("OK")
+
+    linha("Perdida e Não efetivada: um bloco so; periodo de duas datas livres; escolher os blocos")
+    assert [x.id_venda for x in resumo_a.nao_efetivadas] == [venda_f, venda_h]
+    assert "Perdidas" not in texto_a and "Perdida:" not in texto_a
+    # duas datas livres: as da semana (ou quinzena, ou mes) viram a sugestao; as outras, "livre"
+    assert r.periodo_das_datas(date(2026, 10, 19), date(2026, 10, 25), HOJE) == r.periodo(r.SEMANA, r.ATUAL, HOJE)
+    assert r.periodo_das_datas(date(2026, 10, 12), date(2026, 10, 18), HOJE) == r.periodo(r.SEMANA, r.ANTERIOR, HOJE)
+    assert r.periodo_das_datas(date(2026, 10, 16), date(2026, 10, 31), HOJE) == r.periodo(r.QUINZENA, r.ATUAL, HOJE)
+    assert r.periodo_das_datas(date(2026, 9, 1), date(2026, 9, 30), HOJE) == r.periodo(r.MES, r.ANTERIOR, HOJE)
+    livre = r.periodo_das_datas(date(2026, 10, 20), date(2026, 10, 22), HOJE)
+    assert livre.tipo == r.LIVRE and (livre.inicio, livre.fim) == (date(2026, 10, 20), date(2026, 10, 22))
+    assert livre.do_periodo == "do período" and livre.no_periodo == "no período de 20/10 a 22/10/2026"
+    assert "depois de terminar" in _recusa(r.periodo_das_datas, date(2026, 10, 25), date(2026, 10, 19), HOJE)
+    texto_livre = r.texto_whatsapp(r.montar_resumo(livre, VENDEDOR_A, HOJE))
+    assert texto_livre.splitlines()[:2] == ["*Resumo do período — Vendedor Exemplo*", "20/10 a 22/10/2026 · 7 vendas"], texto_livre
+    sem_vendas = r.periodo_das_datas(date(2026, 1, 7), date(2026, 1, 9), HOJE)
+    assert r.texto_whatsapp(r.montar_resumo(sem_vendas, VENDEDOR_A, HOJE)) == \
+        "Nenhuma venda de Vendedor Exemplo no período de 07/01 a 09/01/2026"
+    # um dia so (de = ate) vale
+    assert r.montar_resumo(r.periodo_das_datas(date(2026, 10, 19), date(2026, 10, 19), HOJE), VENDEDOR_B, HOJE).total == 1
+    # os blocos do texto: so os marcados
+    so_efetivadas_e_pendencias = r.montar_resumo(semana, VENDEDOR_A, HOJE, blocos=[r.EFETIVADAS, r.PENDENCIAS])
+    assert so_efetivadas_e_pendencias.total == 8 and so_efetivadas_e_pendencias.aprovadas == ()
+    assert so_efetivadas_e_pendencias.blocos == (r.EFETIVADAS, r.PENDENCIAS)
+    t = r.texto_whatsapp(so_efetivadas_e_pendencias)
+    assert "*Efetivadas (2)*" in t and "*Pendências*" in t
+    for fora in ("*Aprovadas", "*Em análise", "*Negadas", "*Não efetivadas"):
+        assert fora not in t, fora
+    # o mesmo pelo parametro do texto
+    t2 = r.texto_whatsapp(resumo_a, blocos=[r.NEGADAS, r.NAO_EFETIVADAS])
+    assert "*Negadas (1)*" in t2 and "*Não efetivadas (2)*" in t2 and "Efetivadas (2)" not in t2 and "Pendências" not in t2
+    assert t2.splitlines()[:2] == texto_a.splitlines()[:2], "o titulo e a contagem de vendas ficam"
+    sem_pendencias = r.texto_whatsapp(resumo_a, blocos=[b for b in r.BLOCOS if b != r.PENDENCIAS])
+    assert "Pendências" not in sem_pendencias and "Aprovadas que ainda não assinaram" not in sem_pendencias
+    assert r.montar_resumo(semana, VENDEDOR_A, HOJE, blocos=[r.EFETIVADAS]).com_pendencias == ()
+    # nada marcado: recusa; bloco desconhecido: recusa; blocos marcados sem venda: avisa
+    assert "pelo menos um bloco" in _recusa(r.texto_whatsapp, resumo_a, blocos=[])
+    assert "pelo menos um bloco" in _recusa(r.texto_whatsapp, r.montar_resumo(semana, VENDEDOR_A, HOJE, blocos=[]))
+    assert "Bloco desconhecido" in _recusa(r.montar_resumo, semana, VENDEDOR_A, HOJE, blocos=["observacoes"])
+    assert "Bloco desconhecido" in _recusa(r.texto_whatsapp, resumo_a, blocos=["perdidas"])
+    vazio_de_blocos = r.texto_whatsapp(r.montar_resumo(semana, VENDEDOR_B, HOJE, blocos=[r.NEGADAS]))
+    assert vazio_de_blocos.endswith("\n\nNada nos blocos escolhidos neste período."), vazio_de_blocos
     print("OK")
 
     linha("periodo sem vendas: aviso e sinal de vazio")
@@ -377,36 +553,45 @@ Aprovadas que ainda não assinaram:
     print("OK")
 
     # -- o resumo de uma venda ----------------------------------------------------------------------------
-    linha("texto_da_venda")
+    linha("texto_da_venda: so o status de cada banco, sem datas, sem 'parada', sem observacoes, com as pendencias abertas")
     _igual(r.texto_da_venda(venda_b, HOJE), """\
 *Venda de CLIENTE 02 DUAS* · (11) 90000-0002
 Cadeira Exemplo + Laser Exemplo · Vendedor Exemplo
-Desde 10/10/2026 · Em andamento
+Em andamento
 
 Bancos tentados:
-• Banco Omega R$ 30.000 (48x): Aprovado, seguiu com este · Efetivado em 17/10
-• Banco Alfa R$ 52.000 (36x): Aprovado, seguiu com este · Nota fiscal enviada, parada há 9 dias
+• Banco Omega R$ 30.000 (48x): Efetivado, seguiu com este
+• Banco Alfa R$ 52.000 (36x): NF enviada, seguiu com este
 • Banco Beta R$ 31.000 (36x): Negado
-• Banco Y R$ 25.000 (24x): Em Análise há 3 dias""")
+• Banco Y R$ 25.000 (24x): Em Análise""")
     _igual(r.texto_da_venda(venda_c, HOJE), """\
 *Venda de CLIENTE 03 APROVADA* · (21) 90000-0003
 Mesa Exemplo · Vendedor Exemplo
-Desde 10/10/2026 · Aguardando bancos
+Aguardando bancos
 
 Bancos tentados:
 • Banco Alfa R$ 18.000 (36x): Aprovado
 
-Obs.: falta anexar a biometria do avalista""")
+Pendências em aberto:
+• Cliente vai trazer o avalista""")
     _igual(r.texto_da_venda(venda_i, HOJE), """\
 *Venda de CLIENTE 09 SEM BANCO* · sem telefone
 Mesa Exemplo · Vendedor Tres
-Desde 20/10/2026 · Aguardando bancos
+Aguardando bancos
 
 Bancos tentados:
 Nenhum banco ainda.""")
-    assert r.texto_da_venda(venda_f, HOJE).splitlines()[2] == "Desde 21/10/2026 · Perdida: Desistiu"
-    assert r.texto_da_venda(venda_g, HOJE).splitlines()[2] == "Desde 05/10/2026 · Pendente de entrega: Aguardando a obra"
-    assert "• Banco Gama R$ 7.000 (36x): Em Análise desde hoje" in r.texto_da_venda(venda_l, HOJE).splitlines()
+    assert r.texto_da_venda(venda_f, HOJE).splitlines()[2] == "Perdida: Desistiu"
+    assert r.texto_da_venda(venda_g, HOJE).splitlines()[2] == "Efetivada"
+    assert r.texto_da_venda(venda_g, HOJE).splitlines()[-2:] == ["• Aguardando a obra", "• Falta o contrato assinado"], "uma por linha"
+    assert "• Banco Gama R$ 7.000 (36x): Em Análise" in r.texto_da_venda(venda_l, HOJE).splitlines()
+    for id_venda in (venda_a, venda_b, venda_c, venda_g, venda_k, venda_l):
+        texto_v = r.texto_da_venda(id_venda, HOJE)
+        assert "Desde" not in texto_v and "parada" not in texto_v and "há " not in texto_v and "desde" not in texto_v, texto_v
+        assert "Obs." not in texto_v and "biometria" not in texto_v and "Observações" not in texto_v, texto_v
+        assert not any(c.isdigit() and "/" in linha_v for linha_v in texto_v.splitlines() for c in linha_v), "sem datas"
+        for emoji in ("✅", "🟢", "⏳", "❌", "🚫", "⚠"):
+            assert emoji not in texto_v
     assert "Venda não encontrada" in _recusa(r.texto_da_venda, "V-nao-existe", HOJE)
     print("OK")
 

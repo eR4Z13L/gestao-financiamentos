@@ -729,6 +729,7 @@ class FichaClienteScreen(QWidget):
         layout.addWidget(self._titulo_vendas)
         self.lista_vendas = ListaDeVendas(self._rolagem_ficha, conteudo, com_ficha=False, uma_coluna=True)
         self.lista_vendas.gravou.connect(self._depois_de_gravar_venda)
+        self.lista_vendas.avisou.connect(lambda texto: self._faixa_aviso.avisar(texto))
         layout.addWidget(self.lista_vendas)
 
         # o historico de propostas e SO do VENDEDOR (que nao tem as vendas); o ADMIN ve as vendas acima

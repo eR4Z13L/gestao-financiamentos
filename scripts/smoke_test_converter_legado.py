@@ -87,7 +87,7 @@ VENDAS_EXISTENTES = [
     {"ID_VENDA": "V-Y", "CPF": M, "EQUIPAMENTOS": "Raio W", "STATUS": v.VENDA_EFETIVADA, "BANCO_ESCOLHIDO": "P-Y1", "MOTIVO": "",
      "DATA_CRIACAO": pd.Timestamp(HOJE + timedelta(days=70)), "OBSERVAÇÕES": ""},
 ]
-STATUS_ESPERADOS = ["Assinado", "Aprovado", "Nota fiscal enviada", "Pré-aprovado", "Aprovado", "Negado", "Negado", "Efetivado",
+STATUS_ESPERADOS = ["Assinado", "Aprovado", "NF enviada", "Pré-aprovado", "Aprovado", "Negado", "Negado", "Efetivado",
                     "Negado", "Negado", "Em Análise", "Em Análise", "Aprovado", "Assinado", "Aprovado", "Efetivado", "Aprovado", "Negado", "Negado"]
 
 
@@ -135,12 +135,12 @@ def main() -> None:
     try:
         linha("1) A tabela de status: cada linha, sem diferenciar maiúsculas, acentos e espaços")
         tabela = {
-            "Garantia Assinada": "Assinado", "  garantia   ASSINADA ": "Assinado", "Nota Fiscal Anexada": "Nota fiscal enviada",
-            "NOTA FISCAL ANEXADA": "Nota fiscal enviada", "Não efetivado": "Aprovado", "NAO EFETIVADO": "Aprovado",
+            "Garantia Assinada": "Assinado", "  garantia   ASSINADA ": "Assinado", "Nota Fiscal Anexada": "NF enviada",
+            "NOTA FISCAL ANEXADA": "NF enviada", "Não efetivado": "Aprovado", "NAO EFETIVADO": "Aprovado",
             "EFETIVADO": "Efetivado", "efetivado": "Efetivado", "APROVADO": "Aprovado", "aprovado": "Aprovado",
             "EM ANÁLISE": "Em Análise", "em analise": "Em Análise", "PRÉ-APROVADO": "Pré-aprovado", "pre-aprovado": "Pré-aprovado",
             "Pré aprovado": "Pré-aprovado", "NEGADO": "Negado", "negado": "Negado", "Assinado": "Assinado",
-            "Nota fiscal enviada": "Nota fiscal enviada", "Efetivada": "Efetivado", "Aprovada": "Aprovado", "Negada": "Negado",
+            "Nota fiscal enviada": "NF enviada", "NF enviada": "NF enviada", "nf ENVIADA": "NF enviada", "Efetivada": "Efetivado", "Aprovada": "Aprovado", "Negada": "Negado",
             "Pré-Aprovado": "Pré-aprovado", "  em   ANÁLISE": "Em Análise",
         }
         for antigo, novo in tabela.items():
@@ -170,7 +170,7 @@ def main() -> None:
         assert pergunta_juntar.opcoes == ("juntar", "separar") and "Laser Y" in pergunta_juntar.pergunta
         assert por_tipo[leg.TIPO_ENCERRADA][0].opcoes == ("Aprovado", "Negado", "Em Análise")
         assert por_tipo[leg.TIPO_STATUS_DESCONHECIDO][0].opcoes == (
-            "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "Nota fiscal enviada", "Efetivado"), "os 7 oficiais"
+            "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "NF enviada", "Efetivado"), "os 7 oficiais"
         assert por_tipo[leg.TIPO_FECHADO_SEM_FECHAR][0].opcoes == ("fechar", "Aprovado")
         assert plano.depois["propostas_sem_venda"] == 0, "mesmo sem respostas a simulação mostra tudo em vendas"
         assert not backup_mod.listar_backups(caminho) and len(bd.ler_historico(caminho)) == historico_antes

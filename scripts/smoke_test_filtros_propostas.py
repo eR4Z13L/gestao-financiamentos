@@ -258,10 +258,10 @@ def testar_resumo_por_etapa() -> None:
     assert resumo_por_etapa({"desconhecida": 1, "": 3, "aprovado": 2}) == "2 aprovadas · 1 com status não reconhecido · 3 sem status", "ordem do funil"
     # os status de antes (Garantia assinada, Nota fiscal anexada, Não efetivado, Encerrada) nao tem mais frase propria: contam
     # como "status não reconhecido" ate a conversao (nunca somem da contagem)
-    for antigo in ("Garantia Assinada", "Nota Fiscal Anexada", "Não efetivado", "Encerrada", "APROVADO", "Texto solto"):
+    for antigo in ("Garantia Assinada", "Nota Fiscal Anexada", "Nota fiscal enviada", "Não efetivado", "Encerrada", "APROVADO", "Texto solto"):
         assert etapa_para_contar(antigo) == "desconhecida", antigo
     for oficial, etapa in (("Em Análise", "em_analise"), ("Pré-aprovado", "pre_aprovado"), ("Aprovado", "aprovado"),
-                           ("Negado", "negado"), ("Assinado", "aprovado"), ("Nota fiscal enviada", "aprovado"),
+                           ("Negado", "negado"), ("Assinado", "aprovado"), ("NF enviada", "aprovado"),
                            ("Efetivado", "efetivado"), ("", "")):
         assert etapa_para_contar(oficial) == etapa, oficial
     contagem = Counter(etapa_para_contar(s) for s in ("Aprovado", "Encerrada", "Garantia Assinada", "", "Negado"))
@@ -435,7 +435,7 @@ def testar_filtros_na_tela(app: QApplication, ctx: _Contexto, tela: PropostasScr
     total = "11 proposta(s) · 5 em análise · 2 aprovadas · 1 efetivada · 2 negadas · 1 sem status"
     assert tela._contador.text() == total, tela._contador.text()
     opcoes = [tela._filtro_status.itemText(i) for i in range(tela._filtro_status.count())]
-    assert opcoes == ["Todos", "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "Nota fiscal enviada", "Efetivado"],         "o filtro Resposta oferece só os status oficiais, não os valores crus da planilha"
+    assert opcoes == ["Todos", "Em Análise", "Pré-aprovado", "Aprovado", "Negado", "Assinado", "NF enviada", "Efetivado"],         "o filtro Resposta oferece só os status oficiais, não os valores crus da planilha"
 
     _escolher(tela._filtro_vendedor, "ANA")
     assert _na_lista(tela) == [10, 1, 0, 4, 8, 6]

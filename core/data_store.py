@@ -149,7 +149,10 @@ PROPOSTAS_COLUNAS = [
 
 # Uma linha por venda (cliente + um ou mais equipamentos); as propostas dela apontam pra ela pelo ID_VENDA.
 # EQUIPAMENTOS: os nomes separados por " + ". BANCO_ESCOLHIDO: os ID_PROPOSTA dos bancos fechados, separados por ";".
-VENDAS_COLUNAS = ["ID_VENDA", "CPF", "EQUIPAMENTOS", "STATUS", "BANCO_ESCOLHIDO", "MOTIVO", "DATA_CRIACAO", "OBSERVAÇÕES"]
+# PENDENCIAS (plano 1.2-B, coluna no fim): as pendencias da venda em JSON, ver core/vendas.py. Planilha de antes dela
+# abre sem erro (celula vazia) e ganha o cabecalho na primeira gravacao.
+VENDAS_COLUNAS = ["ID_VENDA", "CPF", "EQUIPAMENTOS", "STATUS", "BANCO_ESCOLHIDO", "MOTIVO", "DATA_CRIACAO", "OBSERVAÇÕES",
+                  "PENDENCIAS"]
 
 # Uma linha por mudanca de status (de venda ou de proposta): e dela que saem os tempos de cada etapa.
 # Nunca e regravada a mao: so cresce (core/vendas.py).

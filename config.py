@@ -74,6 +74,10 @@ SINCRONIZACAO_GOOGLE_ATIVADA = True
 # (ex.: config_local_oficial, pra desenvolver contra o Google Sheets oficial) - pedido de proposito,
 # entao se esse arquivo nao existir o app para com erro em vez de cair na config real calado.
 # Opcional nesse arquivo: NOME_DO_COMPUTADOR, o nome com que este app se identifica na nuvem.
+# True quando um config local (config_local.py ou GESTAO_CONFIG_LOCAL) foi carregado. Isso NAO quer dizer "so dados de
+# teste": o perfil dev com Sheets oficial (config_local_oficial) tambem e config local e usa dados reais. Quem precisa
+# saber se a planilha e so de teste olha tambem o caminho dela (desktop/main_window.py, _planilha_so_de_teste).
+CONFIG_LOCAL_ATIVA = False
 if not os.environ.get("GESTAO_IGNORAR_CONFIG_LOCAL"):
     _perfil_local = os.environ.get("GESTAO_CONFIG_LOCAL", "").strip()
     try:
@@ -88,3 +92,4 @@ if not os.environ.get("GESTAO_IGNORAR_CONFIG_LOCAL"):
     else:
         # o mesmo que "from config_local import *": so os nomes publicos do arquivo
         globals().update({nome: valor for nome, valor in vars(_modulo_local).items() if not nome.startswith("_")})
+        CONFIG_LOCAL_ATIVA = True

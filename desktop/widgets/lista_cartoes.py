@@ -33,9 +33,19 @@ def chave_cor_etapa(etapa: str) -> str:
     return _COR_POR_ETAPA.get(etapa, "neutro")
 
 
+# as etapas de um banco fechado depois de Aprovado tem cor propria na etiqueta (ciano e roxo, como no esboco 1.2), embora
+# para o funil e as taxas continuem "Aprovado"
+_COR_DAS_ETAPAS_DO_FECHADO = {
+    propostas_mod.STATUS_ASSINADO.casefold(): "garantia",
+    propostas_mod.STATUS_NOTA_ENVIADA.casefold(): "nota_fiscal",
+    propostas_mod.STATUS_NOTA_ENVIADA_ANTIGO.casefold(): "nota_fiscal",
+}
+
+
 def chave_cor_status(status: str) -> str:
-    """Igual a chave_cor_etapa, a partir do texto do status."""
-    return chave_cor_etapa(propostas_mod.etapa_status(status))
+    """Igual a chave_cor_etapa, a partir do texto do status (Assinado e NF enviada tem a cor delas)."""
+    propria = _COR_DAS_ETAPAS_DO_FECHADO.get(" ".join(str(status or "").split()).casefold())
+    return propria or chave_cor_etapa(propostas_mod.etapa_status(status))
 
 
 def _alinhar(*flags) -> int:

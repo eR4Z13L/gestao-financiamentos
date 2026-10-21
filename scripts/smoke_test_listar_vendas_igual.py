@@ -38,6 +38,8 @@ from core import vendas as v
 
 REFERENCIA = Path(__file__).resolve().parent / "referencias" / "listar_vendas_1_6.txt"
 HOJE = date(2026, 10, 19)
+PENDENCIAS_DA_V6 = ('[{"id":"PD-1","texto":"Aguardando o frete","criada":"2026-10-10 09:00:00","resolvida":""},'
+                    '{"id":"PD-2","texto":"Comprovante de renda","criada":"2026-10-11 09:00:00","resolvida":"2026-10-12 09:00:00"}]')
 ADMIN = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador")
 
 
@@ -56,9 +58,10 @@ def _proposta(id_p, id_v, cpf, banco, status, data, valor=50000.0, meses=36, equ
             "CARÊNCIA (DIAS)": carencia, "PARCELA (R$)": parcela}
 
 
-def _venda(id_v, cpf, equip, status, fechadas, motivo, criacao, obs="") -> dict:
+def _venda(id_v, cpf, equip, status, fechadas, motivo, criacao, obs="", pendencias="") -> dict:
     return {"ID_VENDA": id_v, "CPF": cpf, "EQUIPAMENTOS": equip, "STATUS": status, "BANCO_ESCOLHIDO": fechadas,
-            "MOTIVO": motivo, "DATA_CRIACAO": _d(criacao) if criacao else None, "OBSERVAÇÕES": obs}
+            "MOTIVO": motivo, "DATA_CRIACAO": _d(criacao) if criacao else None, "OBSERVAÇÕES": obs,
+            "PENDENCIAS": pendencias}
 
 
 def _h(quando, tipo, id_, de, para, motivo="") -> dict:
@@ -89,7 +92,7 @@ def montar_planilha(caminho: Path) -> None:
         # V-5: Perdida (manual), tudo negado
         _proposta("P-e1", "V-5", joao, "Banco Exemplo", P.STATUS_NEGADO, "2026-09-11"),
         _proposta("P-e2", "V-5", joao, "Banco Terceiro", P.STATUS_NEGADO, "2026-09-11"),
-        # V-6: Pendente de entrega (manual) com fechada Efetivada
+        # V-6: Efetivada com uma pendencia aberta e outra resolvida (a pendencia nao e status)
         _proposta("P-f1", "V-6", ana, "Banco Exemplo", P.STATUS_EFETIVADO, "2026-07-30"),
         # V-8: status de antes da 1.2 em banco fechado
         _proposta("P-g1", "V-8", ana, "Banco Exemplo", P.STATUS_GARANTIA_ASSINADA, "2026-09-20"),
@@ -107,7 +110,7 @@ def montar_planilha(caminho: Path) -> None:
         _venda("V-3", ana, "Equipamento Modelo Y", "Efetivada", "P-c1", "", "2026-08-20"),
         _venda("V-4", maria, "Equipamento Modelo X", "Não efetivada", "P-d1;P-fantasma", "Cliente desistiu", "2026-09-10"),
         _venda("V-5", joao, "Equipamento Modelo X", "Perdida", "", "Todos os bancos negaram", "2026-09-10"),
-        _venda("V-6", ana, "Equipamento Modelo Y", "Pendente de entrega", "P-f1", "Aguardando o frete", "2026-07-29"),
+        _venda("V-6", ana, "Equipamento Modelo Y", "Efetivada", "P-f1", "", "2026-07-29", pendencias=PENDENCIAS_DA_V6),
         _venda("V-7", "00000000000", "Equipamento Modelo Z", "Em andamento", "", "", None),  # cliente fora do cadastro
         _venda("V-8", ana, "Equipamento Modelo Y", "Banco escolhido", " P-g1 ; P-a4 ;", "", "2026-09-19"),
         _venda("", maria, "Venda sem ID", "Aguardando bancos", "", "", "2026-09-15"),  # junta as propostas sem ID_VENDA
@@ -129,7 +132,7 @@ def montar_planilha(caminho: Path) -> None:
         _h("2026-10-08 09:00:00", v.TIPO_PROPOSTA, "P-b2", "Em Análise", "Pré-aprovado"),
         _h("2026-10-12 09:00:00", v.TIPO_VENDA, "V-2", "", "Aguardando bancos"),
         _h("2026-09-30 09:00:00", v.TIPO_VENDA, "V-4", "Em andamento", "Não efetivada", "Cliente desistiu"),
-        _h("2026-10-10 09:00:00", v.TIPO_VENDA, "V-6", "Efetivada", "Pendente de entrega", "Aguardando o frete"),
+        _h("2026-10-10 09:00:00", v.TIPO_PENDENCIA, "V-6", "", "Adicionada", "Aguardando o frete"),  # nao zera a parada
         _h("2026-09-25 09:00:00", v.TIPO_PROPOSTA, "P-g1", "Aprovado", "Garantia Assinada"),
         _h("2026-09-26 09:00:00", v.TIPO_PROPOSTA, "P-g2", "Aprovado", "Status Esquisito"),  # "voltar" a status que nao volta
         _h("2026-09-27 09:00:00", v.TIPO_PROPOSTA, "P-g2", "Status Esquisito", "Nota Fiscal Anexada"),

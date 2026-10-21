@@ -206,11 +206,17 @@ def testar_acoes_rapidas(tela, dados: dict, msgs: Mensagens) -> None:
     _card(tela, pb).controles["anel"].click()
     _processar()
     card = _card(tela, pb)
-    assert card.controles["anel"].fechado and card.controles["bolinhas"][0].destino == EFETIVAR
+    assert card.controles["anel"].fechado and card.controles["bolinhas"][0].destino == "Assinado"
+    for etapa in ("Assinado", "NF enviada"):  # uma etapa por clique
+        _card(tela, pb).controles["bolinhas"][0].click()
+        _processar()
+        assert _status(pb) == etapa
+    card = _card(tela, pb)
+    assert card.controles["bolinhas"][0].destino == "Efetivado"
     msgs.resposta_pergunta = NAO
     card.controles["bolinhas"][0].click()
     _processar()
-    assert _status(pb) == propostas_mod.STATUS_APROVADO, "'Não' no 'saiu o financiamento?': nada muda"
+    assert _status(pb) == "NF enviada", "'Não' no 'saiu o financiamento?': nada muda"
     msgs.resposta_pergunta = SIM
     _card(tela, pb).controles["bolinhas"][0].click()
     _processar()

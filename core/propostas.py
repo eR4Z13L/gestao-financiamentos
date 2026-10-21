@@ -24,10 +24,12 @@ STATUS_APROVADO = "Aprovado"
 STATUS_NF_ANEXADA = "Nota Fiscal Anexada"
 STATUS_GARANTIA_ASSINADA = "Garantia Assinada"
 STATUS_EFETIVADO = "Efetivado"
-# As etapas de um banco FECHADO depois de Aprovado (plano 1.2): Aprovado -> Assinado -> Nota fiscal enviada ->
+# As etapas de um banco FECHADO depois de Aprovado (plano 1.2): Aprovado -> Assinado -> NF enviada ->
 # Efetivado. Quem garante que so um banco fechado chega nelas e core/vendas.py (aqui so se classificam).
 STATUS_ASSINADO = "Assinado"
-STATUS_NOTA_ENVIADA = "Nota fiscal enviada"
+STATUS_NOTA_ENVIADA = "NF enviada"
+# o nome de antes (20/10): ainda e lido como sinonimo, caso exista numa planilha; a conversao dos dados antigos o troca
+STATUS_NOTA_ENVIADA_ANTIGO = "Nota fiscal enviada"
 # "Não efetivado": o banco aprovou mas o cliente NAO seguiu com a compra - desfecho
 # FINAL, so alcancavel a partir de "Aprovado" (adicionar_proposta/atualizar_proposta
 # travam qualquer outra origem). Nao confundir com a metrica antiga
@@ -73,9 +75,9 @@ _PALAVRAS_EM_ANALISE = {"EM ANÁLISE", "EM ANALISE", "ANÁLISE", "ANALISE", "PEN
 _PALAVRAS_PRE_APROVADO = {"PRÉ-APROVADO", "PRE-APROVADO", "PRÉ APROVADO", "PRE APROVADO"}
 _PALAVRAS_NF_ANEXADA = {"NOTA FISCAL ANEXADA"}
 _PALAVRAS_GARANTIA_ASSINADA = {"GARANTIA ASSINADA"}
-# Assinado e Nota fiscal enviada (banco fechado): para o funil e as taxas ainda e "Aprovado" - o banco aprovou e o
+# Assinado e NF enviada (banco fechado): para o funil e as taxas ainda e "Aprovado" - o banco aprovou e o
 # financiamento ainda nao saiu (so Efetivado encerra).
-_PALAVRAS_ETAPAS_DO_FECHADO = {"ASSINADO", "NOTA FISCAL ENVIADA"}
+_PALAVRAS_ETAPAS_DO_FECHADO = {"ASSINADO", "NF ENVIADA", STATUS_NOTA_ENVIADA_ANTIGO.upper()}
 _PALAVRAS_APROVADO = (
     _PALAVRAS_APROVADO_NAO_EFETIVADO
     | _PALAVRAS_ETAPAS_DO_FECHADO

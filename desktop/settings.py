@@ -7,6 +7,10 @@ em nenhum arquivo do projeto).
 
 from __future__ import annotations
 
+import hashlib
+import os
+from pathlib import Path
+
 from PySide6.QtCore import QByteArray, QSettings
 
 from desktop.theme import TEMA_CLARO, TEMA_ESCURO
@@ -74,3 +78,21 @@ def obter_geometria_janela() -> QByteArray | None:
 
 def definir_geometria_janela(geometria: QByteArray) -> None:
     _settings().setValue("geometria_janela", geometria)
+
+
+def _chave_sem_aviso_dados_antigos(caminho: Path) -> str:
+    # um hash do caminho: o caminho cru tem barras e dois-pontos, que o QSettings trata como grupos/separadores
+    normalizado = os.path.normcase(os.path.abspath(caminho))
+    return "sem_aviso_dados_antigos/" + hashlib.sha1(normalizado.encode("utf-8")).hexdigest()
+
+
+def obter_sem_aviso_dados_antigos(caminho: Path) -> bool:
+    """True se a pessoa marcou "Nao avisar de novo" para a planilha neste caminho (so planilhas de teste/dev)."""
+    valor = _settings().value(_chave_sem_aviso_dados_antigos(caminho), False)
+    if isinstance(valor, str):
+        return valor.strip().lower() == "true"
+    return bool(valor)
+
+
+def definir_sem_aviso_dados_antigos(caminho: Path, sem_aviso: bool) -> None:
+    _settings().setValue(_chave_sem_aviso_dados_antigos(caminho), sem_aviso)

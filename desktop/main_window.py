@@ -17,11 +17,13 @@ import logging
 import threading
 from datetime import datetime
 from functools import partial
+from pathlib import Path
 
 from PySide6.QtCore import QSize, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -74,6 +76,21 @@ _MARGEM_LATERAL_RECOLHIDA = 12  # (59 uteis - 34 do avatar) / 2: a barra tem 1 p
 _TAMANHO_INICIAL = (1200, 800)
 _FRACAO_DA_TELA_NA_ABERTURA = 0.9
 _LARGURA_PARA_BARRA_EXPANDIDA = 1200  # abaixo disso a barra lateral recolhe sozinha (60 + a pagina mais larga cabe em 1000 px)
+
+
+# as pastas do app com dados REAIS (a planilha real e a do perfil dev com Sheets oficial)
+PASTAS_COM_DADOS_REAIS = ("data", "data_dev_oficial")
+
+
+def _planilha_so_de_teste() -> bool:
+    """So uma planilha de teste/desenvolvimento pode silenciar o aviso de dados antigos: com um config local carregado E
+    o arquivo FORA de data/ e de data_dev_oficial/ (o perfil dev com Sheets oficial usa dados reais, mesmo sendo config
+    local)."""
+    if not config.CONFIG_LOCAL_ATIVA:
+        return False
+    caminho = Path(propostas_mod.CAMINHO_XLSX).resolve()
+    raiz = Path(config.__file__).resolve().parent
+    return not any(caminho.is_relative_to(raiz / pasta) for pasta in PASTAS_COM_DADOS_REAIS)
 
 
 def tamanho_inicial_da_janela(area_da_tela: QSize) -> QSize:
@@ -468,7 +485,19 @@ class MainWindow(QMainWindow):
             return False
         if not antigos:
             return False
-        QMessageBox.warning(self, "Dados de uma versão antiga", antigos.texto())
+        if not _planilha_so_de_teste():  # planilha real (ou o dev com Sheets oficial): o aviso sempre aparece, sem caixinha
+            QMessageBox.warning(self, "Dados de uma versão antiga", antigos.texto())
+            return True
+        # planilha de teste/desenvolvimento: pode silenciar o aviso, por caminho da planilha
+        if settings_mod.obter_sem_aviso_dados_antigos(propostas_mod.CAMINHO_XLSX):
+            return False
+        caixa = QMessageBox(QMessageBox.Icon.Warning, "Dados de uma versão antiga", antigos.texto(),
+                            QMessageBox.StandardButton.Ok, self)
+        marcador = QCheckBox("Não avisar de novo sobre esta planilha")
+        caixa.setCheckBox(marcador)
+        caixa.exec()
+        if marcador.isChecked():
+            settings_mod.definir_sem_aviso_dados_antigos(propostas_mod.CAMINHO_XLSX, True)
         return True
 
     # -- nuvem: dois computadores -------------------------------------------------------------
