@@ -1,7 +1,7 @@
-"""Testa, sem Qt e sem arquivo nenhum, as regras novas de core/dashboard.py (o "painel"): periodo e
-comparacao, numeros do topo, "Precisa de atencao", funil, por banco, qualidade dos
-dados, resumo para copiar e a visao do vendedor. Inclui os casos de borda: sem propostas, tudo sem
-valor, um so banco, "Todos", periodo sem dados.
+"""Testa, sem Qt e sem arquivo nenhum, as regras de core/dashboard.py (o "painel", etapa 2.2): periodo, os 4
+numeros das VENDAS do momento de agora, os filtros que Todas as Propostas aceita, por banco (com a demora para
+responder e a linha "Todos"), o resumo para copiar (das vendas e o das propostas do vendedor) e a visao do
+vendedor. Inclui os casos de borda: sem propostas, um so banco, "Todos", periodo sem dados, mes corrente.
 
 Tudo com DataFrames e nomes inventados - nada da planilha real.
 
@@ -11,7 +11,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_dashboard_core.py
 from __future__ import annotations
 
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 
 from core import dashboard as dash
+from core import data_store as bd
 from core import propostas as propostas_mod
+from core import vendas as v
 from fixture_ficticia import montar_propostas as montar
 from fixture_ficticia import propostas_vazias as vazio
 
@@ -35,7 +37,7 @@ def _dias_atras(n: int) -> pd.Timestamp:
 
 
 def testar_periodos() -> None:
-    linha("1) Periodos e periodo anterior")
+    linha("1) Periodos")
     h = date(2026, 9, 20)
     ts = pd.Timestamp
     assert dash.intervalo_do_periodo(dash.PERIODO_HOJE, h) == (ts(2026, 9, 20), ts(2026, 9, 20))
@@ -51,15 +53,6 @@ def testar_periodos() -> None:
         raise AssertionError("periodo desconhecido tem que dar erro")
     print("OK: hoje / 7 dias / 30 dias / mes / tudo (e periodo desconhecido -> erro).")
 
-    assert dash.intervalo_anterior(dash.PERIODO_HOJE, h) == (ts(2026, 9, 19), ts(2026, 9, 19))
-    assert dash.intervalo_anterior(dash.PERIODO_7_DIAS, h) == (ts(2026, 9, 7), ts(2026, 9, 13))
-    assert dash.intervalo_anterior(dash.PERIODO_30_DIAS, h) == (ts(2026, 7, 23), ts(2026, 8, 21))
-    assert dash.intervalo_anterior(dash.PERIODO_MES, h) == (ts(2026, 8, 1), ts(2026, 8, 20)), "mes: ate o mesmo dia do mes anterior"
-    assert dash.intervalo_anterior(dash.PERIODO_MES, date(2026, 3, 31)) == (ts(2026, 2, 1), ts(2026, 2, 28)), "fevereiro curto: nao passa do ultimo dia"
-    assert dash.intervalo_anterior(dash.PERIODO_MES, date(2026, 3, 1)) == (ts(2026, 2, 1), ts(2026, 2, 1))
-    assert dash.intervalo_anterior(dash.PERIODO_TUDO, h) is None
-    print("OK: o periodo anterior tem o mesmo tamanho (mes: ate o mesmo dia); Tudo nao tem anterior.")
-
     df = montar(
         dict(DATA=ts(2026, 9, 13)), dict(DATA=ts(2026, 9, 14)), dict(DATA=ts(2026, 9, 20)), dict(DATA=ts(2026, 9, 21)), dict(DATA=pd.NaT)
     )
@@ -72,73 +65,8 @@ def testar_periodos() -> None:
     print("OK: filtrar_por_periodo inclui as pontas, deixa de fora quem nao tem data e devolve vazio sem quebrar.")
 
 
-def testar_indicadores() -> None:
-    linha("2) Numeros do topo")
-    df = montar(
-        dict(STATUS="Em Análise", **{"VALOR (R$)": 100.0}),
-        dict(STATUS="Em Análise", **{"VALOR (R$)": 200.0}),
-        dict(STATUS="Em Análise", **{"VALOR (R$)": float("nan")}),
-        dict(STATUS="Aprovado", **{"VALOR (R$)": 300.0}),
-        dict(STATUS="Aprovado", **{"VALOR (R$)": 500.0}),
-        dict(STATUS="Pré-aprovado"),
-        dict(STATUS="Nota Fiscal Anexada"),
-        dict(STATUS="Efetivado"),
-        dict(STATUS="Negado"), dict(STATUS="Negado"), dict(STATUS="Negado"), dict(STATUS="Negado"),
-        dict(STATUS=""),
-    )
-    i = dash.indicadores_do_topo(df)
-    assert i["total"] == 13
-    assert i["em_analise"] == {"quantidade": 3, "valor": 300.0, "com_valor": 2}, i["em_analise"]
-    assert i["a_efetivar"] == {"quantidade": 2, "efetivadas": 1}, "so o status 'Aprovado' esta a efetivar; 1 ja foi efetivada"
-    assert i["taxa_aprovacao"]["aprovadas"] == 5, "aprovadas = todas as etapas positivas (2 + pre + NF + efetivado)"
-    assert i["taxa_aprovacao"]["decididas"] == 9 and abs(i["taxa_aprovacao"]["percentual"] - 5 / 9 * 100) < 1e-9
-    assert i["valor_mediano"]["com_valor"] == 12 and i["valor_mediano"]["total"] == 13, "so 1 das 13 esta sem valor"
-    assert i["valor_mediano"]["mediana"] == 1000.0
-    print("OK: em analise (quantidade, valor, so N tem valor), a efetivar x efetivadas, taxa sobre as decididas.")
-
-    # nenhuma decidida: taxa None (nunca divide por zero); tudo sem valor: mediana None
-    sem_valor = montar(dict(STATUS="Em Análise", **{"VALOR (R$)": float("nan")}), dict(STATUS="Em Análise", **{"VALOR (R$)": float("nan")}))
-    i = dash.indicadores_do_topo(sem_valor)
-    assert i["taxa_aprovacao"] == {"aprovadas": 0, "decididas": 0, "percentual": None}
-    assert i["valor_mediano"] == {"mediana": None, "com_valor": 0, "total": 2}
-    assert i["em_analise"] == {"quantidade": 2, "valor": 0.0, "com_valor": 0}
-    print("OK: tudo sem valor -> mediana None e soma 0; sem decididas -> taxa None.")
-
-    v = dash.indicadores_do_topo(vazio())
-    assert v["total"] == 0 and v["em_analise"]["quantidade"] == 0 and v["valor_mediano"]["mediana"] is None
-    assert v["taxa_aprovacao"]["percentual"] is None and v["a_efetivar"] == {"quantidade": 0, "efetivadas": 0}
-    print("OK: sem nenhuma proposta, tudo zerado (e sem quebrar).")
-
-    mediana = dash.indicadores_do_topo(montar(*[dict(**{"VALOR (R$)": x}) for x in (10.0, 20.0, 1_000_000.0)]))["valor_mediano"]["mediana"]
-    assert mediana == 20.0, "a mediana nao se deixa levar por um valor absurdo (a soma se deixaria)"
-    print("OK: a mediana ignora o valor atipico.")
-
-
-def testar_comparacao() -> None:
-    linha("3) Comparacao com o periodo anterior")
-    atual = dash.indicadores_do_topo(montar(dict(STATUS="Em Análise"), dict(STATUS="Em Análise"), dict(STATUS="Aprovado"), dict(STATUS="Negado"), dict(**{"VALOR (R$)": 200.0})))
-    anterior = dash.indicadores_do_topo(montar(dict(STATUS="Em Análise"), dict(STATUS="Negado"), dict(STATUS="Negado"), dict(**{"VALOR (R$)": 100.0})))
-    c = dash.comparar_periodos(atual, anterior)
-    assert c["em_analise"] == 1, "3 em analise agora contra 2 antes"
-    assert c["a_efetivar"] == 1, "1 a efetivar agora contra nenhuma"
-    assert c["taxa_aprovacao"] == 50.0, "50% (1 de 2) contra 0% (0 de 2): subiu 50 pontos"
-    assert c["valor_mediano"] == 0.0, "as duas medianas sao 1000: variacao 0%"
-    print("OK: as diferencas de cada numero (positivo = subiu).")
-
-    assert dash.comparar_periodos(atual, dash.indicadores_do_topo(vazio())) is None
-    assert dash.comparar_periodos(dash.indicadores_do_topo(vazio()), anterior) is None
-    print("OK: se um dos periodos nao tem nenhuma proposta, nao ha comparacao (None).")
-
-    so_analise = dash.indicadores_do_topo(montar(dict(STATUS="Em Análise")))
-    c = dash.comparar_periodos(so_analise, anterior)
-    assert c["taxa_aprovacao"] is None, "sem propostas decididas de um lado, a taxa nao e comparavel"
-    sem_valor = dash.indicadores_do_topo(montar(dict(**{"VALOR (R$)": float("nan")})))
-    assert dash.comparar_periodos(sem_valor, anterior)["valor_mediano"] is None, "sem mediana de um lado, nao compara a mediana"
-    print("OK: a taxa e a mediana so comparam quando existem dos dois lados.")
-
-
 def testar_atencao() -> None:
-    linha("4) Precisa de atencao")
+    linha("2) Os filtros que Todas as Propostas aceita (as regras de parada, a efetivar, dados estranhos)")
     assert propostas_mod.DIAS_PROPOSTA_PARADA == 7
     df = montar(
         dict(DATA=_dias_atras(8), STATUS="Em Análise"),  # 0: parada (8 dias)
@@ -160,48 +88,20 @@ def testar_atencao() -> None:
         dict(DATA=_dias_atras(1), STATUS="Efetivado", CPF="44444444444", EQUIPAMENTO="EQ MESMA VENDA", BANCO="Banco X"),  # 14
         dict(DATA=_dias_atras(1), STATUS="Em Análise", CPF="44444444444", EQUIPAMENTO="EQ MESMA VENDA", BANCO="Banco Y"),  # 15
     )
-    itens = {i.chave: i for i in dash.precisa_de_atencao(df)}
-    assert set(itens) == {
-        dash.ATENCAO_PARADAS, dash.ATENCAO_A_EFETIVAR, dash.ATENCAO_MESMA_VENDA, dash.ATENCAO_SEM_VALOR,
-        dash.ATENCAO_DUPLICADAS, dash.ATENCAO_DATA_ESTRANHA,
-    }
-    assert itens[dash.ATENCAO_PARADAS].indices == (0, 2), "paradas: em aberto ha MAIS de 7 dias (7 exatos nao conta; encerrada nunca)"
-    assert itens[dash.ATENCAO_A_EFETIVAR].indices == (2,)
-    assert itens[dash.ATENCAO_MESMA_VENDA].indices == (15,), "so a que AINDA esta em aberto; a efetivada (14) nao entra"
-    assert itens[dash.ATENCAO_SEM_VALOR].indices == (4,)
-    assert itens[dash.ATENCAO_DUPLICADAS].indices == (5, 6), "mesmo cliente + equipamento + banco + dia (ignorando caixa/espacos)"
-    assert itens[dash.ATENCAO_DATA_ESTRANHA].indices == (10, 13), "antes de 2020 ou alem de 1 ano no futuro"
-    assert itens[dash.ATENCAO_PARADAS].tom == dash.TOM_PROCESSO and itens[dash.ATENCAO_SEM_VALOR].tom == dash.TOM_DADOS
-    assert [i.chave for i in dash.precisa_de_atencao(df)] == [
-        "paradas", "a_efetivar", "mesma_venda", "sem_valor", "duplicadas", "data_estranha",
-    ], "ordem fixa: o que esta parado no processo antes dos problemas de cadastro"
+    itens = {chave: tuple(sorted(dash.indices_do_filtro(df, dash.FiltroDoDashboard(chave, "x"), HOJE))) for chave in dash.ATENCOES_EM_ORDEM}
+    assert itens[dash.ATENCAO_PARADAS] == (0, 2), "paradas: em aberto ha MAIS de 7 dias (7 exatos nao conta; encerrada nunca)"
+    assert itens[dash.ATENCAO_A_EFETIVAR] == (2,)
+    assert itens[dash.ATENCAO_MESMA_VENDA] == (15,), "so a que AINDA esta em aberto; a efetivada (14) nao entra"
+    assert itens[dash.ATENCAO_SEM_VALOR] == (4,)
+    assert itens[dash.ATENCAO_DUPLICADAS] == (5, 6), "mesmo cliente + equipamento + banco + dia (ignorando caixa/espacos)"
+    assert itens[dash.ATENCAO_DATA_ESTRANHA] == (10, 13), "antes de 2020 ou alem de 1 ano no futuro"
     print("OK: cada grupo com as propostas certas (limites exatos: 7 dias, 2020-01-01, +365 dias; mesma venda em 2 bancos).")
 
-    assert itens[dash.ATENCAO_PARADAS].texto == "2 propostas em aberto há mais de 7 dias"
-    assert itens[dash.ATENCAO_A_EFETIVAR].texto == "1 proposta aprovada ainda sem efetivar", itens[dash.ATENCAO_A_EFETIVAR].texto
-    assert itens[dash.ATENCAO_MESMA_VENDA].texto == "1 proposta em aberto de um cliente que já efetivou o mesmo equipamento em outro banco"
-    assert itens[dash.ATENCAO_SEM_VALOR].texto == "1 proposta sem valor"
-    assert itens[dash.ATENCAO_DUPLICADAS].texto == "2 propostas que parecem duplicadas"
-    assert itens[dash.ATENCAO_PARADAS].rotulo_do_filtro == "Em aberto há mais de 7 dias"
-    print("OK: os textos (singular/plural) e o rotulo do filtro.")
-
-    so_20 = {i.chave: i for i in dash.precisa_de_atencao(df, dias=15)}
-    assert so_20[dash.ATENCAO_PARADAS].indices == (2,) and "15 dias" in so_20[dash.ATENCAO_PARADAS].texto
-    print("OK: o limite de dias e configuravel.")
-
-    em_dia = montar(dict(DATA=_dias_atras(1), STATUS="Em Análise"), dict(DATA=_dias_atras(400), STATUS="Negado"))
-    assert dash.precisa_de_atencao(em_dia) == [], "nada pedindo atencao -> lista vazia (a tela mostra a mensagem positiva)"
-    assert dash.precisa_de_atencao(vazio()) == []
-    print("OK: sem nada a sinalizar (ou sem propostas) -> lista vazia.")
-
     # os filtros que os itens abrem em Todas as Propostas dao EXATAMENTE as mesmas propostas
-    for chave in dash.ATENCOES_EM_ORDEM:
-        filtro = dash.FiltroDoDashboard(chave, "x")
-        assert dash.indices_do_filtro(df, filtro) == set(itens[chave].indices), chave
     assert dash.indices_do_filtro(df, dash.FiltroDoDashboard(dash.ATENCAO_PARADAS, "x", dias=15)) == {2}
     assert dash.indices_do_filtro(df, dash.FiltroDoDashboard(dash.FILTRO_ETAPA, "x", parametro=propostas_mod.ETAPA_NEGADO)) == {3, 10, 11, 12, 13}
     assert dash.indices_do_filtro(df, dash.FiltroDoDashboard(dash.FILTRO_BANCO, "x", parametro="portobank")) == {5, 6, 7}, "banco sem diferenciar caixa"
-    print("OK: indices_do_filtro devolve as mesmas propostas do item (e por etapa e por banco).")
+    print("OK: o limite de dias e configuravel; filtro por etapa e por banco (sem diferenciar caixa).")
 
     for chave in ("nada", ""):
         try:
@@ -215,33 +115,8 @@ def testar_atencao() -> None:
     print("OK: filtro desconhecido e erro (nunca uma lista vazia calada); sem propostas, conjunto vazio.")
 
 
-def testar_funil() -> None:
-    linha("5) Funil por etapa")
-    df = montar(
-        dict(STATUS="Em Análise", **{"VALOR (R$)": 100.0}), dict(STATUS="Em Análise", **{"VALOR (R$)": float("nan")}),
-        dict(STATUS="Pré-aprovado"), dict(STATUS="Aprovado", **{"VALOR (R$)": 50.0}),
-        dict(STATUS="Efetivado"), dict(STATUS="Negado"), dict(STATUS="Negado"), dict(STATUS="Negado"),
-    )
-    f = dash.funil_por_etapa(df)
-    assert [(e.etapa, e.quantidade) for e in f] == [
-        (propostas_mod.ETAPA_EM_ANALISE, 2), (propostas_mod.ETAPA_PRE_APROVADO, 1), (propostas_mod.ETAPA_APROVADO, 1),
-        (propostas_mod.ETAPA_NF_ANEXADA, 0), (propostas_mod.ETAPA_GARANTIA_ASSINADA, 0), (propostas_mod.ETAPA_EFETIVADO, 1),
-        (propostas_mod.ETAPA_NAO_EFETIVADO, 0), (propostas_mod.ETAPA_PROPOSTA_ENCERRADA, 0), (propostas_mod.ETAPA_NEGADO, 3),
-    ], [(e.etapa, e.quantidade) for e in f]
-    assert f[0].valor == 100.0 and f[0].com_valor == 1 and f[-1].rotulo == "Negado" and f[3].rotulo == "Nota fiscal"
-    print("OK: as 6 etapas do funil em ordem, depois 'Não efetivado'/'Encerrada'/'Negado' (fora do funil, separados), "
-          "com valor e quantas tem valor.")
-
-    com_estranhas = montar(dict(STATUS=""), dict(STATUS="coisa esquisita"), dict(STATUS="Em Análise"))
-    extras = [e for e in dash.funil_por_etapa(com_estranhas) if e.etapa in (propostas_mod.ETAPA_SEM_STATUS, propostas_mod.ETAPA_DESCONHECIDA)]
-    assert [(e.rotulo, e.quantidade) for e in extras] == [("Sem status", 1), ("Status não reconhecido", 1)]
-    assert len(dash.funil_por_etapa(df)) == 9 and len(dash.funil_por_etapa(vazio())) == 9
-    assert all(e.quantidade == 0 for e in dash.funil_por_etapa(vazio()))
-    print("OK: 'sem status' e 'nao reconhecido' so aparecem se houver (nada some da conta); vazio = tudo 0.")
-
-
 def testar_por_banco() -> None:
-    linha("6) Por banco")
+    linha("3) Por banco (grafias, taxa, avisos)")
     df = montar(
         *[dict(BANCO="Hubcred BV", STATUS="Aprovado") for _ in range(2)],
         dict(BANCO="HUBCRED BV", STATUS="Negado"),
@@ -265,13 +140,16 @@ def testar_por_banco() -> None:
     assert dash.MINIMO_PARA_ALERTA_DE_BANCO == 5
     print("OK: grafias agrupadas, taxa certa, alerta so com 5+ enviadas e nenhuma aprovada.")
 
-    todos = por_nome["Todos"]
+    todos = por_nome["Todos (banco digitado)"]
+    assert "Todos" not in por_nome, "o 'Todos' digitado nao se confunde com a linha 'Todos' do rodape"
+    assert dash.chave_do_banco("Todos (banco digitado)") == "TODOS", "o filtro de banco usa o nome digitado, sem o sufixo"
     assert todos["Aviso"] == dash.AVISO_NAO_E_BANCO and pd.isna(todos["Taxa (%)"]) and todos["Enviadas"] == 3
     sem = por_nome[dash.ROTULO_SEM_BANCO]
     assert sem["Aviso"] == dash.AVISO_SEM_BANCO and pd.isna(sem["Taxa (%)"]) and sem["Enviadas"] == 1
     assert dash.TEXTO_DO_AVISO_DE_BANCO[dash.AVISO_NAO_E_BANCO].startswith("Revisar")
     print("OK: 'Todos' e 'sem banco' viram 'revisar' e ficam FORA da taxa.")
 
+    assert b["Demora (dias)"].isna().all(), "sem historico: nenhuma demora (nunca um numero chutado)"
     assert list(b["Enviadas"]) == sorted(b["Enviadas"], reverse=True), "mais enviadas primeiro"
     assert dash.chave_do_banco("Portobank") == "PORTOBANK" and dash.chave_do_banco(dash.ROTULO_SEM_BANCO) == ""
     print("OK: ordenado por enviadas; chave do banco pro filtro.")
@@ -282,30 +160,225 @@ def testar_por_banco() -> None:
     print("OK: um so banco; sem propostas -> tabela vazia com as colunas.")
 
 
-def testar_qualidade() -> None:
-    linha("8) Qualidade dos dados")
-    df = montar(
-        dict(), dict(**{"VALOR (R$)": float("nan")}), dict(**{"VALOR (R$)": float("nan")}), dict(MESES=float("nan")), dict(BANCO=""), dict(STATUS=""),
-    )
-    q = {c.chave: c for c in dash.qualidade_dos_dados(df)}
-    assert [c.rotulo for c in dash.qualidade_dos_dados(df)] == ["Valor", "Meses", "Banco", "Status"]
-    assert (q[dash.ATENCAO_SEM_VALOR].preenchidos, q[dash.ATENCAO_SEM_VALOR].total) == (4, 6)
-    assert abs(q[dash.ATENCAO_SEM_VALOR].percentual - 4 / 6 * 100) < 1e-9
-    assert q[dash.ATENCAO_SEM_VALOR].indices_pendentes == (1, 2)
-    assert q[dash.FILTRO_SEM_MESES].indices_pendentes == (3,) and q[dash.FILTRO_SEM_BANCO].indices_pendentes == (4,) and q[dash.FILTRO_SEM_STATUS].indices_pendentes == (5,)
-    for chave, campo in q.items():
-        assert dash.indices_do_filtro(df, dash.FiltroDoDashboard(chave, "x")) == set(campo.indices_pendentes), chave
-    print("OK: % preenchido, quantas e quais estao pendentes (e o filtro abre exatamente essas).")
+# -- as vendas (os 4 numeros) e a demora ------------------------------------------------------------------
 
-    completo = dash.qualidade_dos_dados(montar(dict(), dict()))
-    assert all(c.percentual == 100.0 and c.indices_pendentes == () for c in completo)
-    zero = dash.qualidade_dos_dados(vazio())
-    assert all(c.total == 0 and c.percentual is None and c.indices_pendentes == () for c in zero)
-    print("OK: tudo preenchido = 100%; sem propostas = sem percentual (nunca divisao por zero).")
+_EM_ANALISE, _APROVADO, _EFETIVADO = propostas_mod.STATUS_EM_ANALISE, propostas_mod.STATUS_APROVADO, propostas_mod.STATUS_EFETIVADO
+
+
+def _proposta_da_venda(banco: str, status: str, valor, fechada: bool, dias_na_etapa: int | None = None, id_: str | None = None) -> v.PropostaNaVenda:
+    return v.PropostaNaVenda(id_ or f"P-{banco}", 0, banco, status, valor, 12, None, "EQ", fechada, None, dias_na_etapa=dias_na_etapa)
+
+
+def _venda(id_: str, status: str, propostas=(), dias_na_etapa: int | None = 1, pendencias=(), erro: str = "") -> v.ResumoDaVenda:
+    fechadas = tuple(p.id for p in propostas if p.fechada)
+    return v.ResumoDaVenda(id_, "", "CLIENTE", "VENDEDOR", "EQ", status, "", fechadas, None, dias_na_etapa, "", tuple(propostas),
+                           None, tuple(pendencias), erro)
+
+
+def _pendencia(aberta: bool) -> v.Pendencia:
+    momento = datetime(2026, 10, 1, 9, 0, 0)
+    return v.Pendencia("PD-1", "Aguardando equipamento", momento, None if aberta else momento)
+
+
+def testar_numeros_das_vendas() -> None:
+    linha("4) Os 4 numeros das vendas (o momento de agora)")
+    hoje = date(2026, 10, 21)
+    vendas = [
+        _venda("V1", v.VENDA_AGUARDANDO, dias_na_etapa=2),  # aguardando ha 2 dias: em andamento, nao parada
+        _venda("V2", v.VENDA_AGUARDANDO, dias_na_etapa=7),  # 7 dias exatos: parada
+        _venda("V3", v.VENDA_EM_ANDAMENTO, [_proposta_da_venda("A", _APROVADO, 1000.0, True, 3), _proposta_da_venda("B", _APROVADO, 9999.0, False, 40)]),
+        _venda("V4", v.VENDA_EM_ANDAMENTO, [_proposta_da_venda("A", _APROVADO, 2000.0, True, 6), _proposta_da_venda("B", _APROVADO, None, True, 8)]),  # 8 dias: parada
+        _venda("V5", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 5000.0, True, id_="P5")]),  # 1o de outubro: dentro
+        _venda("V6", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 8888.0, True, id_="P6")]),  # 30 de setembro: fora
+        _venda("V7", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 700.0, True, id_="P7")]),  # hoje: dentro
+        _venda("V8", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 111.0, True, id_="P8")]),  # convertida: sem linha de efetivacao
+        _venda("V9", v.VENDA_PERDIDA, [_proposta_da_venda("A", _APROVADO, 300.0, True, 30, id_="P9")], pendencias=[_pendencia(True)]),  # perdida: nunca parada
+        _venda("V10", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 50.0, True, id_="P10")], pendencias=[_pendencia(True), _pendencia(True)]),  # setembro
+        _venda("V11", v.VENDA_EM_ANDAMENTO, [_proposta_da_venda("A", _APROVADO, 100.0, True, 1)], pendencias=[_pendencia(False)]),  # so resolvida: nao conta
+        _venda("V12", v.VENDA_AGUARDANDO, dias_na_etapa=1, erro="celula ilegivel"),
+        # dois bancos: um efetivou em setembro e o outro em outubro: vale o MAIS RECENTE (outubro)
+        _venda("V13", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 300.0, True, id_="P13a"), _proposta_da_venda("B", _EFETIVADO, 200.0, True, id_="P13b")]),
+        # efetivou, voltou e efetivou de novo: vale a ULTIMA vez (outubro)
+        _venda("V14", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 40.0, True, id_="P14")]),
+        # a unica linha de efetivacao de verdade e de setembro; as de outro tipo, em outubro, nao contam
+        _venda("V15", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 60.0, True, id_="P15")]),
+    ]
+    h = _historico(
+        ("P5", "Aprovado", "Efetivado", "2026-10-01 00:00"),
+        ("P6", "Aprovado", "Efetivado", "2026-09-30 23:59"),
+        ("P7", "Aprovado", "Efetivado", "2026-10-21 18:00"),
+        ("P8", "Aprovado", "Efetivado", "2026-10-15 10:00", v.TIPO_CONVERSAO),  # a conversao nao diz quando efetivou
+        ("P10", "Aprovado", "Efetivado", "2026-09-02 10:00"),
+        ("P13a", "Aprovado", "Efetivado", "2026-09-20 10:00"),
+        ("P13b", "Aprovado", "Efetivado", "2026-10-05 10:00"),
+        ("P14", "Aprovado", "Efetivado", "2026-08-01 10:00"),
+        ("P14", "Efetivado", "Aprovado", "2026-08-02 10:00"),
+        ("P14", "Aprovado", "Efetivado", "2026-10-02 10:00"),
+        ("P15", "Aprovado", "Efetivado", "2026-09-10 10:00"),
+        ("P15", "Efetivado", "Assinado", "2026-10-12 10:00"),  # mudou de etapa em outubro, mas nao e a efetivacao
+        ("P15", "Aprovado", "Efetivado", "2026-10-10 10:00", v.TIPO_FECHAMENTO),
+        ("P15", "Aprovado", "Efetivado", "2026-10-11 10:00", v.TIPO_VENDA),
+        ("V6", "Aprovado", "Efetivado", "2026-10-12 10:00", v.TIPO_VENDA),  # o ID da VENDA nao e o de um banco
+    )
+    n = dash.numeros_das_vendas(vendas, hoje, h)
+    assert n.em_andamento == 6, "V1, V2, V3, V4, V11 e V12 (efetivadas e perdida ficam de fora)"
+    assert n.valor_em_andamento == 1000.0 + 2000.0 + 100.0, "so o valor dos bancos FECHADOS (o 9999 do banco nao fechado fica de fora)"
+    assert n.fechadas_sem_valor == 1, "o banco fechado de V4 sem valor"
+    assert n.paradas == 2 and n.dias_de_parada == 7, "V2 (aguardando ha 7 dias) e V4 (banco fechado ha 8); a perdida nunca"
+    assert n.efetivadas_no_mes == 4 and n.valor_efetivadas_no_mes == 5000.0 + 700.0 + 500.0 + 40.0, "V5 (1o de outubro), V7 (hoje), V13 (o banco mais recente) e V14 (a ultima vez)"
+    assert n.efetivadas_sem_valor == 0 and n.efetivadas_sem_data == 1, "V8 (convertida, so a linha de conversao) nao tem como saber quando: fica fora e avisada"
+    assert n.com_pendencias == 2, "V9 (perdida) e V10 (efetivada em setembro): pendencia aberta em qualquer status; V11 so tem resolvida"
+    assert n.com_pendencias_ilegiveis == 1
+    sem_historico = dash.numeros_das_vendas(vendas, hoje)
+    assert sem_historico.efetivadas_no_mes == 0 and sem_historico.efetivadas_sem_data == 8, "sem historico nenhuma efetivada tem data: todas avisadas"
+    print("OK: em andamento, paradas, efetivadas no mes (data = a mais recente entre os bancos; conversao e outros tipos nao contam), com pendencias.")
+
+    # a regra do mes: o dia 1 entra, o ultimo dia do mes anterior nao, e janeiro de um ano nao conta como o deste
+    def efetivada_em(quando: str, hoje_: date) -> int:
+        venda = _venda("A", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 10.0, True, id_="PA")])
+        return dash.numeros_das_vendas([venda], hoje_, _historico(("PA", "Aprovado", "Efetivado", quando))).efetivadas_no_mes
+
+    assert efetivada_em("2026-10-01 00:00", date(2026, 10, 1)) == 1
+    assert efetivada_em("2026-09-30 23:59", date(2026, 10, 1)) == 0, "ontem = 30/09"
+    assert efetivada_em("2026-01-01 08:00", date(2027, 1, 5)) == 0, "janeiro de outro ano nao e este mes"
+    assert efetivada_em("2027-01-01 08:00", date(2027, 1, 5)) == 1, "1o de janeiro de 2027: dentro"
+    print("OK: limites do mes (dia 1 entra, 30/09 nao, janeiro do ano anterior nao).")
+
+    vazio_ = dash.numeros_das_vendas([], hoje)
+    assert (vazio_.em_andamento, vazio_.paradas, vazio_.efetivadas_no_mes, vazio_.com_pendencias) == (0, 0, 0, 0)
+    assert vazio_.valor_em_andamento == 0.0 and vazio_.valor_efetivadas_no_mes == 0.0
+    sem_valor = dash.numeros_das_vendas([_venda("A", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, None, True, id_="PA")])], hoje,
+                                        _historico(("PA", "Aprovado", "Efetivado", "2026-10-02 10:00")))
+    assert sem_valor.efetivadas_no_mes == 1 and sem_valor.valor_efetivadas_no_mes == 0.0 and sem_valor.efetivadas_sem_valor == 1
+    print("OK: sem vendas tudo zero; efetivada sem valor conta a venda e avisa que falta o valor.")
+
+
+def _historico(*linhas) -> pd.DataFrame:
+    """(ID, DE, PARA, QUANDO[, TIPO]) -> a aba HISTORICO."""
+    registros = [
+        {"QUANDO": pd.Timestamp(q), "TIPO": (resto[0] if resto else v.TIPO_PROPOSTA), "ID": i, "DE": de, "PARA": para, "MOTIVO": "", "COMPUTADOR": ""}
+        for i, de, para, q, *resto in linhas
+    ]
+    return pd.DataFrame(registros, columns=bd.HISTORICO_COLUNAS)
+
+
+def testar_demora_e_por_banco() -> None:
+    linha("5) Por banco: a demora para responder (mediana de dias) e a linha Todos")
+    d = pd.Timestamp
+    df = montar(
+        dict(ID_PROPOSTA="P1", BANCO="Banco Alfa", STATUS="Aprovado", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P2", BANCO="BANCO ALFA", STATUS="Aprovado", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P3", BANCO="Banco Alfa", STATUS="Em Análise", DATA=d(2026, 10, 1)),  # so a criacao: sem resposta
+        dict(ID_PROPOSTA="P4", BANCO="Banco Beta", STATUS="Aprovado", DATA=d(2026, 10, 10)),  # respondeu no mesmo dia
+        dict(ID_PROPOSTA="P5", BANCO="Banco Beta", STATUS="Negado", DATA=d(2026, 10, 10)),  # 1 dia
+        dict(ID_PROPOSTA="P6", BANCO="Banco Gama", STATUS="Em Análise", DATA=d(2026, 10, 3)),  # sem nenhum historico
+        dict(BANCO="Banco Gama", STATUS="Em Análise", DATA=d(2026, 10, 3)),  # sem ID_PROPOSTA (de antes das vendas)
+        dict(ID_PROPOSTA="P8", BANCO="Banco Delta", STATUS="Aprovado", DATA=d(2026, 10, 5)),  # a mudanca no historico e ANTES da DATA
+        dict(ID_PROPOSTA="P9", BANCO="Banco Eps", STATUS="Aprovado", DATA=d(2026, 10, 5)),  # so uma linha de OUTRO tipo
+        dict(ID_PROPOSTA="P10", BANCO="Banco Zeta", STATUS="Efetivado", DATA=d(2026, 10, 1)),  # ja nasceu Aprovada: a efetivacao nao e resposta
+        *[dict(ID_PROPOSTA=f"PM{i}", BANCO="Banco Mediana", STATUS="Aprovado", DATA=d(2026, 10, 1)) for i in range(3)],
+    )
+    h = _historico(
+        *[(f"P{i}", "", "Em Análise", "2026-10-01 09:00") for i in (1, 2, 3)],
+        ("P2", "Em Análise", "Aprovado", "2026-10-06 18:30"),  # 5 dias
+        ("P2", "Aprovado", "Assinado", "2026-10-02 08:00"),  # nao sai de Em Analise: nao e resposta do banco
+        ("P10", "Aprovado", "Efetivado", "2026-10-09 08:00"),
+        ("P1", "Em Análise", "Aprovado", "2026-10-04 12:00"),  # 3 dias
+        ("P4", "Em Análise", "Aprovado", "2026-10-10 15:00"),  # 0 dia
+        ("P4", "Aprovado", "Assinado", "2026-10-20 15:00"),  # a segunda mudanca nao conta
+        ("P5", "Em Análise", "Negado", "2026-10-11 10:00"),  # 1 dia
+        ("P8", "Em Análise", "Aprovado", "2026-10-01 10:00"),
+        ("P9", "Em Análise", "Aprovado", "2026-10-09 10:00", v.TIPO_CONVERSAO),
+        ("PM0", "Em Análise", "Aprovado", "2026-10-02 10:00"),  # 1
+        ("PM0", "Em Análise", "Negado", "2026-10-15 10:00"),  # voltou a Em Analise e respondeu de novo: vale a PRIMEIRA resposta
+        ("PM1", "Em Análise", "Aprovado", "2026-10-03 10:00"),  # 2
+        ("PM2", "Em Análise", "Aprovado", "2026-10-11 10:00"),  # 10: a media seria 4,33, a mediana e 2
+    )
+    demoras = dash.demoras_de_resposta(df, h)
+    assert list(demoras.index) == list(df.index)
+    # P1 3 ; P2 5 ; P3 NaN ; P4 0 ; P5 1 ; P6 NaN ; sem ID NaN ; P8 NaN (negativa) ; P9 NaN ; P10 NaN ; 1, 2, 10
+    esperadas = [3, 5, None, 0, 1, None, None, None, None, None, 1, 2, 10]
+    assert [None if pd.isna(x) else int(x) for x in demoras] == esperadas, list(demoras)
+    print("OK: dias do envio ate a 1a mudanca de status (a criacao, outro tipo de linha, sem ID, sem historico e mudanca antes da data ficam de fora).")
+
+    b = {r["Banco"]: r for _, r in dash.por_banco(df, h).iterrows()}
+    assert b["Banco Alfa"]["Demora (dias)"] == 4.0, "mediana de [3, 5] = 4"
+    assert b["Banco Alfa"]["Enviadas"] == 3, "BANCO ALFA e Banco Alfa sao o mesmo banco"
+    assert b["Banco Beta"]["Demora (dias)"] == 0.5 and b["Banco Mediana"]["Demora (dias)"] == 2.0, "a mediana, nao a media"
+    assert all(pd.isna(b[nome]["Demora (dias)"]) for nome in ("Banco Gama", "Banco Delta", "Banco Eps", "Banco Zeta"))
+    sem_historico = {r["Banco"]: r for _, r in dash.por_banco(df).iterrows()}
+    assert all(pd.isna(r["Demora (dias)"]) for r in sem_historico.values()), "sem historico: '—' em todos"
+    assert all(pd.isna(r["Demora (dias)"]) for _, r in dash.por_banco(df, bd_vazio()).iterrows())
+    print("OK: demora por banco = mediana das demoras; banco sem resposta (ou sem historico) fica sem numero.")
+
+    total = dash.total_por_banco(df, h)
+    assert total["Enviadas"] == 13 and total["Aprovadas"] == 9 and total["Negadas"] == 1 and total["Em Análise"] == 3
+    assert total["Taxa (%)"] == 90.0 and total["Demora (dias)"] == 2.0, "mediana de [3,5,0,1,1,2,10] = 2"
+    assert dash.total_por_banco(montar(dict(STATUS="Em Análise")))["Taxa (%)"] is None, "sem decididas: sem taxa"
+    com_todos = montar(dict(BANCO="Todos", STATUS="Aprovado"), dict(BANCO="", STATUS="Negado"), dict(BANCO="Santander", STATUS="Aprovado"))
+    assert dash.total_por_banco(com_todos)["Enviadas"] == 3, "a linha Todos soma tambem o 'Todos' digitado e as sem banco"
+    print("OK: linha 'Todos' = as mesmas colunas sobre todas as propostas do periodo.")
+
+    assert dash.texto_da_demora(None) == "—" and dash.texto_da_demora(float("nan")) == "—"
+    assert dash.texto_da_demora(0) == "mesmo dia" and dash.texto_da_demora(1.0) == "1 dia" and dash.texto_da_demora(3.0) == "3 dias"
+    assert dash.texto_da_demora(2.5) == "2,5 dias"
+    print("OK: texto da demora (— / mesmo dia / 1 dia / 3 dias / 2,5 dias).")
+
+
+def bd_vazio() -> pd.DataFrame:
+    return pd.DataFrame(columns=bd.HISTORICO_COLUNAS)
+
+
+def testar_resumo_das_vendas() -> None:
+    linha("5b) Resumo para copiar das vendas (sem nome de cliente)")
+    hoje = date(2026, 10, 21)
+    d = pd.Timestamp
+    df = montar(
+        dict(ID_PROPOSTA="P1", BANCO="Banco Alfa", STATUS="Aprovado", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P2", BANCO="Banco Alfa", STATUS="Aprovado", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P3", BANCO="Banco Alfa", STATUS="Negado", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P4", BANCO="Banco Alfa", STATUS="Em Análise", DATA=d(2026, 10, 1)),
+        dict(ID_PROPOSTA="P5", BANCO="Banco Beta", STATUS="Negado", DATA=d(2026, 10, 1)),
+    )
+    h = _historico(("P1", "Em Análise", "Aprovado", "2026-10-03 10:00"), ("P2", "Em Análise", "Aprovado", "2026-10-05 10:00"))
+    numeros = dash.numeros_das_vendas(
+        [_venda("V1", v.VENDA_AGUARDANDO, dias_na_etapa=9), _venda("V2", v.VENDA_EM_ANDAMENTO, [_proposta_da_venda("A", _APROVADO, 100.0, True, 1)]),
+         _venda("V3", v.VENDA_EFETIVADA, [_proposta_da_venda("A", _EFETIVADO, 142000.0, True, id_="P3")]),
+         _venda("V4", v.VENDA_PERDIDA, pendencias=[_pendencia(True)])], hoje, _historico(("P3", "Aprovado", "Efetivado", "2026-10-19 10:00")))
+    bancos, total = dash.por_banco(df, h), dash.total_por_banco(df, h)
+    texto = dash.resumo_das_vendas_para_copiar(numeros, bancos, total, dash.PERIODO_7_DIAS, hoje)
+    assert texto == "\n".join([
+        "Vendas (outubro de 2026): 2 em andamento, 1 parada há 7+ dias, 1 efetivada no mês (R$ 142.000,00), 1 com pendência.",
+        "Bancos nos últimos 7 dias:",
+        "- Banco Alfa: 4 enviadas, 2 aprovadas, 1 negada, 1 em análise, taxa 66,7%, responde em 3 dias.",
+        "- Banco Beta: 1 enviada, 0 aprovadas, 1 negada, 0 em análise, taxa 0,0%.",
+        "- Todos: 5 enviadas, 2 aprovadas, 2 negadas, 1 em análise, taxa 50,0%, responde em 3 dias.",
+    ]), texto
+    for nome_proibido in ("CLIENTE", "VENDEDOR"):
+        assert nome_proibido not in texto
+    print("OK: o texto das vendas + uma linha por banco + Todos (singular/plural, mes e periodo, sem cliente).")
+
+    # o "Todos" digitado como banco aparece como linha de banco, diferente da linha "Todos" do rodape
+    digitado = montar(dict(BANCO="Todos", STATUS="Aprovado"), dict(BANCO="Santander", STATUS="Negado"))
+    texto_digitado = dash.resumo_das_vendas_para_copiar(dash.numeros_das_vendas([], hoje), dash.por_banco(digitado), dash.total_por_banco(digitado),
+                                                         dash.PERIODO_TUDO, hoje).splitlines()
+    assert "- Todos (banco digitado): 1 enviada, 1 aprovada, 0 negadas, 0 em análise." in texto_digitado, texto_digitado
+    assert texto_digitado[-1].startswith("- Todos: 2 enviadas, 1 aprovada, 1 negada")
+    assert not [l for l in texto_digitado if l.startswith("- Todos:") and l != texto_digitado[-1]], "so uma linha 'Todos:' (a do rodape)"
+
+    vendas_zero = dash.numeros_das_vendas([], hoje)
+    zerado = dash.resumo_das_vendas_para_copiar(vendas_zero, dash.por_banco(vazio()), dash.total_por_banco(vazio()), dash.PERIODO_TUDO, hoje)
+    assert zerado == "\n".join([
+        "Vendas (outubro de 2026): 0 em andamento, 0 paradas há 7+ dias, 0 efetivadas no mês, 0 com pendências.",
+        "Nenhuma proposta enviada a bancos no período.",
+    ]), zerado
+    assert dash.resumo_das_vendas_para_copiar(vendas_zero, bancos, total, dash.PERIODO_TUDO, date(2026, 3, 5)).startswith("Vendas (março de 2026)")
+    assert "Bancos em todo o período:" in dash.resumo_das_vendas_para_copiar(vendas_zero, bancos, total, dash.PERIODO_TUDO, hoje)
+    print("OK: sem vendas e sem propostas o texto continua inteiro (zeros e 'Nenhuma proposta...').")
 
 
 def testar_resumo() -> None:
-    linha("9) Resumo para copiar")
+    linha("6) Resumo para copiar (o das propostas, da visao do vendedor)")
     df = montar(*[dict(STATUS="Em Análise") for _ in range(21)], *[dict(STATUS="Aprovado") for _ in range(10)], dict(STATUS="Pré-aprovado"), *[dict(STATUS="Negado") for _ in range(26)], dict(STATUS=""))
     assert dash.resumo_para_copiar(df) == "59 propostas: 21 em análise, 11 aprovadas (0 efetivadas), 26 negadas e 1 sem status."
     print("OK: 'Tudo' -> o texto do exemplo (com as 11 aprovadas e 0 efetivadas).")
@@ -320,7 +393,7 @@ def testar_resumo() -> None:
 
 
 def testar_visao_do_vendedor() -> None:
-    linha("10) Visao do vendedor (minhas em analise / a efetivar / clientes sem proposta)")
+    linha("7) Visao do vendedor (minhas em analise / a efetivar / clientes sem proposta)")
     df = montar(
         dict(STATUS="Em Análise", DATA=_dias_atras(2), CLIENTE="ANA", CPF="10000000001"),
         dict(STATUS="Em Análise", DATA=_dias_atras(9), CLIENTE="ZE", CPF="10000000002", **{"VALOR (R$)": float("nan")}),
@@ -342,39 +415,34 @@ def testar_visao_do_vendedor() -> None:
 
 
 def testar_casos_de_borda_gerais() -> None:
-    linha("11) Bordas gerais: nenhum quebra com propostas vazias")
+    linha("8) Bordas gerais: nenhum quebra com propostas vazias")
     v = vazio()
-    dash.indicadores_do_topo(v)
-    assert dash.funil_por_etapa(v) and dash.por_banco(v).empty and dash.precisa_de_atencao(v) == []
-    assert all(c.total == 0 for c in dash.qualidade_dos_dados(v))
+    assert dash.por_banco(v).empty and dash.por_banco(v, bd_vazio()).empty
+    total = dash.total_por_banco(v)
+    assert total == {"Enviadas": 0, "Aprovadas": 0, "Negadas": 0, "Em Análise": 0, "Taxa (%)": None, "Demora (dias)": None}, total
     # o mesmo, como o app monta o de um vendedor SEM nenhuma proposta: le a planilha (colunas de texto) e filtra -> 0 linhas
     cheias = montar(dict(VENDEDOR="OUTRA PESSOA"), dict(VENDEDOR="OUTRA PESSOA"))
     filtradas = cheias[cheias["VENDEDOR"] == "FULANO SEM PROPOSTAS"]
     assert len(filtradas) == 0
-    dash.indicadores_do_topo(filtradas)
-    dash.funil_por_etapa(filtradas)
     dash.por_banco(filtradas)
-    dash.precisa_de_atencao(filtradas)
-    dash.qualidade_dos_dados(filtradas)
+    dash.total_por_banco(filtradas)
     assert dash.resumo_para_copiar(filtradas) == "Nenhuma proposta."
     print("OK: sem propostas (vazias ou filtradas ate zero) nenhuma funcao do painel quebra.")
 
     # periodo sem dados: filtra ate ficar vazio e o painel todo responde vazio
     velhas = montar(dict(DATA=_dias_atras(400)), dict(DATA=_dias_atras(500)))
     do_periodo = dash.filtrar_por_periodo(velhas, dash.intervalo_do_periodo(dash.PERIODO_7_DIAS))
-    assert do_periodo.empty and dash.indicadores_do_topo(do_periodo)["total"] == 0
-    assert dash.comparar_periodos(dash.indicadores_do_topo(do_periodo), dash.indicadores_do_topo(velhas)) is None
-    print("OK: periodo sem dados -> painel vazio e sem comparacao.")
+    assert do_periodo.empty and dash.total_por_banco(do_periodo)["Enviadas"] == 0
+    print("OK: periodo sem dados -> painel vazio.")
 
 
 def main() -> None:
     testar_periodos()
-    testar_indicadores()
-    testar_comparacao()
     testar_atencao()
-    testar_funil()
     testar_por_banco()
-    testar_qualidade()
+    testar_numeros_das_vendas()
+    testar_demora_e_por_banco()
+    testar_resumo_das_vendas()
     testar_resumo()
     testar_visao_do_vendedor()
     testar_casos_de_borda_gerais()

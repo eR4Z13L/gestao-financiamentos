@@ -1,18 +1,19 @@
 """Tela Dashboard de Propostas.
 
-Tudo calculado em tempo real a partir de CLIENTES e PROPOSTAS (a regra esta em core/dashboard.py) -
-nada fica salvo, so exibido. A pagina rola; no topo ficam o titulo, o seletor de periodo (que vale pra
-TODOS os blocos) e o botao "Recarregar", que rele os dados do zero (pro caso do arquivo ter sido editado
-direto no Excel com o app aberto).
+Tudo calculado em tempo real a partir da planilha (a regra esta em core/dashboard.py) - nada fica salvo, so
+exibido. No topo ficam o titulo, o seletor de periodo e o botao "Recarregar", que rele os dados do zero (pro caso
+do arquivo ter sido editado direto no Excel com o app aberto).
 
-ADMIN ve: os numeros do topo, e duas abas - "Visao geral" (funil por etapa, desempenho por banco) e
-"Mais detalhes" (precisa de atencao, qualidade dos dados, resumo para copiar, desempenho por vendedor).
-VENDEDOR ve so o dele (as propostas ja vem filtradas), numa unica grade sem abas (ja e enxuta): os numeros
-do topo, "minhas em analise", "minhas aprovadas para efetivar", "meus clientes sem proposta", o funil, o
-desempenho por banco e o resumo - nunca o nome de outro vendedor, nem os blocos que exigem escrever.
+ADMIN ve, sem abas e cabendo numa janela de 1366x768: os 4 numeros das VENDAS do momento de agora (em andamento,
+paradas, efetivadas no mes e com pendencias - NAO seguem o seletor de periodo; "Paradas" e "Com pendencias" levam
+a tela Vendas ja filtrada), "Por banco" (segue o periodo: enviadas, aprovadas, negadas, em analise, taxa e a
+demora para responder, mais a linha "Todos") e o resumo para copiar.
+VENDEDOR ve so o dele (as propostas ja vem filtradas e a leitura dele nao tem as vendas): "minhas em analise",
+"minhas aprovadas para efetivar", "meus clientes sem proposta", por banco (sem a demora: nao tem o historico) e o
+resumo das propostas - nunca o nome de outro vendedor, nem os blocos que exigem escrever.
 
-A tela nao navega sozinha: cada linha clicavel EMITE um sinal (`filtro_pedido`, `ficha_pedida`) e a janela
-principal leva a pessoa pra Todas as Propostas ja filtrada ou pra Ficha.
+A tela nao navega sozinha: cada linha clicavel EMITE um sinal (`filtro_pedido`, `ficha_pedida`, `vendas_pedidas`) e a
+janela principal leva a pessoa pra Todas as Propostas ja filtrada, pra Ficha ou pra Vendas.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,52 +39,34 @@ from core import dashboard as dashboard_mod
 from core import data_store as bd
 from core import propostas as propostas_mod
 from core import sessao as sessao_mod
+from core import vendas as vendas_mod
 from core.dashboard import FiltroDoDashboard
 from core.formatting import formatar_reais, formatar_tempo
+from desktop.screens.vendas_screen import FILTRO_COM_PENDENCIAS, FILTRO_PARADAS
 from desktop.vigia_do_arquivo import VigiaDoArquivo
 from desktop.widgets.botao_copiar import BotaoCopiar
 from desktop.widgets.botao_recarregar import criar_botao_recarregar
 from desktop.widgets.cartao_do_painel import CartaoDoPainel
-from desktop.widgets.funil_de_etapas import FunilDeEtapas
 from desktop.widgets.linha_clicavel import LinhaClicavel
-from desktop.widgets.linha_de_qualidade import LinhaDeQualidade
 from desktop.widgets.metric_card import MetricCard
 from desktop.widgets.seletor_de_periodo import SeletorDePeriodo
-from desktop.widgets.tabela_de_painel import COR_AVISO, COR_ERRO, Celula, TabelaDePainel
+from desktop.widgets.tabela_de_painel import COR_ERRO, Celula, TabelaDePainel
 
 _MAXIMO_DE_LINHAS = 8  # nas listas curtas ("minhas...", clientes sem proposta); o resto vira "e mais N"
-_ROTULOS_DE_PENDENTES = {
-    dashboard_mod.ATENCAO_SEM_VALOR: "Sem valor preenchido",
-    dashboard_mod.FILTRO_SEM_MESES: "Sem meses preenchido",
-    dashboard_mod.FILTRO_SEM_BANCO: "Sem banco informado",
-    dashboard_mod.FILTRO_SEM_STATUS: "Sem status",
-}
-_AVISO_CURTO_DE_BANCO = {
-    dashboard_mod.AVISO_SEM_APROVACAO: "Sem aprovações",
-    dashboard_mod.AVISO_NAO_E_BANCO: "Revisar",
-    dashboard_mod.AVISO_SEM_BANCO: "Revisar",
-}
-_COLUNAS_DE_BANCO = ["Banco", "Enviadas", "Aprovadas", "Negadas", "Em análise", "Taxa", "Aviso"]
-_COLUNAS_DE_VENDEDOR = ["Vendedor", "Total", "Em análise", "Aprovadas", "Negadas", "Taxa", "A efetivar", "Valor aprovado"]
+_COLUNAS_DE_BANCO = ["Banco", "Enviadas", "Aprovadas", "Negadas", "Em análise", "Taxa", "Demora para responder"]
+_COLUNA_DA_DEMORA = 6
+_ACAO_DOS_CARTOES = "Ver na tela Vendas →"
+_LEGENDA_DA_DEMORA = "Mediana de dias entre o envio e a primeira resposta do banco registrada no histórico"
 
 
 def _percentual(valor: float) -> str:
     return f"{valor:.1f}".replace(".", ",") + "%"
 
 
-def _diferenca(valor: float, unidade: str, referencia: str, casas: int = 0) -> str:
-    """"▲ +3 vs. os 7 dias anteriores" / "▼ -2 ..." / "= sem mudança vs. ..." (o sinal e a seta dizem o sentido, sem julgar
-    se e bom ou ruim: mais propostas em analise nao e nem uma coisa nem outra)."""
-    if abs(valor) < 10 ** -casas / 2:
-        return f"= sem mudança vs. {referencia}"
-    seta = "▲" if valor > 0 else "▼"
-    numero = f"{valor:+.{casas}f}".replace(".", ",")
-    return f"{seta} {numero}{unidade} vs. {referencia}"
-
-
 class DashboardScreen(QWidget):
     filtro_pedido = Signal(object)  # FiltroDoDashboard: abrir Todas as Propostas so com isso
     ficha_pedida = Signal(str)  # cpf: abrir a Ficha desse cliente
+    vendas_pedidas = Signal(str)  # o nome do filtro da tela Vendas (vendas_screen.FILTRO_*): abrir Vendas so com isso
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -92,8 +74,11 @@ class DashboardScreen(QWidget):
         self._periodo = dashboard_mod.PERIODO_PADRAO
         self._propostas = pd.DataFrame(columns=bd.PROPOSTAS_COLUNAS)
         self._clientes = pd.DataFrame(columns=bd.CLIENTES_COLUNAS)
+        self._vendas: list[vendas_mod.ResumoDaVenda] = []
+        self._historico: pd.DataFrame | None = None
         self._no_periodo = self._propostas
         self._intervalo = None
+        self._numeros: dashboard_mod.NumerosDasVendas | None = None
         self._texto_do_resumo = ""
         self._desatualizado = False
         self._vigia = VigiaDoArquivo()
@@ -115,8 +100,13 @@ class DashboardScreen(QWidget):
         corpo = QVBoxLayout(conteudo)
         corpo.setContentsMargins(0, 0, 12, 0)  # a folga da direita e da barra de rolagem
         corpo.setSpacing(16)
-        corpo.addLayout(self._construir_topo())
-        corpo.addWidget(self._construir_grade())
+        self._construir_blocos()
+        if self._vendedor:
+            corpo.addLayout(self._construir_blocos_do_vendedor())
+        else:
+            corpo.addLayout(self._construir_topo())
+        corpo.addWidget(self._cartao_bancos)
+        corpo.addWidget(self._cartao_resumo)
         corpo.addStretch(1)
 
         self._carregar_dados()
@@ -131,58 +121,44 @@ class DashboardScreen(QWidget):
         cabecalho.addWidget(titulo)
         cabecalho.addStretch()
         self._seletor = SeletorDePeriodo(self._periodo)
+        self._seletor.setToolTip("O período vale para \"Por banco\" e para o resumo. Os números das vendas são sempre os de agora.")
         self._seletor.periodo_alterado.connect(self._ao_mudar_periodo)
         cabecalho.addWidget(self._seletor)
         cabecalho.addWidget(criar_botao_recarregar(self._carregar_dados))
         return cabecalho
 
     def _construir_topo(self) -> QHBoxLayout:
+        """Os 4 numeros das vendas (ADMIN): o momento de agora, sem seguir o periodo."""
+        dias = propostas_mod.DIAS_PROPOSTA_PARADA
         topo = QHBoxLayout()
         topo.setSpacing(16)
-        self._card_em_analise = MetricCard("Em análise")
-        self._card_a_efetivar = MetricCard("Aprovadas a efetivar")
-        self._card_taxa = MetricCard("Taxa de aprovação")
-        self._card_mediano = MetricCard("Valor mediano")
-        self._card_a_efetivar.setToolTip("Propostas com status \"Aprovado\" que ainda não viraram \"Efetivado\" (a compra ainda não foi concluída).")
-        self._card_taxa.setToolTip("Aprovadas ÷ (aprovadas + negadas). \"Aprovada\" conta todas as etapas positivas (aprovado, pré-aprovado, nota fiscal, garantia e efetivado). Propostas em análise ainda não entram na conta.")
-        self._card_mediano.setToolTip("Metade das propostas com valor está acima dele e metade abaixo. Ao contrário da soma, um valor muito alto (ou de teste) não o distorce.")
-        for card in (self._card_em_analise, self._card_a_efetivar, self._card_taxa, self._card_mediano):
+        self._card_andamento = MetricCard("Vendas em andamento")
+        self._card_paradas = MetricCard(f"Paradas há {dias}+ dias")
+        self._card_efetivadas = MetricCard("Efetivadas no mês")
+        self._card_pendencias = MetricCard("Com pendências")
+        self._card_andamento.setToolTip("Vendas que aguardam resposta dos bancos ou já têm banco fechado e ainda não efetivaram. O valor é a soma das propostas dos bancos fechados.")
+        self._card_paradas.setToolTip(f"Vendas aguardando bancos, ou com banco fechado parado na mesma etapa, há {dias} dias ou mais (a mesma regra da tela Vendas).")
+        self._card_efetivadas.setToolTip("Vendas que viraram Efetivadas neste mês (a contar da última mudança de status da venda).")
+        self._card_pendencias.setToolTip("Vendas, de qualquer status, com alguma pendência aberta (ex.: equipamento ainda não entregue).")
+        self._card_paradas.tornar_clicavel(_ACAO_DOS_CARTOES)
+        self._card_pendencias.tornar_clicavel(_ACAO_DOS_CARTOES)
+        self._card_paradas.clicado.connect(lambda: self.vendas_pedidas.emit(FILTRO_PARADAS))
+        self._card_pendencias.clicado.connect(lambda: self.vendas_pedidas.emit(FILTRO_COM_PENDENCIAS))
+        for card in (self._card_andamento, self._card_paradas, self._card_efetivadas, self._card_pendencias):
             topo.addWidget(card, 1)
         return topo
 
-    @staticmethod
-    def _nova_grade() -> QGridLayout:
-        grade = QGridLayout()
-        grade.setHorizontalSpacing(16)
-        grade.setVerticalSpacing(16)
-        grade.setColumnStretch(0, 1)
-        grade.setColumnStretch(1, 1)
-        return grade
-
-    @staticmethod
-    def _pagina(layout: QGridLayout) -> QWidget:
-        pagina = QWidget()
-        pagina.setProperty("role", "transparente")
-        pagina.setLayout(layout)
-        return pagina
-
-    def _construir_grade(self) -> QWidget:
-        """Funil/Por banco/Resumo sao compartilhados pelos dois papeis. ADMIN ve o
-        resto (Precisa de atenção, Qualidade dos dados, Por vendedor) numa 2a aba,
-        mais discreta - o que importa no dia a dia (funil + banco) fica na 1a, junto
-        dos numeros do topo. VENDEDOR ve tudo numa unica grade: a visao dele ja e
-        enxuta, sem precisar de abas."""
-        self._cartao_funil = CartaoDoPainel("Funil por etapa", "Clique numa etapa para ver as propostas dela")
-        self._funil = FunilDeEtapas()
-        self._funil.etapa_clicada.connect(self._pedir_filtro_de_etapa)
-        self._cartao_funil.corpo.addWidget(self._funil)
-
+    def _construir_blocos(self) -> None:
+        """Por banco e Resumo: os dois papeis tem."""
         self._cartao_bancos = CartaoDoPainel(
             "Por banco",
-            "Taxa = aprovadas ÷ (aprovadas + negadas). Clique no cabeçalho para ordenar e numa linha para ver as propostas do banco.",
+            "Segue o período escolhido. Taxa = aprovadas ÷ (aprovadas + negadas). "
+            + ("" if self._vendedor else "Demora = mediana de dias até o banco responder. ")
+            + "Clique numa linha para ver as propostas do banco.",
         )
-        self._tabela_bancos = TabelaDePainel(_COLUNAS_DE_BANCO, coluna_da_barra=5, colunas_a_direita=(1, 2, 3, 4, 5))
+        self._tabela_bancos = TabelaDePainel(_COLUNAS_DE_BANCO, coluna_da_barra=5, colunas_a_direita=(1, 2, 3, 4, 5, 6))
         self._tabela_bancos.linha_clicada.connect(self._pedir_filtro_de_banco)
+        self._tabela_bancos.setColumnHidden(_COLUNA_DA_DEMORA, self._vendedor)  # a leitura do vendedor nao tem o historico
         self._cartao_bancos.corpo.addWidget(self._tabela_bancos)
 
         self._cartao_resumo = CartaoDoPainel("Resumo para copiar")
@@ -196,43 +172,7 @@ class DashboardScreen(QWidget):
         linha_do_resumo.addWidget(self._botao_copiar_resumo, alignment=Qt.AlignmentFlag.AlignTop)
         self._cartao_resumo.corpo.addLayout(linha_do_resumo)
 
-        if self._vendedor:
-            grade = self._nova_grade()
-            self._construir_blocos_do_vendedor(grade)
-            return self._pagina(grade)
-        return self._construir_abas_do_admin()
-
-    def _construir_abas_do_admin(self) -> QTabWidget:
-        visao_geral = self._nova_grade()
-        # bancos precisa da largura toda (7 colunas de tabela) - o mesmo espaco que ja
-        # tinha antes das abas; funil fica sozinho na linha de cima (nada mais sobra
-        # pra por do lado dele nesta aba - "Precisa de atencao" foi pra "Mais detalhes")
-        visao_geral.addWidget(self._cartao_funil, 0, 0, 1, 2)
-        visao_geral.addWidget(self._cartao_bancos, 1, 0, 1, 2)
-
-        self._cartao_atencao = CartaoDoPainel("Precisa de atenção", "Clique para ver as propostas")
-        self._cartao_qualidade = CartaoDoPainel("Qualidade dos dados", "Quanto das propostas tem cada campo preenchido")
-        self._cartao_vendedores = CartaoDoPainel("Por vendedor", "Clique no cabeçalho para ordenar")
-        self._tabela_vendedores = TabelaDePainel(_COLUNAS_DE_VENDEDOR, colunas_a_direita=(1, 2, 3, 4, 5, 6, 7))
-        self._cartao_vendedores.corpo.addWidget(self._tabela_vendedores)
-
-        direita = QVBoxLayout()
-        direita.setSpacing(16)
-        direita.addWidget(self._cartao_qualidade)
-        direita.addWidget(self._cartao_resumo)
-        direita.addStretch(1)  # a sobra de altura (o cartao da esquerda e mais alto) fica embaixo, nao dentro dos cartoes
-
-        mais_detalhes = self._nova_grade()
-        mais_detalhes.addWidget(self._cartao_atencao, 0, 0)
-        mais_detalhes.addLayout(direita, 0, 1)
-        mais_detalhes.addWidget(self._cartao_vendedores, 1, 0, 1, 2)
-
-        abas = QTabWidget()
-        abas.addTab(self._pagina(visao_geral), "Visão geral")
-        abas.addTab(self._pagina(mais_detalhes), "Mais detalhes")
-        return abas
-
-    def _construir_blocos_do_vendedor(self, grade: QGridLayout) -> None:
+    def _construir_blocos_do_vendedor(self) -> QGridLayout:
         self._cartao_minhas_em_analise = CartaoDoPainel("Minhas em análise")
         self._cartao_minhas_a_efetivar = CartaoDoPainel("Minhas aprovadas para efetivar")
         self._cartao_meus_clientes = CartaoDoPainel("Meus clientes sem proposta", "De todos os períodos: clique para abrir a ficha")
@@ -241,12 +181,15 @@ class DashboardScreen(QWidget):
         self._cartao_minhas_em_analise.adicionar_acao(self._botao_ver_em_analise)
         self._cartao_minhas_a_efetivar.adicionar_acao(self._botao_ver_a_efetivar)
 
+        grade = QGridLayout()
+        grade.setHorizontalSpacing(16)
+        grade.setVerticalSpacing(16)
+        grade.setColumnStretch(0, 1)
+        grade.setColumnStretch(1, 1)
         grade.addWidget(self._cartao_minhas_em_analise, 0, 0)
         grade.addWidget(self._cartao_minhas_a_efetivar, 0, 1)
-        grade.addWidget(self._cartao_meus_clientes, 1, 0)
-        grade.addWidget(self._cartao_funil, 1, 1)
-        grade.addWidget(self._cartao_bancos, 2, 0, 1, 2)
-        grade.addWidget(self._cartao_resumo, 3, 0, 1, 2)
+        grade.addWidget(self._cartao_meus_clientes, 1, 0, 1, 2)
+        return grade
 
     def _criar_botao_de_ver_todas(self, etapa: str) -> QPushButton:
         botao = QPushButton("Ver todas")
@@ -279,6 +222,9 @@ class DashboardScreen(QWidget):
         try:
             propostas = propostas_mod.listar_propostas()
             clientes = clientes_mod.listar_clientes() if self._vendedor else self._clientes
+            # o VENDEDOR le da nuvem, sem as vendas nem o historico
+            vendas = [] if self._vendedor else vendas_mod.listar_vendas(self._hoje())
+            historico = None if self._vendedor else bd.ler_historico(propostas_mod.CAMINHO_XLSX)
         except FileNotFoundError:
             QMessageBox.critical(
                 self,
@@ -291,6 +237,8 @@ class DashboardScreen(QWidget):
             return
         self._propostas = propostas
         self._clientes = clientes
+        self._vendas = vendas
+        self._historico = historico
         self._desatualizado = False
         self._atualizar()
 
@@ -303,7 +251,7 @@ class DashboardScreen(QWidget):
         return self._periodo
 
     def definir_periodo(self, periodo: str) -> None:
-        """Muda o periodo (como clicar no botao dele) e refaz todos os blocos."""
+        """Muda o periodo (como clicar no botao dele) e refaz os blocos que o seguem."""
         self._seletor.definir_periodo(periodo)
         self._ao_mudar_periodo(periodo)
 
@@ -311,155 +259,94 @@ class DashboardScreen(QWidget):
         hoje = self._hoje()
         self._intervalo = dashboard_mod.intervalo_do_periodo(self._periodo, hoje)
         self._no_periodo = dashboard_mod.filtrar_por_periodo(self._propostas, self._intervalo)
-        self._atualizar_topo(hoje)
-        self._funil.definir_etapas(dashboard_mod.funil_por_etapa(self._no_periodo))
-        self._atualizar_bancos()
-        self._atualizar_resumo()
+        bancos, total = self._atualizar_bancos()
         if self._vendedor:
+            self._texto_do_resumo = dashboard_mod.resumo_para_copiar(self._no_periodo, self._periodo)
             self._atualizar_listas_do_vendedor()
         else:
-            self._atualizar_atencao(hoje)
-            self._atualizar_qualidade()
-            self._atualizar_vendedores()
+            self._numeros = dashboard_mod.numeros_das_vendas(self._vendas, hoje, self._historico)
+            self._atualizar_topo(self._numeros)
+            self._texto_do_resumo = dashboard_mod.resumo_das_vendas_para_copiar(self._numeros, bancos, total, self._periodo, hoje)
+        self._rotulo_do_resumo.setText(self._texto_do_resumo)
 
-    # -- numeros do topo ----------------------------------------------------------------------
+    # -- os 4 numeros das vendas ---------------------------------------------------------------
 
-    def _atualizar_topo(self, hoje: date) -> None:
-        topo = dashboard_mod.indicadores_do_topo(self._no_periodo)
-        comparacao = None
-        anterior = dashboard_mod.intervalo_anterior(self._periodo, hoje)
-        if anterior is not None:
-            comparacao = dashboard_mod.comparar_periodos(
-                topo, dashboard_mod.indicadores_do_topo(dashboard_mod.filtrar_por_periodo(self._propostas, anterior))
-            )
-        referencia = dashboard_mod.descricao_do_periodo_anterior(self._periodo)
-
-        em_analise = topo["em_analise"]
-        self._card_em_analise.definir_valor(str(em_analise["quantidade"]))
-        if not em_analise["quantidade"]:
-            self._card_em_analise.definir_detalhe("Nenhuma proposta em análise")
+    def _atualizar_topo(self, n: dashboard_mod.NumerosDasVendas) -> None:
+        self._card_andamento.definir_valor(str(n.em_andamento))
+        if not n.em_andamento:
+            self._card_andamento.definir_detalhe("Nenhuma venda em andamento")
         else:
-            detalhe = formatar_reais(em_analise["valor"]) if em_analise["com_valor"] else "Nenhuma com valor"
-            if 0 < em_analise["com_valor"] < em_analise["quantidade"]:
-                detalhe += f" · só {em_analise['com_valor']} têm valor"
-            self._card_em_analise.definir_detalhe(detalhe)
+            detalhe = f"{formatar_reais(n.valor_em_andamento)} em propostas fechadas"
+            if n.fechadas_sem_valor:
+                detalhe += f" · {n.fechadas_sem_valor} sem valor"
+            self._card_andamento.definir_detalhe(detalhe, aviso=bool(n.fechadas_sem_valor))
 
-        a_efetivar = topo["a_efetivar"]
-        self._card_a_efetivar.definir_valor(str(a_efetivar["quantidade"]))
-        efetivadas = a_efetivar["efetivadas"]
-        detalhe_a_efetivar = f"{efetivadas} {'efetivada' if efetivadas == 1 else 'efetivadas'} até agora"
-        taxa_efetivacao = topo["taxa_efetivacao"]
-        if taxa_efetivacao["percentual"] is not None:
-            # das aprovadas (inclui quem ainda esta so "Aprovado" pendente), quantas viraram venda
-            detalhe_a_efetivar += f" · {_percentual(taxa_efetivacao['percentual'])} das aprovadas já efetivaram"
-        self._card_a_efetivar.definir_detalhe(detalhe_a_efetivar, aviso=efetivadas == 0)
+        self._card_paradas.definir_valor(str(n.paradas))
+        self._card_paradas.definir_valor_em_aviso(n.paradas > 0)
+        self._card_paradas.definir_detalhe("Precisam de atenção" if n.paradas else "Nenhuma venda parada", aviso=n.paradas > 0)
 
-        taxa = topo["taxa_aprovacao"]
-        if taxa["percentual"] is None:
-            self._card_taxa.definir_valor("—")
-            self._card_taxa.definir_detalhe("Nenhuma proposta decidida")
+        self._card_efetivadas.definir_valor(str(n.efetivadas_no_mes))
+        if not n.efetivadas_no_mes:
+            detalhe, aviso = "Nenhuma venda efetivada neste mês", False
         else:
-            self._card_taxa.definir_valor(_percentual(taxa["percentual"]))
-            self._card_taxa.definir_detalhe(f"{taxa['aprovadas']} de {taxa['decididas']} decididas")
+            detalhe, aviso = formatar_reais(n.valor_efetivadas_no_mes), bool(n.efetivadas_sem_valor)
+            if n.efetivadas_sem_valor:
+                detalhe += f" · {n.efetivadas_sem_valor} sem valor"
+        if n.efetivadas_sem_data:
+            detalhe += f" · {n.efetivadas_sem_data} sem data de efetivação (fora da conta)"
+            aviso = True
+        self._card_efetivadas.definir_detalhe(detalhe, aviso=aviso)
 
-        mediano = topo["valor_mediano"]
-        self._card_mediano.definir_valor(formatar_reais(mediano["mediana"]) if mediano["mediana"] is not None else "—")
-        self._card_mediano.definir_detalhe(f"{mediano['com_valor']} de {mediano['total']} com valor")
-
-        for card, chave, unidade, casas in (
-            (self._card_em_analise, "em_analise", "", 0),
-            (self._card_a_efetivar, "a_efetivar", "", 0),
-            (self._card_taxa, "taxa_aprovacao", " p.p.", 1),
-            (self._card_mediano, "valor_mediano", "%", 0),
-        ):
-            diferenca = None if comparacao is None else comparacao[chave]
-            card.definir_comparacao("" if diferenca is None else _diferenca(diferenca, unidade, referencia, casas))
-
-    # -- precisa de atencao -------------------------------------------------------------------
-
-    def _atualizar_atencao(self, hoje: date) -> None:
-        self._cartao_atencao.limpar_corpo()
-        itens = dashboard_mod.precisa_de_atencao(self._no_periodo, hoje=hoje)
-        if not itens:
-            quando = dashboard_mod.descricao_do_periodo(self._periodo)
-            mensagem = QLabel(f"Tudo em dia: nenhuma proposta pedindo atenção{' ' + quando if quando else ''}.")
-            mensagem.setProperty("role", "positivo")
-            mensagem.setWordWrap(True)
-            self._cartao_atencao.corpo.addWidget(mensagem)
-            return
-        for item in itens:
-            linha = LinhaClicavel(item.texto, item.tom)
-            linha.clicked.connect(lambda _=False, i=item: self._pedir_filtro_de_atencao(i))
-            self._cartao_atencao.corpo.addWidget(linha)
+        self._card_pendencias.definir_valor(str(n.com_pendencias))
+        if n.com_pendencias_ilegiveis:
+            self._card_pendencias.definir_detalhe(f"{n.com_pendencias_ilegiveis} venda(s) com a pendência ilegível (fora da conta)", aviso=True)
+        else:
+            self._card_pendencias.definir_detalhe("" if n.com_pendencias else "Nenhuma pendência aberta")
 
     # -- por banco ------------------------------------------------------------------------------
 
-    def _atualizar_bancos(self) -> None:
-        bancos = dashboard_mod.por_banco(self._no_periodo)
+    def _atualizar_bancos(self) -> tuple[pd.DataFrame, dict]:
+        bancos = dashboard_mod.por_banco(self._no_periodo, self._historico)
+        total = dashboard_mod.total_por_banco(self._no_periodo, self._historico)
         linhas = []
         for _, b in bancos.iterrows():
             aviso = b["Aviso"]
-            taxa = b["Taxa (%)"]
-            tem_taxa = not pd.isna(taxa)
             explicacao = dashboard_mod.TEXTO_DO_AVISO_DE_BANCO.get(aviso, "")
             celulas = [
                 Celula(b["Banco"], tooltip=explicacao or b["Banco"], cor=(COR_ERRO if aviso in (dashboard_mod.AVISO_NAO_E_BANCO, dashboard_mod.AVISO_SEM_BANCO) else None)),
-                Celula(str(b["Enviadas"]), float(b["Enviadas"]), a_direita=True),
-                Celula(str(b["Aprovadas"]), float(b["Aprovadas"]), a_direita=True),
-                Celula(str(b["Negadas"]), float(b["Negadas"]), a_direita=True),
-                Celula(str(b["Em Análise"]), float(b["Em Análise"]), a_direita=True),
-                Celula(
-                    _percentual(taxa) if tem_taxa else "—",
-                    float(taxa) if tem_taxa else -1.0,
-                    tooltip="Aprovadas ÷ (aprovadas + negadas)" if tem_taxa else "Fora da taxa",
-                    barra=taxa / 100 if tem_taxa else None,
-                    a_direita=True,
-                ),
-                Celula(
-                    _AVISO_CURTO_DE_BANCO.get(aviso, ""),
-                    tooltip=explicacao,
-                    cor=COR_AVISO if aviso == dashboard_mod.AVISO_SEM_APROVACAO else COR_ERRO if aviso else None,
-                ),
+                *self._celulas_dos_numeros(b),
             ]
             linhas.append(((dashboard_mod.chave_do_banco(b["Banco"]), b["Banco"]), celulas))
-        self._tabela_bancos.definir_linhas(linhas, ordenar_por=1, decrescente=True)
+        rodape = [Celula("Todos", tooltip="Todas as propostas do período, com ou sem banco informado"), *self._celulas_dos_numeros(total)]
+        self._tabela_bancos.definir_linhas(linhas, ordenar_por=1, decrescente=True, rodape=rodape)
+        return bancos, total
 
-    # -- resumo para copiar -----------------------------------------------------------------------
-
-    def _atualizar_resumo(self) -> None:
-        self._texto_do_resumo = dashboard_mod.resumo_para_copiar(self._no_periodo, self._periodo)
-        self._rotulo_do_resumo.setText(self._texto_do_resumo)
-
-
-    # -- qualidade dos dados --------------------------------------------------------------------------
-
-    def _atualizar_qualidade(self) -> None:
-        self._cartao_qualidade.limpar_corpo()
-        for campo in dashboard_mod.qualidade_dos_dados(self._no_periodo):
-            linha = LinhaDeQualidade(campo)
-            linha.pendentes_pedidas.connect(self._pedir_filtro_de_pendentes)
-            self._cartao_qualidade.corpo.addWidget(linha)
-
-    # -- por vendedor ------------------------------------------------------------------------------------
-
-    def _atualizar_vendedores(self) -> None:
-        vendedores = dashboard_mod.por_vendedor(self._no_periodo)
-        linhas = []
-        for _, v in vendedores.iterrows():
-            decididas = v["Aprovadas"] + v["Negadas"]
-            taxa = v["Taxa Aprovação (%)"]
-            celulas = [
-                Celula(str(v["Vendedor"]), tooltip=str(v["Vendedor"])),
-                Celula(str(v["Total"]), float(v["Total"]), a_direita=True),
-                Celula(str(v["Em Análise"]), float(v["Em Análise"]), a_direita=True),
-                Celula(str(v["Aprovadas"]), float(v["Aprovadas"]), a_direita=True),
-                Celula(str(v["Negadas"]), float(v["Negadas"]), a_direita=True),
-                Celula(_percentual(taxa) if decididas else "—", float(taxa) if decididas else -1.0, a_direita=True, tooltip="Aprovadas ÷ (aprovadas + negadas)"),
-                Celula(str(v["Não Efetivadas"]), float(v["Não Efetivadas"]), a_direita=True, tooltip="Propostas com status \"Aprovado\" que ainda não viraram \"Efetivado\""),
-                Celula(formatar_reais(v["Valor Aprovado (R$)"]), float(v["Valor Aprovado (R$)"]), a_direita=True),
-            ]
-            linhas.append((None, celulas))
-        self._tabela_vendedores.definir_linhas(linhas, ordenar_por=1, decrescente=True)
+    @staticmethod
+    def _celulas_dos_numeros(dados) -> list[Celula]:
+        """Enviadas, Aprovadas, Negadas, Em analise, Taxa e Demora de uma linha de por_banco (ou do total)."""
+        taxa = dados["Taxa (%)"]
+        tem_taxa = taxa is not None and not pd.isna(taxa)
+        demora = dados["Demora (dias)"]
+        tem_demora = demora is not None and not pd.isna(demora)
+        return [
+            Celula(str(dados["Enviadas"]), float(dados["Enviadas"]), a_direita=True),
+            Celula(str(dados["Aprovadas"]), float(dados["Aprovadas"]), a_direita=True),
+            Celula(str(dados["Negadas"]), float(dados["Negadas"]), a_direita=True),
+            Celula(str(dados["Em Análise"]), float(dados["Em Análise"]), a_direita=True),
+            Celula(
+                _percentual(taxa) if tem_taxa else "—",
+                float(taxa) if tem_taxa else -1.0,
+                tooltip="Aprovadas ÷ (aprovadas + negadas)" if tem_taxa else "Fora da taxa",
+                barra=taxa / 100 if tem_taxa else None,
+                a_direita=True,
+            ),
+            Celula(
+                dashboard_mod.texto_da_demora(demora if tem_demora else None),
+                float(demora) if tem_demora else -1.0,
+                tooltip=_LEGENDA_DA_DEMORA if tem_demora else "Nenhuma resposta registrada no histórico",
+                a_direita=True,
+            ),
+        ]
 
     # -- visao do vendedor -----------------------------------------------------------------------------------
 
@@ -512,10 +399,6 @@ class DashboardScreen(QWidget):
         de, ate = (None, None) if self._intervalo is None else self._intervalo
         return FiltroDoDashboard(chave, rotulo, parametro, dias, de, ate)
 
-    def _pedir_filtro_de_atencao(self, item: dashboard_mod.ItemDeAtencao) -> None:
-        dias = propostas_mod.DIAS_PROPOSTA_PARADA if item.chave == dashboard_mod.ATENCAO_PARADAS else None
-        self.filtro_pedido.emit(self._filtro(item.chave, item.rotulo_do_filtro, dias=dias))
-
     def _pedir_filtro_de_etapa(self, etapa: str) -> None:
         self.filtro_pedido.emit(self._filtro(dashboard_mod.FILTRO_ETAPA, dashboard_mod.rotulo_do_filtro_de_etapa(etapa), parametro=etapa))
 
@@ -525,6 +408,3 @@ class DashboardScreen(QWidget):
             self.filtro_pedido.emit(self._filtro(dashboard_mod.FILTRO_SEM_BANCO, "Sem banco informado"))
         else:
             self.filtro_pedido.emit(self._filtro(dashboard_mod.FILTRO_BANCO, f"Banco: {nome}", parametro=chave))
-
-    def _pedir_filtro_de_pendentes(self, chave: str) -> None:
-        self.filtro_pedido.emit(self._filtro(chave, _ROTULOS_DE_PENDENTES[chave]))

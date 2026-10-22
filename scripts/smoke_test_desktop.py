@@ -81,23 +81,18 @@ def testar_dashboard_screen(app: QApplication) -> None:
 
     tela = _manter_viva(DashboardScreen())
     propostas = propostas_mod.listar_propostas()
-    topo = dashboard_mod.indicadores_do_topo(propostas)
+    numeros = dashboard_mod.numeros_das_vendas(vendas_mod.listar_vendas())
 
-    assert tela._card_em_analise.valor() == str(topo["em_analise"]["quantidade"])
-    assert tela._card_a_efetivar.valor() == str(topo["a_efetivar"]["quantidade"])
-    print(f"Cards batem com indicadores_do_topo(): {topo['em_analise']['quantidade']} em análise, {topo['a_efetivar']['quantidade']} a efetivar")
-
-    funil_esperado = dashboard_mod.funil_por_etapa(propostas)
-    assert [(e.etapa, e.quantidade) for e in tela._funil.etapas()] == [(e.etapa, e.quantidade) for e in funil_esperado]
-    print(f"Funil por etapa: {len(funil_esperado)} linhas, as mesmas de core/dashboard.py")
+    assert tela._card_andamento.valor() == str(numeros.em_andamento)
+    assert tela._card_paradas.valor() == str(numeros.paradas)
+    assert tela._card_efetivadas.valor() == str(numeros.efetivadas_no_mes)
+    assert tela._card_pendencias.valor() == str(numeros.com_pendencias)
+    print(f"Cartões batem com numeros_das_vendas(): {numeros.em_andamento} em andamento, {numeros.paradas} paradas")
 
     bancos_esperados = dashboard_mod.por_banco(propostas)
     assert tela._tabela_bancos.total_de_linhas() == len(bancos_esperados)
-    print(f"Tabela por banco: {tela._tabela_bancos.total_de_linhas()} linhas (esperado {len(bancos_esperados)})")
-
-    vendedor_esperado = dashboard_mod.por_vendedor(propostas)
-    assert tela._tabela_vendedores.total_de_linhas() == len(vendedor_esperado)
-    print(f"Tabela de desempenho por vendedor: {tela._tabela_vendedores.total_de_linhas()} linhas (esperado {len(vendedor_esperado)})")
+    assert tela._tabela_bancos.textos_do_rodape()[0] == "Todos"
+    print(f"Tabela por banco: {tela._tabela_bancos.total_de_linhas()} linhas (esperado {len(bancos_esperados)}) e a linha Todos")
 
     print("\nOK: DashboardScreen exibe exatamente o que core/dashboard.py calcula.")
 

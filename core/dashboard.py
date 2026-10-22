@@ -2,10 +2,11 @@
 nada fica salvo na planilha.
 
 Duas camadas neste arquivo. A de cima (`totais_gerais`, `detalhamento_por_status`,
-`por_vendedor`) e a original. A de baixo ("Painel") e a do dashboard atual: periodo, numeros do
-topo, "Precisa de atencao", funil, por banco, qualidade dos dados, resumo para
-copiar e a visao do vendedor. Todas as funcoes do painel recebem DataFrames ja lidos (nunca leem
-arquivo) e o dashboard so SINALIZA: nenhuma corrige dado.
+`por_vendedor`) e a original: nao aparecem mais no Dashboard do ADMIN e ficam para o modo vendedor e para os
+testes de regra (a efetivar, taxa) que as usam. A de baixo ("Painel") e a do dashboard atual: periodo, os 4 numeros das
+VENDAS (o momento de agora), por banco (com a demora para responder), resumo para copiar, os filtros que
+Todas as Propostas aceita e a visao do vendedor. Todas as funcoes do painel recebem dados ja lidos (nunca
+leem arquivo) e o dashboard so SINALIZA: nenhuma corrige dado.
 """
 
 from __future__ import annotations
@@ -17,8 +18,9 @@ from typing import Iterable
 
 import pandas as pd
 
+from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
-from core.formatting import dias_do_tempo
+from core.formatting import dias_do_tempo, formatar_reais
 from core import propostas as propostas_mod
 from core.propostas import (
     ETAPA_APROVADO,
@@ -223,12 +225,6 @@ _DESCRICAO_DO_PERIODO = {
     PERIODO_MES: "neste mês",
     PERIODO_TUDO: "",
 }
-_DESCRICAO_DO_ANTERIOR = {
-    PERIODO_HOJE: "ontem",
-    PERIODO_7_DIAS: "os 7 dias anteriores",
-    PERIODO_30_DIAS: "os 30 dias anteriores",
-    PERIODO_MES: "o mês anterior",
-}
 
 
 def _dia(data) -> pd.Timestamp:
@@ -252,29 +248,9 @@ def intervalo_do_periodo(periodo: str, hoje: date | None = None) -> tuple[pd.Tim
     raise ValueError(f"Período desconhecido: {periodo!r}")
 
 
-def intervalo_anterior(periodo: str, hoje: date | None = None) -> tuple[pd.Timestamp, pd.Timestamp] | None:
-    """O periodo de mesmo tamanho logo antes do atual (Hoje -> ontem; 7 dias -> os 7 anteriores). "Mes"
-    compara com o mes anterior ATE O MESMO DIA (10 dias de um mes contra 10 do outro, nunca contra o
-    mes inteiro). None em "Tudo": nao ha o que comparar."""
-    atual = intervalo_do_periodo(periodo, hoje)
-    if atual is None:
-        return None
-    inicio, fim = atual
-    if periodo == PERIODO_MES:
-        fim_do_mes_anterior = inicio - pd.Timedelta(days=1)
-        inicio_anterior = fim_do_mes_anterior.replace(day=1)
-        return inicio_anterior, inicio_anterior.replace(day=min(fim.day, fim_do_mes_anterior.day))
-    dias = (fim - inicio).days + 1
-    return inicio - pd.Timedelta(days=dias), inicio - pd.Timedelta(days=1)
-
-
 def descricao_do_periodo(periodo: str) -> str:
     """"hoje", "nos ultimos 7 dias"... ("" em Tudo): pra completar uma frase."""
     return _DESCRICAO_DO_PERIODO[periodo]
-
-
-def descricao_do_periodo_anterior(periodo: str) -> str:
-    return _DESCRICAO_DO_ANTERIOR.get(periodo, "")
 
 
 def filtrar_por_periodo(propostas: pd.DataFrame, intervalo: tuple[pd.Timestamp, pd.Timestamp] | None) -> pd.DataFrame:
@@ -286,7 +262,7 @@ def filtrar_por_periodo(propostas: pd.DataFrame, intervalo: tuple[pd.Timestamp, 
     return propostas[(datas >= intervalo[0]) & (datas <= intervalo[1])]
 
 
-# -- numeros do topo ------------------------------------------------------------------------
+# -- utilitarios ----------------------------------------------------------------------------
 
 
 def _valores(propostas: pd.DataFrame) -> pd.Series:
@@ -298,81 +274,7 @@ def _texto_normalizado(serie: pd.Series) -> pd.Series:
     return serie.fillna("").astype(str).str.strip().str.upper()
 
 
-def indicadores_do_topo(propostas: pd.DataFrame) -> dict:
-    """Os numeros do topo do dashboard:
-    - em_analise: quantas, a soma dos valores e quantas TEM valor (o resto nao entra na soma);
-    - a_efetivar: as de status exatamente "Aprovado" (aprovadas que ainda nao viraram compra, nem
-      desistiram) e quantas ja foram efetivadas - o que mostra se o processo termina. Não conta
-      "Não efetivado" nem "Encerrada": essas ja tem um desfecho, nao estao mais "a efetivar";
-    - taxa_aprovacao: aprovadas (todas as etapas positivas, "Não efetivado" incluido - o banco
-      aprovou) sobre as DECIDIDAS (aprovadas + negadas). "Encerrada" fica de fora dos dois lados;
-    - taxa_efetivacao: das aprovadas (mesma base da taxa_aprovacao, incluindo quem ainda esta so
-      "Aprovado" pendente), quantas viraram venda de fato - None sem nenhuma aprovada;
-    - valor_mediano: a mediana dos valores preenchidos (a soma engana quando ha valores de teste ou
-      atipicos) e quantas propostas tem valor."""
-    etapas = propostas["STATUS"].map(etapa_status)
-    categoria = propostas["STATUS"].map(categoria_status)
-    valores = _valores(propostas)
-
-    em_analise = etapas == ETAPA_EM_ANALISE
-    aprovadas = int((categoria == "Aprovado").sum())
-    negadas = int((categoria == "Negado").sum())
-    decididas = aprovadas + negadas
-    efetivadas_qtd = int((etapas == ETAPA_EFETIVADO).sum())
-    com_valor = valores.dropna()
-    return {
-        "total": len(propostas),
-        "em_analise": {
-            "quantidade": int(em_analise.sum()),
-            "valor": float(valores[em_analise].sum()),
-            "com_valor": int(valores[em_analise].notna().sum()),
-        },
-        "a_efetivar": {
-            "quantidade": int(((etapas == ETAPA_APROVADO) & ~propostas_mod.fora_do_fluxo(propostas)).sum()),
-            "efetivadas": efetivadas_qtd,
-        },
-        "taxa_aprovacao": {
-            "aprovadas": aprovadas,
-            "decididas": decididas,
-            "percentual": (aprovadas / decididas * 100) if decididas else None,
-        },
-        "taxa_efetivacao": {
-            "efetivadas": efetivadas_qtd,
-            "aprovadas": aprovadas,
-            "percentual": (efetivadas_qtd / aprovadas * 100) if aprovadas else None,
-        },
-        "valor_mediano": {
-            "mediana": float(com_valor.median()) if len(com_valor) else None,
-            "com_valor": len(com_valor),
-            "total": len(propostas),
-        },
-    }
-
-
-def comparar_periodos(atual: dict, anterior: dict) -> dict | None:
-    """A diferenca de cada numero do topo contra o periodo anterior, ou None se nao da pra comparar
-    (um dos dois periodos sem nenhuma proposta). Cada item e None quando ele especifico nao
-    e comparavel (ex.: taxa sem nenhuma proposta decidida num dos lados). Positivo = subiu."""
-    if not atual["total"] or not anterior["total"]:
-        return None
-
-    def _diferenca(a, b):
-        return None if a is None or b is None else a - b
-
-    mediana_atual, mediana_anterior = atual["valor_mediano"]["mediana"], anterior["valor_mediano"]["mediana"]
-    variacao_da_mediana = None
-    if mediana_atual is not None and mediana_anterior:
-        variacao_da_mediana = (mediana_atual - mediana_anterior) / mediana_anterior * 100
-    return {
-        "em_analise": atual["em_analise"]["quantidade"] - anterior["em_analise"]["quantidade"],
-        "a_efetivar": atual["a_efetivar"]["quantidade"] - anterior["a_efetivar"]["quantidade"],
-        "taxa_aprovacao": _diferenca(atual["taxa_aprovacao"]["percentual"], anterior["taxa_aprovacao"]["percentual"]),
-        "taxa_efetivacao": _diferenca(atual["taxa_efetivacao"]["percentual"], anterior["taxa_efetivacao"]["percentual"]),
-        "valor_mediano": variacao_da_mediana,
-    }
-
-
-# -- precisa de atencao (e os filtros que os itens abrem em Todas as Propostas) ---------------
+# -- os filtros que o Dashboard abre em Todas as Propostas (e a regra de cada grupo) ---------
 
 ATENCAO_PARADAS = "paradas"
 ATENCAO_A_EFETIVAR = "a_efetivar"
@@ -416,16 +318,6 @@ class FiltroDoDashboard:
     dias: int | None = None
     periodo_de: pd.Timestamp | None = None
     periodo_ate: pd.Timestamp | None = None
-
-
-@dataclass(frozen=True)
-class ItemDeAtencao:
-    chave: str
-    tom: str
-    quantidade: int
-    texto: str  # "31 propostas em aberto há mais de 7 dias"
-    rotulo_do_filtro: str  # "Em aberto há mais de 7 dias"
-    indices: tuple[int, ...]
 
 
 def _plural(n: int, singular: str, plural: str) -> str:
@@ -481,29 +373,6 @@ def _indices_de_atencao(propostas: pd.DataFrame, chave: str, dias: int, hoje: da
     raise ValueError(f"Grupo de atenção desconhecido: {chave!r}")
 
 
-def precisa_de_atencao(propostas: pd.DataFrame, dias: int | None = None, hoje: date | None = None) -> list[ItemDeAtencao]:
-    """Os grupos de propostas que pedem uma olhada, so os que tem alguma (lista vazia = tudo em dia). `dias`:
-    ha quantos dias em aberto conta como "parada" (padrao: propostas.DIAS_PROPOSTA_PARADA, o mesmo
-    do selo da barra lateral)."""
-    if dias is None:
-        dias = propostas_mod.DIAS_PROPOSTA_PARADA  # lido agora, nao copiado no import: um limite so
-    definicoes = {
-        ATENCAO_PARADAS: (TOM_PROCESSO, lambda n: _plural(n, "proposta", "propostas") + f" em aberto há mais de {dias} dias", f"Em aberto há mais de {dias} dias"),
-        ATENCAO_A_EFETIVAR: (TOM_PROCESSO, lambda n: _plural(n, "proposta aprovada", "propostas aprovadas") + " ainda sem efetivar", "Aprovadas ainda sem efetivar"),
-        ATENCAO_MESMA_VENDA: (TOM_PROCESSO, lambda n: _plural(n, "proposta em aberto", "propostas em aberto") + " de um cliente que já efetivou o mesmo equipamento em outro banco", "Cliente já efetivou em outro banco"),
-        ATENCAO_SEM_VALOR: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " sem valor", "Sem valor preenchido"),
-        ATENCAO_DUPLICADAS: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " que parecem duplicadas", "Parecem duplicadas"),
-        ATENCAO_DATA_ESTRANHA: (TOM_DADOS, lambda n: _plural(n, "proposta", "propostas") + " com data fora do padrão", "Data fora do padrão"),
-    }
-    itens = []
-    for chave in ATENCOES_EM_ORDEM:
-        indices = _indices_de_atencao(propostas, chave, dias, hoje)
-        if indices:
-            tom, texto, rotulo = definicoes[chave]
-            itens.append(ItemDeAtencao(chave, tom, len(indices), texto(len(indices)), rotulo, tuple(indices)))
-    return itens
-
-
 def rotulo_do_filtro_de_etapa(etapa: str) -> str:
     return f"Etapa: {ROTULOS_DE_ETAPA[etapa]}"
 
@@ -531,7 +400,7 @@ def indices_do_filtro(propostas: pd.DataFrame, filtro: FiltroDoDashboard, hoje: 
     raise ValueError(f"Filtro do dashboard desconhecido: {chave!r}")
 
 
-# -- funil por etapa ---------------------------------------------------------------------------
+# -- rotulos das etapas (o chip "Etapa: ..." do filtro de etapa) -------------------------------
 
 ROTULOS_DE_ETAPA = {
     ETAPA_EM_ANALISE: "Em análise",
@@ -546,51 +415,11 @@ ROTULOS_DE_ETAPA = {
     ETAPA_SEM_STATUS: "Sem status",
     ETAPA_DESCONHECIDA: "Status não reconhecido",
 }
-ETAPAS_DO_FUNIL = [
-    ETAPA_EM_ANALISE,
-    ETAPA_PRE_APROVADO,
-    ETAPA_APROVADO,
-    ETAPA_NF_ANEXADA,
-    ETAPA_GARANTIA_ASSINADA,
-    ETAPA_EFETIVADO,
-]
-# Desfechos que saem do funil principal (mostrados depois, separados por um filete -
-# ver desktop/widgets/funil_de_etapas.py): "Não efetivado" e "Encerrada" sao tao
-# "fora do funil" quanto "Negado" - todos sao pontos finais que nao a etapa seguinte.
-ETAPAS_FORA_DO_FUNIL = [ETAPA_NAO_EFETIVADO, ETAPA_PROPOSTA_ENCERRADA, ETAPA_NEGADO]
-
-
-@dataclass(frozen=True)
-class EtapaDoFunil:
-    etapa: str
-    rotulo: str
-    quantidade: int
-    valor: float  # soma dos valores PREENCHIDOS
-    com_valor: int
-
-
-def funil_por_etapa(propostas: pd.DataFrame) -> list[EtapaDoFunil]:
-    """Uma linha por etapa do funil (em ordem), depois os desfechos que saem dele - "Não efetivado",
-    "Encerrada" e "Negado" (ETAPAS_FORA_DO_FUNIL), sempre nessa ordem. "Sem status" e "Status nao
-    reconhecido" so aparecem se houver alguma - uma proposta que nao se encaixa nao pode sumir da conta."""
-    etapas = propostas["STATUS"].map(etapa_status)
-    valores = _valores(propostas)
-
-    def _linha(etapa: str) -> EtapaDoFunil:
-        da_etapa = etapas == etapa
-        return EtapaDoFunil(
-            etapa, ROTULOS_DE_ETAPA[etapa], int(da_etapa.sum()), float(valores[da_etapa].sum()), int(valores[da_etapa].notna().sum())
-        )
-
-    linhas = [_linha(e) for e in ETAPAS_DO_FUNIL + ETAPAS_FORA_DO_FUNIL]
-    linhas += [l for l in (_linha(ETAPA_SEM_STATUS), _linha(ETAPA_DESCONHECIDA)) if l.quantidade]
-    return linhas
-
-
 # -- por banco ---------------------------------------------------------------------------------
 
-COLUNAS_POR_BANCO = ["Banco", "Enviadas", "Aprovadas", "Negadas", "Em Análise", "Taxa (%)", "Aviso"]
+COLUNAS_POR_BANCO = ["Banco", "Enviadas", "Aprovadas", "Negadas", "Em Análise", "Taxa (%)", "Demora (dias)", "Aviso"]
 ROTULO_SEM_BANCO = "(sem banco)"
+SUFIXO_BANCO_DIGITADO = " (banco digitado)"  # "Todos" digitado como banco: nao se confunde com a linha "Todos" do rodape
 AVISO_SEM_APROVACAO = "sem_aprovacao"
 AVISO_NAO_E_BANCO = "nao_e_banco"
 AVISO_SEM_BANCO = "sem_banco"
@@ -612,14 +441,52 @@ def _grafia_mais_usada(textos: Iterable[str]) -> str:
     return min(contagem, key=lambda t: (-contagem[t], t))
 
 
-def por_banco(propostas: pd.DataFrame) -> pd.DataFrame:
+def demoras_de_resposta(propostas: pd.DataFrame, historico: pd.DataFrame | None) -> pd.Series:
+    """Quantos dias cada proposta levou do envio (a DATA dela) ate a 1a mudanca de status no HISTORICO que tira
+    ela de "Em Análise" (a resposta do banco), na mesma ordem de `propostas`. NaN quando nao da pra saber: sem
+    HISTORICO, sem ID_PROPOSTA, sem nenhuma resposta ainda (a criacao - DE vazio - nao e resposta; nem uma proposta
+    que ja nasceu Aprovada e so depois foi efetivada: aquela mudanca nao e do banco) ou com a mudanca ANTES da DATA
+    (data digitada errada: nunca vira demora negativa)."""
+    vazio = pd.Series(float("nan"), index=propostas.index, dtype="float64")
+    if historico is None or historico.empty or propostas.empty or "ID_PROPOSTA" not in propostas.columns:
+        return vazio
+    saiu_de_em_analise = historico["DE"].map(etapa_status) == ETAPA_EM_ANALISE
+    mudancas = historico[(historico["TIPO"] == vendas_mod.TIPO_PROPOSTA) & saiu_de_em_analise & historico["QUANDO"].notna()]
+    if mudancas.empty:
+        return vazio
+    primeira = mudancas.groupby("ID")["QUANDO"].min().dt.normalize()
+    resposta = pd.to_datetime(propostas["ID_PROPOSTA"].map(primeira), errors="coerce")
+    envio = pd.to_datetime(propostas["DATA"], errors="coerce").dt.normalize()
+    dias = (resposta - envio).dt.days.astype("float64")
+    return dias.where(dias >= 0)
+
+
+def mediana_da_demora(propostas: pd.DataFrame, historico: pd.DataFrame | None) -> float | None:
+    """A mediana (metade responde em ate X dias) das demoras que se sabe; None se nenhuma proposta respondeu."""
+    dias = demoras_de_resposta(propostas, historico).dropna()
+    return float(dias.median()) if len(dias) else None
+
+
+def texto_da_demora(dias: float | None) -> str:
+    """"3 dias", "1 dia", "2,5 dias", "mesmo dia"; "—" sem resposta."""
+    if dias is None or pd.isna(dias):
+        return "—"
+    if dias == 0:
+        return "mesmo dia"
+    numero = f"{int(dias)}" if float(dias).is_integer() else f"{dias:.1f}".replace(".", ",")
+    return f"{numero} {'dia' if dias == 1 else 'dias'}"
+
+
+def por_banco(propostas: pd.DataFrame, historico: pd.DataFrame | None = None) -> pd.DataFrame:
     """Uma linha por banco (grafias que so diferem em maiusculas/espacos viram UMA): quantas propostas
-    foram enviadas, aprovadas (todas as etapas positivas), negadas, em analise e a taxa
-    (aprovadas / (aprovadas + negadas)). Fica em `Aviso` o que pede atencao:
+    foram enviadas, aprovadas (todas as etapas positivas), negadas, em analise, a taxa
+    (aprovadas / (aprovadas + negadas)) e a demora para responder (mediana de dias, ver `demoras_de_resposta`;
+    None sem HISTORICO ou sem resposta). Fica em `Aviso` o que pede atencao:
     banco com muitas propostas e nenhuma aprovada, "Todos" (nao e um banco) e proposta sem banco - estes
     dois ficam FORA da taxa (Taxa (%) vazia). Ordem: mais enviadas primeiro."""
     if propostas.empty:
         return pd.DataFrame(columns=COLUNAS_POR_BANCO)
+    demoras = demoras_de_resposta(propostas, historico)
 
     chaves = _texto_normalizado(propostas["BANCO"])
     categoria = propostas["STATUS"].map(categoria_status)
@@ -634,59 +501,173 @@ def por_banco(propostas: pd.DataFrame) -> pd.DataFrame:
         if chave == "":
             nome, aviso = ROTULO_SEM_BANCO, AVISO_SEM_BANCO
         elif chave in NAO_SAO_BANCO:
-            nome, aviso = _grafia_mais_usada(propostas.loc[do_banco, "BANCO"]), AVISO_NAO_E_BANCO
+            nome, aviso = _grafia_mais_usada(propostas.loc[do_banco, "BANCO"]) + SUFIXO_BANCO_DIGITADO, AVISO_NAO_E_BANCO
         else:
             nome = _grafia_mais_usada(propostas.loc[do_banco, "BANCO"])
             if enviadas >= MINIMO_PARA_ALERTA_DE_BANCO and aprovadas == 0:
                 aviso = AVISO_SEM_APROVACAO
         decididas = aprovadas + negadas
         taxa = None if aviso in (AVISO_SEM_BANCO, AVISO_NAO_E_BANCO) or not decididas else round(aprovadas / decididas * 100, 1)
+        da_demora = demoras[do_banco].dropna()
         linhas.append(
-            {"Banco": nome, "Enviadas": enviadas, "Aprovadas": aprovadas, "Negadas": negadas, "Em Análise": em_analise, "Taxa (%)": taxa, "Aviso": aviso}
+            {
+                "Banco": nome, "Enviadas": enviadas, "Aprovadas": aprovadas, "Negadas": negadas, "Em Análise": em_analise,
+                "Taxa (%)": taxa, "Demora (dias)": float(da_demora.median()) if len(da_demora) else None, "Aviso": aviso,
+            }
         )
     return pd.DataFrame(linhas, columns=COLUNAS_POR_BANCO).sort_values(["Enviadas", "Banco"], ascending=[False, True]).reset_index(drop=True)
 
 
 def chave_do_banco(nome_exibido: str) -> str:
     """O `parametro` do FILTRO_BANCO de uma linha de `por_banco` ("" = proposta sem banco)."""
-    return "" if nome_exibido == ROTULO_SEM_BANCO else nome_exibido.strip().upper()
+    if nome_exibido == ROTULO_SEM_BANCO:
+        return ""
+    return nome_exibido.removesuffix(SUFIXO_BANCO_DIGITADO).strip().upper()
 
 
-# -- qualidade dos dados ---------------------------------------------------------------------------
+def total_por_banco(propostas: pd.DataFrame, historico: pd.DataFrame | None = None) -> dict:
+    """A linha "Todos" do rodape de Por banco: as MESMAS colunas somadas sobre todas as propostas do periodo
+    (inclusive as sem banco e o "Todos" digitado - nenhuma proposta fica fora da conta). Taxa None sem decididas."""
+    categoria = propostas["STATUS"].map(categoria_status)
+    aprovadas = int((categoria == "Aprovado").sum())
+    negadas = int((categoria == "Negado").sum())
+    decididas = aprovadas + negadas
+    return {
+        "Enviadas": len(propostas),
+        "Aprovadas": aprovadas,
+        "Negadas": negadas,
+        "Em Análise": int((categoria == "Em Análise").sum()),
+        "Taxa (%)": round(aprovadas / decididas * 100, 1) if decididas else None,
+        "Demora (dias)": mediana_da_demora(propostas, historico),
+    }
+
+
+# -- os numeros das vendas (o momento de agora) --------------------------------------------------
 
 
 @dataclass(frozen=True)
-class CampoDeQualidade:
-    chave: str  # o FILTRO_*/ATENCAO_* que lista as pendentes
-    rotulo: str
-    preenchidos: int
-    total: int
-    percentual: float | None  # None: nao ha propostas
-    indices_pendentes: tuple[int, ...]
+class NumerosDasVendas:
+    em_andamento: int  # vendas Aguardando bancos ou Em andamento (nem efetivadas nem desistidas)
+    valor_em_andamento: float  # soma dos valores dos bancos FECHADOS delas
+    fechadas_sem_valor: int  # bancos fechados dessas vendas sem valor (ficam fora da soma)
+    paradas: int  # vendas paradas (a regra de ResumoDaVenda.parada: a mesma do filtro "Paradas" da tela Vendas)
+    dias_de_parada: int
+    efetivadas_no_mes: int
+    valor_efetivadas_no_mes: float
+    efetivadas_sem_valor: int
+    efetivadas_sem_data: int  # Efetivada sem data de quando efetivou (nem historico nem criacao): fica fora do mes
+    com_pendencias: int  # vendas (de qualquer status) com pendencia aberta: a mesma regra do filtro "Com pendências"
+    com_pendencias_ilegiveis: int  # vendas com a celula de pendencias ilegivel (nao da pra contar as dela)
 
 
-def qualidade_dos_dados(propostas: pd.DataFrame) -> list[CampoDeQualidade]:
-    """Quantas propostas tem valor, meses, banco e status preenchidos (e quais nao tem)."""
-    total = len(propostas)
-    if total:
-        faltando = {
-            ATENCAO_SEM_VALOR: _valores(propostas).isna(),
-            FILTRO_SEM_MESES: pd.to_numeric(propostas["MESES"], errors="coerce").isna(),
-            FILTRO_SEM_BANCO: _texto_normalizado(propostas["BANCO"]) == "",
-            FILTRO_SEM_STATUS: _texto_normalizado(propostas["STATUS"]) == "",
-        }
-    campos = []
-    for chave, rotulo in ((ATENCAO_SEM_VALOR, "Valor"), (FILTRO_SEM_MESES, "Meses"), (FILTRO_SEM_BANCO, "Banco"), (FILTRO_SEM_STATUS, "Status")):
-        pendentes = _indices(propostas, faltando[chave]) if total else []
-        campos.append(
-            CampoDeQualidade(
-                chave, rotulo, total - len(pendentes), total, ((total - len(pendentes)) / total * 100) if total else None, tuple(pendentes)
-            )
-        )
-    return campos
+def _valor_dos_bancos_fechados(venda) -> tuple[float, int]:
+    """(soma dos valores, quantos bancos fechados sem valor)."""
+    valores = [p.valor for p in venda.bancos_fechados()]
+    return float(sum(v for v in valores if v is not None)), sum(1 for v in valores if v is None)
 
 
-# -- resumo para copiar --------------------------------------------------------------------------
+def _datas_de_efetivacao(historico: pd.DataFrame | None) -> dict[str, pd.Timestamp]:
+    """Para cada proposta, o dia da ULTIMA vez que ela virou Efetivado, das linhas de TIPO proposta do HISTORICO (a
+    conversao dos dados antigos e as linhas de outros tipos nunca contam: nao dizem quando efetivou)."""
+    if historico is None or historico.empty:
+        return {}
+    h = historico[(historico["TIPO"] == vendas_mod.TIPO_PROPOSTA) & (historico["PARA"] == vendas_mod.PROPOSTA_EFETIVADA)
+                  & historico["QUANDO"].notna()]
+    if h.empty:
+        return {}
+    return h.groupby("ID")["QUANDO"].max().dt.normalize().to_dict()
+
+
+def numeros_das_vendas(vendas, hoje: date | None = None, historico: pd.DataFrame | None = None) -> NumerosDasVendas:
+    """Os 4 numeros do topo do Dashboard sobre as vendas (`core.vendas.listar_vendas`), do momento de agora - nao
+    seguem o seletor de periodo. "Efetivadas no mes" conta a venda Efetivada cuja data de efetivacao cai neste mes:
+    a MAIOR data, entre os bancos fechados dela, da linha do `historico` que levou o banco a Efetivado. Sem essa
+    linha (venda convertida dos dados antigos) nao ha como saber: fica fora da conta e vai em `efetivadas_sem_data`."""
+    efetivacoes = _datas_de_efetivacao(historico)
+    hoje_dia = _dia(hoje or date.today())
+    em_andamento = [v for v in vendas if v.status in vendas_mod.VENDA_EM_ABERTO]
+    soma_andamento = sem_valor_andamento = 0
+    for venda in em_andamento:
+        valor, sem_valor = _valor_dos_bancos_fechados(venda)
+        soma_andamento += valor
+        sem_valor_andamento += sem_valor
+    paradas = [v for v in vendas if v.parada]
+
+    efetivadas_no_mes = []
+    sem_data = 0
+    for venda in vendas:
+        if venda.status != vendas_mod.VENDA_EFETIVADA:
+            continue
+        datas = [efetivacoes[i] for i in venda.fechadas if i in efetivacoes]
+        if not datas:
+            sem_data += 1
+            continue
+        dia = max(datas)
+        if (dia.year, dia.month) == (hoje_dia.year, hoje_dia.month):
+            efetivadas_no_mes.append(venda)
+    soma_efetivadas = sem_valor_efetivadas = 0
+    for venda in efetivadas_no_mes:
+        valor, sem_valor = _valor_dos_bancos_fechados(venda)
+        soma_efetivadas += valor
+        sem_valor_efetivadas += sem_valor
+
+    return NumerosDasVendas(
+        em_andamento=len(em_andamento),
+        valor_em_andamento=soma_andamento,
+        fechadas_sem_valor=sem_valor_andamento,
+        paradas=len(paradas),
+        dias_de_parada=propostas_mod.DIAS_PROPOSTA_PARADA,
+        efetivadas_no_mes=len(efetivadas_no_mes),
+        valor_efetivadas_no_mes=soma_efetivadas,
+        efetivadas_sem_valor=sem_valor_efetivadas,
+        efetivadas_sem_data=sem_data,
+        com_pendencias=sum(1 for v in vendas if v.pendencias_abertas > 0),
+        com_pendencias_ilegiveis=sum(1 for v in vendas if v.erro_pendencias),
+    )
+
+
+_NOMES_DOS_MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro",
+                    "novembro", "dezembro"]
+
+
+def resumo_das_vendas_para_copiar(numeros: NumerosDasVendas, bancos: pd.DataFrame, total: dict | None, periodo: str = PERIODO_TUDO,
+                                  hoje: date | None = None) -> str:
+    """O texto pronto pra colar numa conversa: uma linha das vendas de agora e uma linha por banco do periodo (a
+    tabela Por banco, ja com a linha "Todos"), sem nome de cliente. Ex.:
+        Vendas (outubro de 2026): 9 em andamento, 2 paradas há 7+ dias, 5 efetivadas no mês (R$ 142.000,00), 1 com pendência.
+        Bancos nos últimos 7 dias:
+        - Banco Exemplo: 14 enviadas, 10 aprovadas, 3 negadas, 1 em análise, taxa 76,9%, responde em 2 dias."""
+    dia = _dia(hoje or date.today())
+    mes = f"{_NOMES_DOS_MESES[dia.month - 1]} de {dia.year}"
+    paradas = f"{numeros.paradas} {'parada' if numeros.paradas == 1 else 'paradas'} há {numeros.dias_de_parada}+ dias"
+    efetivadas = f"{numeros.efetivadas_no_mes} {'efetivada' if numeros.efetivadas_no_mes == 1 else 'efetivadas'} no mês"
+    if numeros.efetivadas_no_mes:
+        efetivadas += f" ({formatar_reais(numeros.valor_efetivadas_no_mes)})"
+    pendencias = f"{numeros.com_pendencias} com {'pendência' if numeros.com_pendencias == 1 else 'pendências'}"
+    linhas = [f"Vendas ({mes}): {numeros.em_andamento} em andamento, {paradas}, {efetivadas}, {pendencias}."]
+
+    def _linha_do_banco(nome: str, dados) -> str:
+        taxa = dados["Taxa (%)"]
+        partes = [_plural(dados["Enviadas"], "enviada", "enviadas"), _plural(dados["Aprovadas"], "aprovada", "aprovadas"),
+                  _plural(dados["Negadas"], "negada", "negadas"), f"{dados['Em Análise']} em análise"]
+        if taxa is not None and not pd.isna(taxa):
+            partes.append(f"taxa {taxa:.1f}%".replace(".", ","))
+        demora = dados["Demora (dias)"]
+        if demora is not None and not pd.isna(demora):
+            partes.append(f"responde em {texto_da_demora(demora)}")
+        return f"- {nome}: " + ", ".join(partes) + "."
+
+    quando = descricao_do_periodo(periodo)
+    if len(bancos):
+        linhas.append(f"Bancos {quando or 'em todo o período'}:")
+        linhas += [_linha_do_banco(b["Banco"], b) for _, b in bancos.iterrows()]
+        linhas.append(_linha_do_banco("Todos", total))
+    else:
+        linhas.append(f"Nenhuma proposta enviada a bancos {quando or 'no período'}.")
+    return "\n".join(linhas)
+
+
+# -- resumo para copiar (propostas: a visao do vendedor) -------------------------------------------
 
 
 def resumo_para_copiar(propostas: pd.DataFrame, periodo: str = PERIODO_TUDO) -> str:

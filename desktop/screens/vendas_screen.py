@@ -138,15 +138,32 @@ class VendasScreen(QWidget):
 
     # -- dados --------------------------------------------------------------------------------------
 
-    def carregar(self) -> bool:
+    def carregar(self, voltar_ao_inicio: bool = False) -> bool:
         self._vigia.registrar_leitura()
         try:
             self._vendas = vendas_mod.listar_vendas()
         except Exception as exc:  # nunca falhar em silencio
             QMessageBox.critical(self, "Erro ao carregar as vendas", f"{type(exc).__name__}: {exc}")
             return False
-        self._mostrar()
+        self._mostrar(voltar_ao_inicio)
         return True
+
+    def aplicar_filtro(self, filtro: str) -> bool:
+        """O Dashboard leva a pessoa aqui ja filtrada: tira a busca, escolhe o `filtro` (um dos FILTROS), fecha o card
+        aberto (que aparece mesmo fora do filtro e faria a lista ter mais cards que o numero do cartao), rele as vendas e
+        volta ao inicio da lista. Quem chama ja perguntou sobre o que estava digitado. False se nao conseguiu ler."""
+        if filtro not in FILTROS:
+            raise ValueError(f"Filtro desconhecido da tela Vendas: {filtro!r}")
+        for campo in (self.busca, self.filtro):
+            campo.blockSignals(True)  # um redesenho so, no carregar() de baixo
+        self.busca.clear()
+        self.filtro.setCurrentText(filtro)
+        for campo in (self.busca, self.filtro):
+            campo.blockSignals(False)
+        self.lista.aberta, self.lista.editando, self.lista.rascunho = None, None, None
+        lido = self.carregar(voltar_ao_inicio=True)
+        self.rolagem.verticalScrollBar().setValue(0)  # a lista nova comeca no topo, mesmo que a anterior estivesse rolada
+        return lido
 
     def tem_edicao_pendente(self) -> bool:
         return self.lista.tem_edicao_pendente()

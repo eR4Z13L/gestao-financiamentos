@@ -1,7 +1,8 @@
 """Testa a tela das etapas e das pendencias (plano 1.2-B, parte 2): no card da venda e no da proposta, a linha de cada
-banco fechado (etiqueta com a cor da etapa, trilha de 4 pontos, "desde 15/10 · há 3 dias", selo de parada, a bolinha
+banco fechado (etiqueta com a cor da etapa, trilha de 4 pontos, "desde 15/10 · há 3 dias" (parado: "parada há 9 dias" em âmbar, sem caixinha), a bolinha
 que avanca UMA etapa, a lista da etiqueta com todas as etapas, o ↩); as pendencias (etiqueta "N pendências" no card
-fechado, "+ Pendência", lista com "Resolvida" no card aberto, filtro "Com pendências"); e as observacoes no topo do
+fechado, "+ Pendência", lista com "Resolvida" no card aberto, filtro "Com pendências"); o nome antigo "Nota fiscal
+enviada" mostrado como "NF enviada"; e as observacoes no topo do
 card fechado (ate 2 linhas).
 
 Planilha 100% ficticia em pasta temporaria, preferencias isoladas e o Google desligado.
@@ -11,6 +12,7 @@ Rodar com: venv/Scripts/python.exe scripts/smoke_test_tela_1_2b.py
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import tempfile
@@ -22,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractButton, QApplication, QHBoxLayout, QLabel, QMessageBox, QWidget
 
 import config
 
@@ -37,10 +40,13 @@ from core import sessao as sessao_mod
 from core import sheets_sync
 from core import vendas as v
 from core import vendedores as vendedores_mod
+from core.formatting import formatar_data
+from desktop import settings as settings_mod
 from desktop.screens import vendas_screen as tela_mod
 from desktop.theme import CORES_STATUS, TEMA_CLARO, TEMA_ESCURO, build_stylesheet
 from desktop.widgets import card_da_venda as card_mod
 from desktop.widgets.card_da_proposta import CardDaProposta
+from desktop.widgets.formulario_proposta import FormularioProposta
 from desktop.widgets.lista_cartoes import chave_cor_status
 
 ADMIN = sessao_mod.Sessao(papel=sessao_mod.PAPEL_ADMIN, nome_usuario="Administrador")
@@ -136,7 +142,7 @@ def main() -> None:
             assert trilha.dica_do_ponto(1) == f"Assinado em {hoje - timedelta(days=3):%d/%m}"
             assert trilha.dica_do_ponto(3) == "Efetivado", "etapa que ainda não chegou: só o nome"
             assert l["data"].text() == f"desde {hoje - timedelta(days=3):%d/%m} · há 3 dias", l["data"].text()
-            assert l["selo"] is None and card.selo is None
+            assert l["data"].parada == "" and card.andamento.parada == "", "3 dias: não está parada"
             assert chave_cor_status("NF enviada") == "nota_fiscal" and chave_cor_status("Nota fiscal enviada") == "nota_fiscal"
             assert chave_cor_status(APROVADO) == "aprovado" and chave_cor_status(EFETIVADO) == "efetivado"
             # a lista da etiqueta: todas as etapas (pular etapa so por aqui); a atual marcada e sem efeito
@@ -196,11 +202,39 @@ def main() -> None:
             _processar()
             card = card_de(tela, id_b)
             l1, l2 = linha_do(card, p_b1), linha_do(card, p_b2)
-            assert l1["selo"] is not None and l1["selo"].texto == "parada há 9 dias" and l2["selo"] is None
-            assert card.selo is not None and card.selo.texto == "parada há 9 dias", "no topo, a maior parada"
-            assert "parada" not in card.andamento.text(), "o selo diz; o texto de andamento não repete"
-            # venda sem banco parado e com pendencia aberta antiga: sem selo
-            assert card_de(tela, id_a).selo is None
+            # a parada e TEXTO (ambar, negrito, sem caixinha) dentro da linha de baixo; sem o selo de caixinha
+            assert not hasattr(card_mod, "Selo") and not hasattr(card, "selo")
+            assert l1["data"].parada == "parada há 9 dias" and l2["data"].parada == ""
+            assert l1["data"].texto == f"desde {hoje - timedelta(days=9):%d/%m} · parada há 9 dias", l1["data"].texto
+            assert l2["data"].texto == f"desde {hoje - timedelta(days=2):%d/%m} · há 2 dias"
+            assert card.andamento.parada == f"{b1} parado em Assinado há 9 dias", "no topo, o banco e a etapa da maior parada"
+            assert card.andamento.texto == (f"desde {formatar_data(card.venda.data_criacao)} · {b1} parado em Assinado há 9 dias"
+                                            f" · 0 de 2 bancos efetivados"), card.andamento.texto
+            assert "Em andamento" not in card.andamento.texto, "nao diz 'parada em Em andamento'"
+            for texto in (card.andamento.texto, l1["data"].texto):
+                assert texto.count("há") == 1, "a informação não se repete na mesma linha"
+            for rotulo in (card.andamento, l1["data"]):
+                cor = CORES_STATUS[TEMA_ESCURO]["em_analise"]["texto"]
+                assert rotulo.textFormat() == Qt.TextFormat.RichText and cor in rotulo.text() and "<b " in rotulo.text()
+            assert "<b" not in l2["data"].text() and l2["data"].textFormat() == Qt.TextFormat.PlainText
+            # fora o status (pilula) e as pendencias, nenhuma caixinha no topo: so Pilula (clicavel ou nao) la dentro
+            quem_diz_parada = [w for w in (*card.findChildren(QLabel), *card.findChildren(QAbstractButton))
+                               if "parada" in w.text() or "parado em" in w.text()]
+            assert quem_diz_parada and all(isinstance(w, card_mod.TextoComParada) for w in quem_diz_parada), quem_diz_parada
+            # texto com "<" ou "&" (um status digitado) aparece como esta, sem virar formatacao
+            esquisito = card_mod.TextoComParada("a · ", "parada há 9 dias", ' em "<i>x</i> & y"')
+            assert "&lt;i&gt;x&lt;/i&gt; &amp; y" in esquisito.text() and "<i>" not in esquisito.text()
+            esquisito.close()
+            # o tema claro troca a cor ao desenhar (o app muda de tema com os cards na tela)
+            settings_mod.definir_tema(TEMA_CLARO)
+            app.setStyleSheet(build_stylesheet(TEMA_CLARO))
+            card.andamento.grab()
+            assert CORES_STATUS[TEMA_CLARO]["em_analise"]["texto"] in card.andamento.text()
+            settings_mod.definir_tema(TEMA_ESCURO)
+            app.setStyleSheet(build_stylesheet(TEMA_ESCURO))
+            # venda sem banco parado e com pendencia aberta antiga: sem parada
+            assert card_de(tela, id_a).andamento.parada == ""
+            assert "parada" not in card_de(tela, id_a).andamento.texto and "<b" not in card_de(tela, id_a).andamento.text()
             tela.filtro.setCurrentText(tela_mod.FILTRO_PARADAS)
             assert [c.venda.id for c in tela.lista.cards] == [id_b]
             tela.filtro.setCurrentText(tela_mod.FILTRO_TODAS)
@@ -208,12 +242,12 @@ def main() -> None:
             v.mudar_status_venda(id_b, v.VENDA_PERDIDA, motivo="Desistiu")
             tela.carregar()
             card = card_de(tela, id_b)
-            assert card.selo is None and linha_do(card, p_b1)["selo"] is None
+            assert card.andamento.parada == "" and linha_do(card, p_b1)["data"].parada == ""
             v.reabrir_venda(id_b)
             tela.carregar()
             _processar()
-            print("OK: selo no banco parado há 9 dias e, no topo, o maior; nada para o banco recente nem para a pendência "
-                  "antiga; venda perdida não mostra selo; o filtro 'Paradas' acha só a parada.")
+            print("OK: parada em âmbar no banco parado há 9 dias e, no topo, a maior (sem caixinha, sem repetir); nada para o banco recente nem para a pendência "
+                  "antiga; venda perdida não mostra parada; o filtro 'Paradas' acha só a parada.")
 
             linha("3) Pendencias: etiqueta no card fechado, +Pendencia, lista com Resolvida no card aberto, filtro")
             card = card_de(tela, id_b)
@@ -329,15 +363,15 @@ def main() -> None:
             cartao = CardDaProposta(item)
             cartao.show()
             assert cartao.controles["trilha"] is not None and cartao.controles["trilha"].atual == 0
-            assert cartao.controles["data"].text() == f"desde {hoje - timedelta(days=8):%d/%m} · há 8 dias"
-            assert cartao.controles["selo"] is not None and cartao.controles["selo"].texto == "parada há 8 dias"
+            assert cartao.controles["data"].texto == f"desde {hoje - timedelta(days=8):%d/%m} · parada há 8 dias"
+            assert cartao.controles["data"].parada == "parada há 8 dias" and "selo" not in cartao.controles
             assert [b.destino for b in cartao.controles["bolinhas"]] == ["Assinado"]
             solto = next(i for i in itens.values() if not i.proposta.fechada)
             c2 = CardDaProposta(solto)
-            assert c2.controles["trilha"] is None and c2.controles["data"] is None and c2.controles["selo"] is None
+            assert c2.controles["trilha"] is None and c2.controles["data"] is None
             cartao.close()
             c2.close()
-            print("OK: no card da proposta, banco fechado tem trilha, data, selo e a bolinha da próxima etapa; os outros não.")
+            print("OK: no card da proposta, banco fechado tem trilha, data (com a parada em texto) e a bolinha da próxima etapa; os outros não.")
 
             linha("6) Os dois temas pintam as etapas com as cores do esboço")
             for tema in (TEMA_CLARO, TEMA_ESCURO):
@@ -400,6 +434,115 @@ def main() -> None:
             assert tipo == "critical" and "resumo" in titulo and "RuntimeError" in texto and "a planilha de vendedores não abriu" in texto
             print("OK: Efetivada com pendência aberta fica no 'Em andamento'; célula ilegível: a tela abre, o card avisa e só as "
                   "pendências dele bloqueiam; o resumo que não abre mostra o erro.")
+
+            linha("8) Planilha com o nome antigo 'Nota fiscal enviada': a tela mostra 'NF enviada'; ao gravar, grava 'NF enviada'")
+            ANTIGO = propostas_mod.STATUS_NOTA_ENVIADA_ANTIGO
+            id_h, p_h = v.criar_venda(fx.CPF_ANA, ["Item H"], _pedido(b1, EQUIPAMENTO="Item H"))
+            v.mudar_status_proposta(p_h, APROVADO)
+            v.fechar_proposta(p_h)
+            v.mudar_status_proposta(p_h, ASSINADO)
+            propostas = bd.ler_propostas(caminho)
+            propostas.loc[propostas["ID_PROPOSTA"] == p_h, "STATUS"] = ANTIGO  # (a planilha convertida antes do renome)
+            bd.escrever_vendas_e_propostas(caminho, propostas=propostas)
+            assert status_de(p_h) == ANTIGO and propostas_mod.nome_oficial(ANTIGO) == NOTA
+            for variante in ("nota fiscal enviada", "  NOTA  FISCAL ENVIADA "):
+                assert propostas_mod.nome_oficial(variante) == NOTA, variante
+            for igual in (NOTA, ASSINADO, "Em Análise", "", None, "Nota Fiscal Anexada"):
+                assert propostas_mod.nome_oficial(igual) == igual, "só o nome antigo é trocado"
+            tela.carregar()
+            _processar()
+            card = card_de(tela, id_h)
+            l = linha_do(card, p_h)
+            assert l["proposta"].status == NOTA and l["pilula"].text() == NOTA, l["pilula"].text()
+            assert l["trilha"].atual == 2 and l["pilula"].cor == "nota_fiscal"
+            assert [b.destino for b in l["bolinhas"]] == ["Efetivado"]
+            # o card da proposta (Todas as Propostas, Ficha) mostra o mesmo
+            itens = v.propostas_na_lista_do_arquivo(bd.ler_propostas(caminho))
+            cartao = CardDaProposta(next(i for i in itens.values() if i.proposta.id == p_h))
+            assert cartao.pilula.text() == NOTA
+            cartao.close()
+            # a etiqueta tambem corrige sozinha um status cru (objeto montado sem passar pela leitura)
+            cru = dataclasses.replace(l["proposta"], status=ANTIGO)
+            caixa = QWidget()
+            controles: dict = {}
+            card_mod.por_controles_de_status(QHBoxLayout(caixa), card, card.venda, cru, caixa, controles)
+            assert controles["pilula"].text() == NOTA and controles["pilula"].cor == "nota_fiscal"
+            caixa.close()
+            # o formulario abre com 'NF enviada' e sem alteracao; gravar outra coisa deixa o nome novo na planilha, sem
+            # reiniciar a etapa (nenhuma linha nova no historico)
+            bruto = bd.ler_propostas(caminho).set_index("ID_PROPOSTA").loc[p_h].to_dict() | {"ID_PROPOSTA": p_h}
+            form = FormularioProposta(fx.CPF_ANA, "ANA", proposta=bruto, indice=l["proposta"].indice)
+            assert form._status.currentText() == NOTA and [form._status.itemText(i) for i in range(form._status.count())].count(NOTA) == 1
+            assert not form.tem_alteracoes()
+            linhas_antes = len(bd.ler_historico(caminho))
+            v.editar_proposta(p_h, {"STATUS": NOTA, "OBSERVAÇÕES": "conferido"}, esperado=bruto)
+            assert status_de(p_h) == NOTA and len(bd.ler_historico(caminho)) == linhas_antes, "sem troca de etapa no historico"
+            assert linha_do((tela.carregar(), card_de(tela, id_h))[1], p_h)["pilula"].text() == NOTA
+            # trocar de etapa por cima do nome antigo: o historico registra de 'NF enviada' (nunca do nome antigo)
+            propostas = bd.ler_propostas(caminho)
+            propostas.loc[propostas["ID_PROPOSTA"] == p_h, "STATUS"] = ANTIGO
+            bd.escrever_vendas_e_propostas(caminho, propostas=propostas)
+            v.mudar_status_proposta(p_h, EFETIVADO)
+            historico = bd.ler_historico(caminho)
+            ultima = historico[(historico["ID"] == p_h) & (historico["TIPO"] == v.TIPO_PROPOSTA)].iloc[-1]
+            assert ultima["ID"] == p_h and ultima["DE"] == NOTA and ultima["PARA"] == EFETIVADO, dict(ultima)
+            assert status_de(p_h) == EFETIVADO
+            print("OK: 'Nota fiscal enviada' na planilha aparece como 'NF enviada' (etiqueta, trilha, bolinha, card da proposta, "
+                  "formulário); gravar deixa 'NF enviada' sem reiniciar a etapa.")
+
+            linha("9) Banco aprovado, ainda nao fechado: dica ao lado do circulo; o circulo e a trilha explicam")
+            EXPLICACAO = ("Círculo: marque quando o cliente fechar com este banco. "
+                          "Pontinhos: Aprovado → Assinado → NF enviada → Efetivado.")
+            assert card_mod.EXPLICACAO_DA_TRILHA == EXPLICACAO
+            id_i, p_i = v.criar_venda(fx.CPF_JOAO, ["Item I"], _pedido(b1, EQUIPAMENTO="Item I"))
+            v.mudar_status_proposta(p_i, APROVADO)
+            tela.carregar()
+            _processar()
+            card = card_de(tela, id_i)
+            l = linha_do(card, p_i)
+            dica = l["dica_fechar"]
+            assert dica is not None and dica.text() == "cliente fechou? marque o círculo" and not l["anel"].fechado
+            assert dica.property("role") == "dica" and dica.textFormat() != Qt.TextFormat.RichText, "texto pequeno, sem fundo"
+            for tema in (TEMA_CLARO, TEMA_ESCURO):  # a regra existe nos dois temas: 11 px (menor que os 13 do texto), sem fundo
+                css = build_stylesheet(tema)
+                regra = css[css.index('QLabel[role="dica"]'):].split("}")[0]
+                assert "font-size: 11px" in regra and "background-color: transparent" in regra and "border" not in regra
+            assert "Marcar como fechado" in l["anel"].dica and EXPLICACAO in l["anel"].dica and l["anel"].toolTip() == l["anel"].dica
+            assert dica.toolTip() == EXPLICACAO
+            # no layout, a dica fica na mesma linha do circulo, depois do nome do banco
+            linha_layout = l["widget"].layout().itemAt(0).layout()
+            ordem = [linha_layout.itemAt(i).widget() for i in range(linha_layout.count()) if linha_layout.itemAt(i).widget()]
+            assert ordem.index(l["anel"]) < ordem.index(dica) < ordem.index(l["pilula"])
+            # o card da proposta tem a mesma dica
+            itens = v.propostas_na_lista_do_arquivo(bd.ler_propostas(caminho))
+            cartao = CardDaProposta(next(i for i in itens.values() if i.proposta.id == p_i))
+            assert cartao.controles["dica_fechar"] is not None and cartao.controles["dica_fechar"].text() == dica.text()
+            cartao.close()
+            # marcado como fechado: a dica some, a trilha aparece e a explicacao fica no circulo e na trilha
+            l["anel"].click()
+            _processar()
+            card = card_de(tela, id_i)
+            l = linha_do(card, p_i)
+            assert l["anel"].fechado and l["dica_fechar"] is None
+            assert EXPLICACAO in l["anel"].dica
+            trilha = l["trilha"]
+            assert trilha.dica_completa(0).startswith("Aprovado") and trilha.dica_completa(0).endswith("\n" + EXPLICACAO)
+            assert trilha.dica_completa(None) == EXPLICACAO
+            # banco nao aprovado (Em Analise): sem circulo e sem dica; negado, idem
+            id_j, p_j = v.criar_venda(fx.CPF_JOAO, ["Item J"], _pedido(b2, EQUIPAMENTO="Item J"))
+            tela.carregar()
+            _processar()
+            lj = linha_do(card_de(tela, id_j), p_j)
+            assert lj["anel"] is None and lj["dica_fechar"] is None
+            # venda perdida: o circulo nao e oferecido, entao a dica tambem nao
+            v.mudar_status_proposta(p_j, APROVADO)
+            v.mudar_status_venda(id_j, v.VENDA_PERDIDA, motivo="Desistiu")
+            tela.carregar()
+            _processar()
+            lj = linha_do(card_de(tela, id_j), p_j)
+            assert lj["anel"] is None and lj["dica_fechar"] is None
+            print("OK: banco aprovado e ainda não fechado: dica pequena 'cliente fechou? marque o círculo' ao lado do círculo; "
+                  "círculo e trilha explicam círculo e pontinhos; some ao fechar, e não aparece em banco sem círculo.")
 
             linha("TUDO OK")
     finally:

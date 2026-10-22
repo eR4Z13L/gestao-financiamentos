@@ -337,7 +337,7 @@ def main() -> None:
             assert all(c.venda.id != id_maria for c in tela.lista.cards), "efetivada sai de 'Em andamento'"
             tela.filtro.setCurrentText(tela_mod.FILTRO_EFETIVADAS)
             card = _card(tela, "MARIA")
-            assert linha_de(p_cadeira)["anel"].dica == "Fechado", "um banco Efetivado não se desmarca pelo ✓"
+            assert linha_de(p_cadeira)["anel"].dica.startswith("Fechado\n") and "clique para desmarcar" not in linha_de(p_cadeira)["anel"].dica
             menu_v = _acoes(tela.lista.controle.montar_menu_da_venda(card.venda))
             assert f"{v.VENDA_NAO_EFETIVADA}…" in menu_v and not any(t.startswith("Reabrir") for t in menu_v)
             tela.lista.abrir_venda(card.venda)
@@ -405,13 +405,14 @@ def main() -> None:
                 tela.filtro.setCurrentText(tela_mod.FILTRO_PARADAS)
                 tela.carregar()
                 parados = [c for c in tela.lista.cards if c.venda.id == id_parada]
-                assert len(parados) == 1 and parados[0].selo is not None and parados[0].selo.texto == "parada há 7 dias"
+                assert len(parados) == 1 and parados[0].andamento.parada == "parada há 7 dias"
+                assert "parada há 7 dias" in parados[0].andamento.texto
             finally:
                 v.listar_vendas = listar_original
             tela.filtro.setCurrentText(tela_mod.FILTRO_EM_ANDAMENTO)
             tela.carregar()
-            assert all(c.selo is None for c in tela.lista.cards), "hoje nada está parado"
-            print("OK: 7 dias sem mudar de etapa: o card mostra o selo 'parada há 7 dias' e entra no filtro 'Paradas'.")
+            assert all(c.andamento.parada == "" for c in tela.lista.cards), "hoje nada está parado"
+            print("OK: 7 dias sem mudar de etapa: o card mostra 'parada há 7 dias' no texto e entra no filtro 'Paradas'.")
 
             linha("11) Equipamento só da lista; o formulário solto cria a venda; numa venda, as caixinhas dela")
             antes = len(bd.ler_vendas(caminho))

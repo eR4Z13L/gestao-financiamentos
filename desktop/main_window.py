@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
             self._tela_vendas.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
             self._tela_vendas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
             self._tela_propostas.venda_pedida.connect(self.abrir_venda)
+            self._tela_dashboard.vendas_pedidas.connect(self.abrir_vendas_filtradas)
         self._tela_propostas.ficha_pedida.connect(self.abrir_ficha_do_cliente)
         # e cada linha clicavel dele pede pra levar a pessoa a outra tela
         self._tela_dashboard.filtro_pedido.connect(self.abrir_propostas_filtradas)
@@ -242,6 +243,13 @@ class MainWindow(QMainWindow):
             return
         self.ir_para(PAGINA_PROPOSTAS)
         self._tela_propostas.aplicar_filtro_do_dashboard(filtro)
+
+    def abrir_vendas_filtradas(self, filtro: str) -> None:
+        """A tela Vendas ja com o filtro `filtro` (vendas_screen.FILTRO_*) e sem busca: os cartoes do Dashboard."""
+        if not sessao_mod.eh_admin() or not self._confirmar_descartar_edicoes():
+            return
+        self.ir_para(PAGINA_VENDAS)
+        self._tela_vendas.aplicar_filtro(filtro)
 
     def abrir_ficha_do_cliente(self, cpf: str) -> None:
         if not self._confirmar_descartar_edicoes():

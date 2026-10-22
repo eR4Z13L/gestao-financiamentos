@@ -310,16 +310,16 @@ def main() -> None:
 
         assert venda_em(a_venda, limite).parada and not venda_em(a_venda, limite - 1).parada
         assert not venda_em(f_venda, 60).parada, "venda com pendência aberta não fica 'parada' por causa dela"
-        # um limite so: quem muda a constante muda os alertas, o "Precisa de atenção" do Dashboard e os filtros dele
+        # um limite so: quem muda a constante muda os alertas, o cartao "Paradas" do Dashboard e os filtros dele
         antiga = fx.montar_propostas({"STATUS": propostas_mod.STATUS_EM_ANALISE, "DATA": pd.Timestamp(date.today() - timedelta(days=5))})
-        assert not [i for i in dashboard_mod.precisa_de_atencao(antiga) if i.chave == dashboard_mod.ATENCAO_PARADAS], "5 dias < 7"
         filtro_paradas = dashboard_mod.FiltroDoDashboard(dashboard_mod.ATENCAO_PARADAS, "paradas")
-        assert dashboard_mod.indices_do_filtro(antiga, filtro_paradas) == set()
+        assert dashboard_mod.indices_do_filtro(antiga, filtro_paradas) == set(), "5 dias < 7"
+        assert dashboard_mod.numeros_das_vendas([venda_em(a_venda, limite - 1)]).paradas == 0
+        assert dashboard_mod.numeros_das_vendas([venda_em(a_venda, limite)]).paradas == 1, "o cartao Paradas do Dashboard usa o mesmo limite"
         try:
             propostas_mod.DIAS_PROPOSTA_PARADA = 3
-            itens = [i for i in dashboard_mod.precisa_de_atencao(antiga) if i.chave == dashboard_mod.ATENCAO_PARADAS]
-            assert len(itens) == 1 and "mais de 3 dias" in itens[0].texto, "o Dashboard lê a constante na hora, não copia no import"
-            assert dashboard_mod.indices_do_filtro(antiga, filtro_paradas) == {0}
+            assert dashboard_mod.indices_do_filtro(antiga, filtro_paradas) == {0}, "o Dashboard lê a constante na hora, não copia no import"
+            assert dashboard_mod.numeros_das_vendas([venda_em(a_venda, 3)]).dias_de_parada == 3, "o cartão Paradas também"
             assert propostas_mod.contar_paradas(antiga) == 1
         finally:
             propostas_mod.DIAS_PROPOSTA_PARADA = limite

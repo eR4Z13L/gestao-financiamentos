@@ -5,6 +5,8 @@ acompanha as linhas e quem rola e a pagina.
 
     tabela = TabelaDePainel(["Banco", "Enviadas", "Taxa"], coluna_da_barra=2)
     tabela.definir_linhas([("SANTANDER", [Celula("Santander"), Celula("15", 15.0), Celula("38,5%", 38.5, barra=0.385)])])
+
+Uma linha de RODAPE ("Todos") fica sempre por ultimo, em negrito, e nao entra na ordenacao nem e clicavel.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import QEvent, QModelIndex, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPalette, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSizePolicy, QStyledItemDelegate, QStyleOptionViewItem, QTableView, QWidget
 
 from desktop import settings as settings_mod
@@ -91,6 +93,18 @@ class _Delegado(QStyledItemDelegate):
         pintor.restore()
 
 
+class _ModeloComRodape(QStandardItemModel):
+    """O modelo que ordena sem mexer na ultima linha quando ela e o rodape (a do "Todos")."""
+
+    tem_rodape = False
+
+    def sort(self, coluna: int, ordem: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        rodape = self.takeRow(self.rowCount() - 1) if self.tem_rodape and self.rowCount() else None
+        super().sort(coluna, ordem)
+        if rodape is not None:
+            self.appendRow(rodape)
+
+
 class TabelaDePainel(QTableView):
     linha_clicada = Signal(object)  # o payload da linha (o que `definir_linhas` recebeu com ela)
 
@@ -104,7 +118,7 @@ class TabelaDePainel(QTableView):
         """`colunas_a_direita`: as colunas de numero - o cabecalho delas fica encostado na direita, como as celulas."""
         super().__init__(parent)
         self.setProperty("role", "tabela_painel")  # sem borda propria - ver QSS em theme.py
-        self._modelo = QStandardItemModel(0, len(colunas), self)
+        self._modelo = _ModeloComRodape(0, len(colunas), self)
         self._modelo.setHorizontalHeaderLabels(colunas)
         for coluna in range(len(colunas)):
             alinhamento = Qt.AlignmentFlag.AlignRight if coluna in colunas_a_direita else Qt.AlignmentFlag.AlignLeft
@@ -135,20 +149,33 @@ class TabelaDePainel(QTableView):
 
     # -- dados ------------------------------------------------------------------------
 
-    def definir_linhas(self, linhas: list[tuple[Any, list[Celula]]], ordenar_por: int | None = None, decrescente: bool = True) -> None:
+    def definir_linhas(
+        self,
+        linhas: list[tuple[Any, list[Celula]]],
+        ordenar_por: int | None = None,
+        decrescente: bool = True,
+        rodape: list[Celula] | None = None,
+    ) -> None:
         """Troca o conteudo. `linhas`: (payload, celulas) por linha. `ordenar_por`: a coluna que ordena
-        agora (a ordem que o usuario tinha escolhido no cabecalho se mantem quando None)."""
+        agora (a ordem que o usuario tinha escolhido no cabecalho se mantem quando None). `rodape`: as celulas
+        da linha que fica sempre por ultimo (ex.: "Todos")."""
         cabecalho = self.horizontalHeader()
         coluna = cabecalho.sortIndicatorSection() if ordenar_por is None else ordenar_por
         ordem = cabecalho.sortIndicatorOrder() if ordenar_por is None else (Qt.SortOrder.DescendingOrder if decrescente else Qt.SortOrder.AscendingOrder)
 
         self.setSortingEnabled(False)
         self._modelo.removeRows(0, self._modelo.rowCount())
-        for payload, celulas in linhas:
+        self._modelo.tem_rodape = rodape is not None
+        for posicao, (payload, celulas) in enumerate([*linhas, (None, rodape)] if rodape is not None else linhas):
+            e_rodape = rodape is not None and posicao == len(linhas)
             itens = []
             for celula in celulas:
                 item = QStandardItem(celula.texto)
                 item.setData(celula.texto.casefold() if celula.ordem is None else celula.ordem, _PAPEL_ORDEM)
+                if e_rodape:
+                    fonte = QFont(item.font())
+                    fonte.setBold(True)
+                    item.setFont(fonte)
                 item.setData(celula.barra, _PAPEL_BARRA)
                 item.setData(celula.cor, _PAPEL_COR)
                 if celula.tooltip:
@@ -167,13 +194,21 @@ class TabelaDePainel(QTableView):
         self._ajustar_altura()
 
     def total_de_linhas(self) -> int:
-        return self._modelo.rowCount()
+        """As linhas de dados (sem o rodape)."""
+        return self._modelo.rowCount() - (1 if self._modelo.tem_rodape else 0)
+
+    def textos_do_rodape(self) -> list[str]:
+        """O texto de cada celula do rodape ([] sem rodape)."""
+        if not self._modelo.tem_rodape:
+            return []
+        ultima = self._modelo.rowCount() - 1
+        return [self._modelo.item(ultima, c).text() for c in range(self._modelo.columnCount())]
 
     def texto_da_celula(self, linha: int, coluna: int) -> str:
         return self._modelo.item(linha, coluna).text()
 
     def textos_da_coluna(self, coluna: int) -> list[str]:
-        return [self._modelo.item(l, coluna).text() for l in range(self._modelo.rowCount())]
+        return [self._modelo.item(l, coluna).text() for l in range(self.total_de_linhas())]
 
     def payload_da_linha(self, linha: int) -> Any:
         return self._modelo.item(linha, 0).data(_PAPEL_PAYLOAD)

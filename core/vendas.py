@@ -282,7 +282,9 @@ def editar_proposta(id_proposta: str, campos: dict, esperado: dict | None = None
     linha = _linha_da_proposta(propostas, id_proposta)
     if esperado is not None and not propostas_mod.linha_confere(propostas.loc[linha].to_dict(), esperado):
         raise propostas_mod.ErroProposta(propostas_mod._MENSAGEM_PROPOSTA_MUDOU)
-    antigo = propostas.at[linha, "STATUS"]
+    # o nome antigo "Nota fiscal enviada" conta como "NF enviada": editar sem mudar a etapa nao a reinicia (nem entra
+    # no historico), mas a gravacao ja deixa o nome novo na planilha
+    antigo = propostas_mod.nome_oficial(propostas.at[linha, "STATUS"])
     novo = campos.get("STATUS", antigo)
     id_venda = propostas.at[linha, "ID_VENDA"]
     linha_venda = _linha_da_venda(vendas, id_venda) if id_venda and id_venda in set(vendas["ID_VENDA"]) else None
@@ -745,7 +747,7 @@ def _proposta_da_linha(indice, p: pd.Series | dict, ultimas: dict, pilhas: dict,
         dias_na_etapa = _dias_desde(desde, hoje) if desde is not None else 0
         datas_das_etapas = tuple(sorted((datas or {}).get(id_proposta, {}).items(), key=lambda par: par[1]))
     return PropostaNaVenda(
-        id_proposta, int(indice), p["BANCO"], p["STATUS"], _numero_ou_none(p["VALOR (R$)"]),
+        id_proposta, int(indice), p["BANCO"], propostas_mod.nome_oficial(p["STATUS"]), _numero_ou_none(p["VALOR (R$)"]),
         int(meses) if meses is not None else None, p["DATA"] if pd.notna(p["DATA"]) else None,
         p["EQUIPAMENTO"], fechada, dias,
         # status de antes das vendas nao volta

@@ -288,7 +288,7 @@ class FormularioProposta(QWidget):
         _combo_flexivel(self._status)
         # so as 4 respostas do banco (o andamento do negocio fica na venda, core/vendas.py)
         opcoes_status = list(vendas_mod.STATUS_DA_PROPOSTA)
-        status_atual = (origem.get("STATUS") if origem else "") or ""
+        status_atual = propostas_mod.nome_oficial((origem.get("STATUS") if origem else "") or "")
         if status_atual and status_atual not in opcoes_status:
             # o status de agora fica na lista (um banco fechado em Assinado, ou dado de uma versao antiga em CAIXA
             # ALTA): sem isso, editar mudaria o status dela pra "Em Análise" (o primeiro item) sem o usuario perceber.
@@ -434,7 +434,7 @@ class FormularioProposta(QWidget):
         self._definir_equipamento(proposta.get("EQUIPAMENTO", "") if proposta else "")
         self._definir_banco(proposta.get("BANCO", "") if proposta else "")
 
-        status_atual = (proposta.get("STATUS") if proposta else "") or ""
+        status_atual = propostas_mod.nome_oficial((proposta.get("STATUS") if proposta else "") or "")
         if status_atual:
             self._status.setCurrentText(status_atual)
 

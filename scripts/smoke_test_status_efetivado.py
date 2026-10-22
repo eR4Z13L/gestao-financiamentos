@@ -41,7 +41,6 @@ from core import vendas as vendas_mod
 from core import vendedores as vendedores_mod
 from core.validators import _digito_verificador_cpf
 from desktop.widgets.formulario_proposta import FormularioProposta
-from desktop.screens.dashboard_screen import _COLUNAS_DE_VENDEDOR, DashboardScreen
 
 
 def linha(titulo: str) -> None:
@@ -246,36 +245,29 @@ def testar_telas_e_arquivo(app: QApplication, pasta: Path) -> None:
     print("OK: gravada, a proposta 'Efetivado' mostra TEMPO 'Encerrado' e as 'Aprovado' contam dias; "
           "a fórmula de cada linha do Excel é a da regra atual.")
 
-    linha("5) Dashboard (tela): 'Aprovadas a efetivar' e a tabela por vendedor")
-    tela = DashboardScreen()
-    assert tela._card_a_efetivar.valor() == "2", "so as de status exatamente 'Aprovado' estao a efetivar"
-    # 3 efetivadas de 6 aprovadas (categoria) = 50% ja viraram venda
-    assert tela._card_a_efetivar.detalhe() == "3 efetivadas até agora · 50,0% das aprovadas já efetivaram"
-    assert not tela._card_a_efetivar.detalhe_em_aviso(), "com efetivadas o detalhe e normal (o aviso e pra 0 efetivadas)"
-    assert tela._card_taxa.valor() == "100,0%", "6 aprovadas de 6 decididas (so aprovadas/(aprovadas+negadas))"
-    assert tela._card_taxa.detalhe() == "6 de 6 decididas"
-    nomes = tela._tabela_vendedores.textos_da_coluna(0)
-    coluna_a_efetivar = _COLUNAS_DE_VENDEDOR.index("A efetivar")
-    por_vendedor = {n: tela._tabela_vendedores.texto_da_celula(i, coluna_a_efetivar) for i, n in enumerate(nomes)}
-    assert por_vendedor == {"ANA": "2", "BIA": "0"}, por_vendedor
-    tela.close()
-    print("OK: 'Aprovadas a efetivar' mostra 2 e '3 efetivadas até agora · 50,0% das aprovadas já efetivaram'; "
-          "a tabela por vendedor tem a coluna 'A efetivar' (2 / 0).")
+    linha("5) Planilha gravada: a regra do dashboard sobre as propostas lidas (a efetivar, efetivadas e por vendedor)")
+    lidas = propostas_mod.listar_propostas()
+    totais = dashboard_mod.totais_gerais(lidas)
+    assert totais["aprovadas_nao_efetivadas"] == 2, "so as de status exatamente 'Aprovado' estao a efetivar"
+    assert totais["efetivadas"] == 3 and totais["aprovadas"] == 6
+    assert totais["taxa_aprovacao"] == 100.0, "6 aprovadas de 6 decididas (so aprovadas/(aprovadas+negadas))"
+    por_vendedor = dashboard_mod.por_vendedor(lidas)
+    a_efetivar = dict(zip(por_vendedor["Vendedor"], por_vendedor["Não Efetivadas"]))
+    assert a_efetivar == {"ANA": 2, "BIA": 0}, a_efetivar
+    print("OK: 2 a efetivar, 3 efetivadas, 6 aprovadas de 6 decididas; por vendedor a efetivar = 2 / 0.")
 
-    linha("5b) Dashboard sem nenhuma Aprovada/Efetivada")
+    linha("5b) Sem nenhuma Aprovada/Efetivada")
     arquivo2 = pasta / "controle2.xlsx"
     _criar_planilha_vazia(arquivo2)
     bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo2
     vendedores_mod.adicionar_vendedor("ANA")
     clientes_mod.adicionar_cliente({"CPF/CNPJ": _cpf(0), "CLIENTE": "CLIENTE ANA", "TIPO": "Cliente", "VENDEDOR": "ANA"})
     _add(_cpf(0), "Em Análise", 1000)
-    tela = DashboardScreen()
-    assert tela._card_a_efetivar.valor() == "0"
-    assert tela._card_a_efetivar.detalhe() == "0 efetivadas até agora" and tela._card_a_efetivar.detalhe_em_aviso()
-    assert tela._card_taxa.valor() == "—" and tela._card_taxa.detalhe() == "Nenhuma proposta decidida"
-    tela.close()
+    totais = dashboard_mod.totais_gerais(propostas_mod.listar_propostas())
+    assert totais["aprovadas_nao_efetivadas"] == 0 and totais["efetivadas"] == 0
+    assert totais["taxa_aprovacao"] == 0.0, "sem decididas a taxa e 0 (nunca divisao por zero)"
     bancos_mod.CAMINHO_XLSX = clientes_mod.CAMINHO_XLSX = propostas_mod.CAMINHO_XLSX = vendedores_mod.CAMINHO_XLSX = equipamentos_mod.CAMINHO_XLSX = arquivo
-    print("OK: sem Aprovadas nem Efetivadas o card mostra 0 e '0 efetivadas até agora' em aviso; sem decididas a taxa e '—' (sem divisão por zero).")
+    print("OK: sem Aprovadas nem Efetivadas tudo 0; sem decididas a taxa e 0 (sem divisão por zero).")
 
     linha("6) Planilha gravada com a regra antiga: atualizar só as fórmulas de TEMPO")
 

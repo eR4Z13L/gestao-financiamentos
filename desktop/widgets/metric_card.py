@@ -1,22 +1,30 @@
 """Cartao de metrica reaproveitavel (titulo pequeno + valor grande) - usado
 no Dashboard e, provavelmente, em telas futuras que precisem do mesmo formato.
 
-Abaixo do valor ha duas linhas opcionais: o detalhe ("R$ 927.000,00 · so 10 tem valor"), que pode ir
+Abaixo do valor ha linhas opcionais: o detalhe ("R$ 927.000,00 · so 10 tem valor"), que pode ir
 em destaque de aviso (ambar) quando o numero merece atencao, e a comparacao com o periodo anterior.
+O cartao pode ser CLICAVEL (`tornar_clicavel`: mouse, ou Enter/Espaco com o foco) e o proprio numero pode
+ficar em ambar (`definir_valor_em_aviso`).
 """
 
 from __future__ import annotations
 
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from desktop import settings as settings_mod
+from desktop.theme import CORES_STATUS, TEMA_ESCURO
 from desktop.widgets.shadow import aplicar_sombra_suave
 
 
 class MetricCard(QFrame):
+    clicado = Signal()  # so em um cartao clicavel (tornar_clicavel)
+
     def __init__(self, titulo: str, parent: QWidget | None = None):
         super().__init__(parent)
         self.setProperty("role", "card")
+        self._valor_em_aviso = False
+        self._clicavel = False
         aplicar_sombra_suave(self, settings_mod.obter_tema())
 
         layout = QVBoxLayout(self)
@@ -47,6 +55,13 @@ class MetricCard(QFrame):
         self._comparacao.setWordWrap(True)
         self._comparacao.setVisible(False)
         layout.addWidget(self._comparacao)
+
+        # "Ver na tela Vendas →": so num cartao clicavel
+        self._acao = QLabel("")
+        self._acao.setProperty("role", "secundario")
+        self._acao.setVisible(False)
+        layout.addWidget(self._acao)
+        layout.addStretch(1)  # cartoes lado a lado tem a mesma altura: a sobra fica embaixo e os titulos alinham
 
     def titulo(self) -> str:
         return self._legenda.text()
@@ -79,3 +94,54 @@ class MetricCard(QFrame):
     def definir_comparacao(self, texto: str) -> None:
         self._comparacao.setText(texto)
         self._comparacao.setVisible(bool(texto))
+
+    # -- clicavel ---------------------------------------------------------------------------
+
+    def tornar_clicavel(self, texto_da_acao: str) -> None:
+        """O cartao vira um botao: `clicado` e emitido com o mouse ou com Enter/Espaco (com o foco)."""
+        self._clicavel = True
+        self._acao.setText(texto_da_acao)
+        self._acao.setVisible(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setAccessibleName(self._legenda.text())
+
+    def acao(self) -> str:
+        return self._acao.text()
+
+    def eh_clicavel(self) -> bool:
+        return self._clicavel
+
+    def mouseReleaseEvent(self, evento) -> None:
+        if self._clicavel and evento.button() == Qt.MouseButton.LeftButton and self.rect().contains(evento.position().toPoint()):
+            self.clicado.emit()
+        super().mouseReleaseEvent(evento)
+
+    def keyPressEvent(self, evento) -> None:
+        if self._clicavel and evento.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicado.emit()
+            return
+        super().keyPressEvent(evento)
+
+    # -- numero em ambar ---------------------------------------------------------------------
+
+    def valor_em_aviso(self) -> bool:
+        return self._valor_em_aviso
+
+    def definir_valor_em_aviso(self, aviso: bool) -> None:
+        """O numero grande em ambar (a mesma cor do aviso do detalhe) quando ele pede atencao."""
+        self._valor_em_aviso = aviso
+        self._pintar_valor()
+
+    def _pintar_valor(self) -> None:
+        if not self._valor_em_aviso:
+            self._valor.setStyleSheet("")
+            return
+        tema = settings_mod.obter_tema()
+        cor = CORES_STATUS[tema if tema in CORES_STATUS else TEMA_ESCURO]["em_analise"]["texto"]
+        self._valor.setStyleSheet(f"color: {cor};")
+
+    def changeEvent(self, evento) -> None:
+        if evento.type() == QEvent.Type.StyleChange and getattr(self, "_valor_em_aviso", False):
+            self._pintar_valor()  # trocou o tema: refaz a cor ambar
+        super().changeEvent(evento)

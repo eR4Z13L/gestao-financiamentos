@@ -124,6 +124,13 @@ class ErroProposta(Exception):
     pass
 
 
+def nome_oficial(status):
+    """O status como o app o mostra e grava: o nome antigo "Nota fiscal enviada" (planilhas convertidas antes do renome)
+    vira "NF enviada"; qualquer outro valor volta igual (nada mais e trocado aqui)."""
+    chave = " ".join(str(status or "").split()).casefold()
+    return STATUS_NOTA_ENVIADA if chave == STATUS_NOTA_ENVIADA_ANTIGO.casefold() else status
+
+
 def categoria_status(status: str) -> str:
     """Classifica um status (mesmo um customizado/novo, desde que seja uma
     das etapas oficiais do funil) em 'Negado', 'Em Análise', 'Aprovado' ou

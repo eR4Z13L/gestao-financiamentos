@@ -909,13 +909,13 @@ def testar_fundo_dos_rotulos_e_tooltip(amb: Ambiente, msgs: Mensagens, tema: str
         assert len(rotulos) >= minimo, (nome, len(rotulos))
         com_fundo = [r.text() for r in rotulos if not transparente(r)]
         assert not com_fundo, f"{nome}: rotulos com fundo proprio (faixa atras do texto): {com_fundo}"
-    for card in (janela._tela_dashboard._card_em_analise, janela._tela_dashboard._card_taxa):
+    for card in (janela._tela_dashboard._card_andamento, janela._tela_dashboard._card_paradas):
         for rotulo in card.findChildren(QLabel):
             assert transparente(rotulo)
     print("OK: os rotulos do Dashboard (cards), da Administração, dos Cadastros e da barra lateral nao tem fundo proprio.")
 
     # ... e a foto do card confirma: onde nao ha letra, o fundo e o do CARD (nao o da janela)
-    card = janela._tela_dashboard._card_em_analise
+    card = janela._tela_dashboard._card_andamento
     imagem = card.grab().toImage()
     legenda = card._valor
     ponto = legenda.mapTo(card, QPoint(legenda.width() - 3, 3))

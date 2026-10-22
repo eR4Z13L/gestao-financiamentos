@@ -11,8 +11,8 @@ varios bancos, e cada financiamento anda no seu tempo (core/vendas.py), entao qu
 - a setinha ↩: volta ao status de antes da ultima troca (pelo HISTÓRICO; de novo, mais um passo); na venda, so num
   desfecho, e reabre.
 A etiqueta da venda nao tem bolinha: o status dela sai dos bancos (Aguardando bancos / Em andamento / Efetivada).
-O selo "parada ha N dias" aparece no banco parado na etapa e, no topo, a maior parada (so etapa: pendencia nunca
-conta). As pendencias (1.2-B) sao uma etiqueta "N pendencias" ao lado do status; no card aberto ha a lista, com o
+A parada ("parada ha N dias", em ambar e negrito, sem caixinha) aparece no texto de cada banco parado na etapa e na
+linha "desde ..." do topo, onde vale a maior parada (so etapa: pendencia nunca conta). As pendencias (1.2-B) sao uma etiqueta "N pendencias" ao lado do status; no card aberto ha a lista, com o
 "Resolvida" de cada uma e o "+ Pendência".
 
 Aberto (dois cliques no card, ou a setinha ⌄ do canto), ele serve pra EDITAR: cada banco ganha o ✎ (ou dois cliques
@@ -25,6 +25,7 @@ das confirmacoes e das perguntas, e pede pra tela reler depois de gravar.
 
 from __future__ import annotations
 
+from html import escape
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
@@ -80,6 +81,9 @@ COR_DA_VENDA = {
 # a resposta do banco que as bolinhas oferecem enquanto ele nao respondeu (Pré-aprovado so pela lista)
 RESPOSTAS_RAPIDAS = [propostas_mod.STATUS_APROVADO, propostas_mod.STATUS_NEGADO]
 ESPERANDO_RESPOSTA = {propostas_mod.ETAPA_EM_ANALISE, propostas_mod.ETAPA_PRE_APROVADO}
+EXPLICACAO_DA_TRILHA = ("Círculo: marque quando o cliente fechar com este banco. "
+                        "Pontinhos: " + " → ".join(vendas_mod.ETAPAS_DO_FECHADO) + ".")
+TEXTO_PARA_FECHAR = "cliente fechou? marque o círculo"  # a dica ao lado de um banco aprovado ainda nao marcado
 EFETIVAR = vendas_mod.PROPOSTA_EFETIVADA + "…"  # a bolinha de um banco fechado (pede confirmacao)
 
 
@@ -254,37 +258,34 @@ class BotaoVoltar(_ComDica):
         pintor.drawPolyline([QPointF(10, 5), QPointF(7, 8), QPointF(10, 11)])
 
 
-class Selo(QWidget):
-    """O selo "parada há N dias": borda e fundo de aviso (ambar), so mostra."""
+class TextoComParada(QLabel):
+    """Uma linha de texto secundario em que o trecho "parada há N dias" vai em ambar e negrito, sem caixinha (so as
+    etiquetas de status e de pendencias tem fundo). A cor vem do tema na hora de desenhar: o app troca de tema com os
+    cards ja na tela. Sem `parada`, e um texto comum."""
 
-    def __init__(self, texto: str, parent: QWidget | None = None):
+    def __init__(self, antes: str, parada: str, depois: str, parent: QWidget | None = None):
         super().__init__(parent)
-        self.texto = texto
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.antes, self.parada, self.depois = antes, parada, depois
+        self.texto = antes + parada + depois  # o texto inteiro, sem formatacao
+        self.setProperty("role", "secundario")
+        self._tema_do_texto: str | None = None
+        self._montar()
 
-    def sizeHint(self) -> QSize:
-        metricas = QFontMetrics(self._fonte())
-        return QSize(metricas.horizontalAdvance(self.texto) + 14, metricas.height() + 4)
+    def _montar(self) -> None:
+        if not self.parada:
+            self.setTextFormat(Qt.TextFormat.PlainText)
+            self.setText(self.texto)
+            return
+        tema = _tema()
+        cor = CORES_STATUS[tema]["em_analise"]["texto"]
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setText(f'{escape(self.antes)}<b style="color: {cor}">{escape(self.parada)}</b>{escape(self.depois)}')
+        self._tema_do_texto = tema
 
-    def minimumSizeHint(self) -> QSize:
-        return self.sizeHint()
-
-    def _fonte(self) -> QFont:
-        fonte = QFont(self.font())
-        fonte.setBold(True)
-        fonte.setPointSizeF(max(7.0, fonte.pointSizeF() - 1))
-        return fonte
-
-    def paintEvent(self, _evento) -> None:
-        cor = CORES_STATUS[_tema()]["em_analise"]
-        pintor = QPainter(self)
-        pintor.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pintor.setPen(QPen(QColor(cor["faixa"]), 1))
-        pintor.setBrush(QColor(cor["fundo"]))
-        pintor.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
-        pintor.setFont(self._fonte())
-        pintor.setPen(QColor(cor["texto"]))
-        pintor.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.texto)
+    def paintEvent(self, evento) -> None:
+        if self.parada and self._tema_do_texto != _tema():
+            self._montar()
+        super().paintEvent(evento)
 
 
 class EtiquetaDePendencias(Pilula):
@@ -326,6 +327,11 @@ class Trilha(QWidget):
         quando = self.datas.get(indice)
         return f"{etapa} em {quando:%d/%m}" if quando is not None else etapa
 
+    def dica_completa(self, indice: int | None) -> str:
+        """O que o mouse mostra: o ponto (etapa e data), se ha, e sempre a explicacao do circulo e dos pontinhos."""
+        ponto = self.dica_do_ponto(indice) if indice is not None else ""
+        return f"{ponto}\n{EXPLICACAO_DA_TRILHA}" if ponto else EXPLICACAO_DA_TRILHA
+
     def _ponto_em(self, x: float) -> int | None:
         passo = self.PONTO + self.LIGACAO
         indice = int((x - 1) // passo)
@@ -334,11 +340,7 @@ class Trilha(QWidget):
 
     def event(self, evento) -> bool:
         if evento.type() == QEvent.Type.ToolTip:
-            indice = self._ponto_em(evento.pos().x())
-            if indice is not None:
-                QToolTip.showText(evento.globalPos(), self.dica_do_ponto(indice), self)
-            else:
-                QToolTip.hideText()
+            QToolTip.showText(evento.globalPos(), self.dica_completa(self._ponto_em(evento.pos().x())), self)
             return True
         return super().event(evento)
 
@@ -479,17 +481,29 @@ def por_anel(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda, proposta
     anel = None
     if proposta.fechada:
         desmarcavel = aberta and proposta.status != vendas_mod.PROPOSTA_EFETIVADA
-        anel = AnelDoBanco(True, "Fechado (clique para desmarcar)" if desmarcavel else "Fechado", parent)
+        anel = AnelDoBanco(True, ("Fechado (clique para desmarcar)" if desmarcavel else "Fechado") + "\n" + EXPLICACAO_DA_TRILHA,
+                           parent)
         if desmarcavel:
             anel.clicked.connect(lambda: card.fechamento_desfeito.emit(venda, proposta))
     elif aprovada and aberta:
-        anel = AnelDoBanco(False, "Marcar como fechado (o cliente fechou com este banco)", parent)
+        anel = AnelDoBanco(False, "Marcar como fechado (o cliente fechou com este banco)\n" + EXPLICACAO_DA_TRILHA, parent)
         anel.clicked.connect(lambda: card.fechamento_pedido.emit(venda, proposta))
     if anel is None:
         linha.addSpacing(AnelDoBanco.LADO)
     else:
         linha.addWidget(anel)
     return anel
+
+
+def dica_para_fechar(anel: AnelDoBanco | None, parent: QWidget) -> QLabel | None:
+    """Ao lado de um banco aprovado que ainda nao foi marcado como fechado: um textinho discreto (sem fundo) dizendo o
+    que o circulo faz. Sem circulo, ou ja marcado, nao ha dica."""
+    if anel is None or anel.fechado:
+        return None
+    dica = QLabel(TEXTO_PARA_FECHAR, parent)
+    dica.setProperty("role", "dica")  # pequeno e sem fundo (ver theme.py)
+    dica.setToolTip(EXPLICACAO_DA_TRILHA)
+    return dica
 
 
 def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDaVenda | None,
@@ -505,7 +519,8 @@ def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDa
         voltar.clicked.connect(lambda: card.volta_da_proposta_pedida.emit(venda, proposta))
         linha.addWidget(voltar)
         itens["voltar"] = voltar
-    pilula = Pilula(proposta.status or "Sem status", chave_cor_status(proposta.status), parent, clicavel=acoes)
+    pilula = Pilula(propostas_mod.nome_oficial(proposta.status) or "Sem status", chave_cor_status(proposta.status), parent,
+                    clicavel=acoes)
     if acoes:
         pilula.clicked.connect(lambda: card.lista_da_proposta_pedida.emit(venda, proposta, pilula))
     linha.addWidget(pilula)
@@ -537,20 +552,20 @@ def por_controles_de_status(linha: QHBoxLayout, card, venda: vendas_mod.ResumoDa
 
 def por_data_da_etapa(linha: QHBoxLayout, venda: vendas_mod.ResumoDaVenda | None, proposta: vendas_mod.PropostaNaVenda,
                       parent: QWidget, itens: dict) -> None:
-    """Num banco fechado, em `linha`: o selo "parada há N dias" (so etapa, e so numa venda que nao desistiu/perdeu) e
-    "desde 15/10 · há 3 dias" (Efetivado: so "desde 17/10"); os widgets vao para `itens` ("selo", "data")."""
-    itens.setdefault("selo", None)
+    """Num banco fechado, em `linha`: "desde 15/10 · há 3 dias" (Efetivado: so "desde 17/10"); parado na etapa (e numa
+    venda que nao desistiu/perdeu), o "há 3 dias" vira "parada há 9 dias", em ambar. O widget vai para `itens["data"]`."""
     itens.setdefault("data", None)
     if not proposta.fechada or proposta.desde is None:
         return
-    if proposta.parada and (venda is None or venda.status not in vendas_mod.DESFECHOS_DA_VENDA):
-        itens["selo"] = Selo(f"parada há {proposta.dias_na_etapa} dias", parent)
-        linha.addWidget(itens["selo"])
-    texto = f"desde {proposta.desde:%d/%m}"
+    antes = f"desde {proposta.desde:%d/%m}"
+    parada = ""
     if propostas_mod.etapa_status(proposta.status) != propostas_mod.ETAPA_EFETIVADO:
-        texto += f" · {ha_quanto(proposta.dias_na_etapa)}"
-    data = QLabel(texto, parent)
-    data.setProperty("role", "secundario")
+        antes += " · "
+        if proposta.parada and (venda is None or venda.status not in vendas_mod.DESFECHOS_DA_VENDA):
+            parada = f"parada há {proposta.dias_na_etapa} dias"
+        else:
+            antes += ha_quanto(proposta.dias_na_etapa)
+    data = TextoComParada(antes, parada, "", parent)
     data.setToolTip("Há quanto tempo o banco está nesta etapa")
     linha.addWidget(data)
     itens["data"] = data
@@ -607,10 +622,6 @@ class CardDaVenda(QFrame):
             self.voltar = BotaoVoltar(venda.anterior, self)
             self.voltar.clicked.connect(lambda: self.volta_da_venda_pedida.emit(self.venda))
             topo.addWidget(self.voltar, alignment=Qt.AlignmentFlag.AlignTop)
-        self.selo: Selo | None = None  # a maior parada da venda (so etapa: pendencia nunca conta)
-        if venda.dias_parada is not None:
-            self.selo = Selo(f"parada há {venda.dias_parada} dias", self)
-            topo.addWidget(self.selo, alignment=Qt.AlignmentFlag.AlignTop)
         self.etiqueta_pendencias: EtiquetaDePendencias | None = None
         if venda.pendencias_abertas:
             self.etiqueta_pendencias = EtiquetaDePendencias(venda.pendencias_abertas, self)
@@ -640,8 +651,7 @@ class CardDaVenda(QFrame):
             self.observacoes.setProperty("role", "secundario")
             self._layout.addWidget(self.observacoes)
 
-        self.andamento = QLabel(self._texto_andamento(), self)
-        self.andamento.setProperty("role", "secundario")
+        self.andamento = self._linha_de_andamento()
         self.andamento.setWordWrap(True)
         self._layout.addWidget(self.andamento)
         aprovadas = len(venda.aprovadas())
@@ -779,17 +789,31 @@ class CardDaVenda(QFrame):
             self.fechar_pedido.emit(self.venda)
         evento.accept()
 
-    def _texto_andamento(self) -> str:
+    def _linha_de_andamento(self) -> TextoComParada:
+        """"desde 02/09/2026 · há 3 dias em "Em andamento" · 1 de 2 bancos efetivados". Parada (a maior parada da venda:
+        so etapa, pendencia nunca conta) vira texto em ambar: venda Aguardando bancos, "parada há 9 dias em "Aguardando
+        bancos""; venda Em andamento, o banco e a etapa que travaram: "Banco X parado em Assinado há 9 dias"."""
         v = self.venda
         partes = [f"desde {formatar_data(v.data_criacao)}"] if v.data_criacao is not None else []
-        if v.dias_na_etapa is not None and not v.finalizada:
-            quanto = ha_quanto(v.dias_na_etapa)
-            partes.append(f"{quanto} em \"{v.status}\"")
         fechados = v.bancos_fechados()
+        banco = ""
         if fechados and v.status not in vendas_mod.DESFECHOS_DA_VENDA:
-            partes.append(f"{len(v.efetivados())} de {len(fechados)} banco{'s' if len(fechados) > 1 else ''} "
-                          f"efetivado{'s' if len(fechados) > 1 else ''}")
-        return " · ".join(partes) or "sem data"
+            banco = (f"{len(v.efetivados())} de {len(fechados)} banco{'s' if len(fechados) > 1 else ''} "
+                     f"efetivado{'s' if len(fechados) > 1 else ''}")
+        if v.dias_parada is not None:
+            antes = "".join(f"{parte} · " for parte in partes)
+            parados = v.bancos_parados()
+            if v.status == vendas_mod.VENDA_EM_ANDAMENTO and parados:
+                pior = max(parados, key=lambda p: p.dias_na_etapa)  # o que esta parado ha mais tempo (a mesma conta de dias_parada)
+                return TextoComParada(antes, f"{pior.banco or 'Sem banco'} parado em {pior.status or 'sem status'} há {v.dias_parada} dias",
+                                      f" · {banco}" if banco else "", self)
+            return TextoComParada(antes, f"parada há {v.dias_parada} dias", f' em "{v.status}"' + (f" · {banco}" if banco else ""),
+                                  self)
+        if v.dias_na_etapa is not None and not v.finalizada:
+            partes.append(f'{ha_quanto(v.dias_na_etapa)} em "{v.status}"')
+        if banco:
+            partes.append(banco)
+        return TextoComParada(" · ".join(partes) or "sem data", "", "", self)
 
     def _linha_do_banco(self, proposta: vendas_mod.PropostaNaVenda) -> QWidget:
         widget = _LinhaDoBanco(self)
@@ -808,6 +832,9 @@ class CardDaVenda(QFrame):
         fonte.setWeight(QFont.Weight.DemiBold)
         banco.setFont(fonte)
         linha.addWidget(banco)
+        itens["dica_fechar"] = dica_para_fechar(itens["anel"], widget)
+        if itens["dica_fechar"] is not None:
+            linha.addWidget(itens["dica_fechar"])
         itens["trilha"] = None
         if proposta.fechada and vendas_mod.indice_da_etapa(proposta.status) is not None:
             itens["trilha"] = Trilha(proposta, widget)

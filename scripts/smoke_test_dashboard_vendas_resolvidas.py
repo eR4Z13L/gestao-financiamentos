@@ -110,9 +110,13 @@ def main() -> None:
         print("OK: Efetivada (com ou sem pendência), Não efetivada e Perdida marcam as propostas delas; venda aberta e proposta "
               "sem venda não.")
 
-        linha("2) 'Precisa de atenção': paradas e a efetivar")
-        itens = {i.chave: set(i.indices) for i in dash.precisa_de_atencao(df, hoje=HOJE)}
-        itens_antigos = {i.chave: set(i.indices) for i in dash.precisa_de_atencao(sem_coluna, hoje=HOJE)}
+        linha("2) Os filtros de Todas as Propostas: paradas e a efetivar")
+        def grupos(propostas):  # o que cada filtro do Dashboard escolhe (so os grupos que tem alguma proposta)
+            todos = {c: dash.indices_do_filtro(propostas, dash.FiltroDoDashboard(c, "x"), HOJE) for c in dash.ATENCOES_EM_ORDEM}
+            return {c: i for c, i in todos.items() if i}
+
+        itens = grupos(df)
+        itens_antigos = grupos(sem_coluna)
         em_aberto_resolvidas = indices(df, pe2, pn, pp, pd2)  # Aprovado / Em Análise dentro de venda resolvida
         assert em_aberto_resolvidas <= itens_antigos[dash.ATENCAO_PARADAS], "sem a coluna elas contariam (o teste vale)"
         assert not itens[dash.ATENCAO_PARADAS] & resolvidas, "paradas: nenhuma de venda resolvida"
@@ -130,21 +134,20 @@ def main() -> None:
         assert propostas_mod.contar_paradas(sem_coluna) == len(itens_antigos[dash.ATENCAO_PARADAS])
         filtro = dash.FiltroDoDashboard(dash.ATENCAO_PARADAS, "Em aberto há mais de 7 dias")
         assert dash.indices_do_filtro(df, filtro, HOJE) == itens[dash.ATENCAO_PARADAS], "o filtro de Todas as Propostas = o da lista"
-        print(f"OK: selo = {paradas} (sem as de venda resolvida), igual à lista 'Precisa de atenção' e ao filtro.")
+        print(f"OK: selo = {paradas} (sem as de venda resolvida), igual ao filtro de Todas as Propostas.")
 
-        linha("4) 'A efetivar': cartão, por vendedor e topo")
+        linha("4) 'A efetivar': totais e por vendedor")
         aprovadas_pendentes = int(((df["STATUS"].map(propostas_mod.etapa_status) == propostas_mod.ETAPA_APROVADO)
                                    & ~propostas_mod.fora_do_fluxo(df)).sum())
         antigo = int((sem_coluna["STATUS"].map(propostas_mod.etapa_status) == propostas_mod.ETAPA_APROVADO).sum())
         assert antigo - aprovadas_pendentes == len(indices(df, pe2, pn, pd2)), "o teste precisa de Aprovado em venda resolvida"
         assert dash.totais_gerais(df)["aprovadas_nao_efetivadas"] == aprovadas_pendentes
         assert dash.totais_gerais(sem_coluna)["aprovadas_nao_efetivadas"] == antigo
-        assert dash.indicadores_do_topo(df)["a_efetivar"]["quantidade"] == aprovadas_pendentes
         assert int(dash.por_vendedor(df)["Não Efetivadas"].sum()) == aprovadas_pendentes
         assert int(dash.por_vendedor(sem_coluna)["Não Efetivadas"].sum()) == antigo
         efetivadas = dash.totais_gerais(df)["efetivadas"]
         assert efetivadas == dash.totais_gerais(sem_coluna)["efetivadas"], "as Efetivadas continuam contando (taxa de efetivação)"
-        print(f"OK: {aprovadas_pendentes} a efetivar (eram {antigo}) no cartão, no topo e na tabela por vendedor; efetivadas iguais.")
+        print(f"OK: {aprovadas_pendentes} a efetivar (eram {antigo}) nos totais e na tabela por vendedor; efetivadas iguais.")
 
         linha("5) 'Cliente já efetivou em outro banco' só vale para proposta sem venda")
         mesma = itens.get(dash.ATENCAO_MESMA_VENDA, set())

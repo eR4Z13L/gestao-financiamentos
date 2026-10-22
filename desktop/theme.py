@@ -358,6 +358,12 @@ def build_stylesheet(tema: str = TEMA_ESCURO) -> str:
         color: {p['texto_secundario']};
         font-size: 11px;
     }}
+    /* dica discreta ao lado de um controle (ex.: "cliente fechou? marque o circulo"): texto pequeno, sem fundo */
+    QLabel[role="dica"] {{
+        background-color: transparent;
+        color: {p['texto_secundario']};
+        font-size: 11px;
+    }}
     /* ainda dentro desse card: os campos de numero e as observacoes, EDITANDO, usam o mesmo fundo
        dos combos - senao a regra global lhes daria o da janela (cinza/escuro demais no card) */
     QWidget[formulario_proposta="true"] QAbstractSpinBox,
