@@ -767,6 +767,38 @@ def _pendencias_ou_erro(v: dict) -> tuple[tuple[Pendencia, ...], str]:
         return (), str(exc)
 
 
+def _resumo_da_linha(v: dict, da_venda: list[tuple], ultimas: dict, pilhas: dict, datas: dict, por_cpf: dict,
+                     hoje: pd.Timestamp) -> ResumoDaVenda:
+    """A venda `v` (uma linha da aba VENDAS) com as suas propostas `da_venda` ((indice, registro), ja na ordem pela DATA)
+    pronta pra tela. A mesma conta para a lista inteira e para uma venda so (resumo_da_venda): nunca divergem."""
+    ids_da_venda = {registro["ID_PROPOSTA"] for _, registro in da_venda}
+    fechadas = [i for i in fechadas_da_venda(v["BANCO_ESCOLHIDO"]) if i in ids_da_venda]
+    itens = [_proposta_da_linha(indice, registro, ultimas, pilhas, fechadas, hoje, datas)
+             for indice, registro in da_venda]
+    nome, vendedor = por_cpf.get(apenas_digitos(v["CPF"]), ("", ""))
+    criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None
+    # o status vem dos bancos (uma venda gravada com etapas de antes - "Banco escolhido", "Nota fiscal" - le certo)
+    calculado = status_calculado([p.status for p in itens if p.fechada])
+    status = v["STATUS"] if v["STATUS"] in VENDA_MANUAL else calculado
+    voltar_para = calculado if status in DESFECHOS_DA_VENDA else None
+    return ResumoDaVenda(
+        v["ID_VENDA"], v["CPF"], nome, vendedor, v["EQUIPAMENTOS"], status, v["MOTIVO"],
+        tuple(fechadas), criacao, _dias_desde(ultimas.get(v["ID_VENDA"], criacao), hoje),
+        v["OBSERVAÇÕES"], tuple(itens), voltar_para, *_pendencias_ou_erro(v),
+    )
+
+
+def _por_cpf(clientes: pd.DataFrame) -> dict:
+    return {apenas_digitos(c): (nome, vendedor) for c, nome, vendedor
+            in zip(clientes["CPF/CNPJ"], clientes["CLIENTE"], clientes["VENDEDOR"])}
+
+
+def _propostas_ordenadas(propostas: pd.DataFrame) -> list[tuple]:
+    # a ordenacao estavel pela DATA feita antes de agrupar deixa cada grupo na mesma ordem de ordenar cada um por separado
+    ordenadas = propostas.sort_values("DATA", kind="stable")
+    return list(zip(ordenadas.index, ordenadas.to_dict("records")))
+
+
 def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     """Todas as vendas, prontas pra tela (a mais recente primeiro), cada uma com as suas propostas."""
     hoje = pd.Timestamp(hoje or date.today())
@@ -777,36 +809,36 @@ def listar_vendas(hoje: date | None = None) -> list[ResumoDaVenda]:
     ultimas = _ultimas_mudancas(historico)
     pilhas = _pilhas_de_anteriores(historico)
     datas = _datas_das_etapas(historico)
-    por_cpf = {apenas_digitos(c): (nome, vendedor) for c, nome, vendedor
-               in zip(clientes["CPF/CNPJ"], clientes["CLIENTE"], clientes["VENDEDOR"])}
+    por_cpf = _por_cpf(clientes)
 
-    # as propostas agrupadas por venda uma vez so (e nao uma busca na tabela inteira por venda); a ordenacao estavel
-    # pela DATA feita antes de agrupar deixa cada grupo na mesma ordem de ordenar cada um por separado
+    # as propostas agrupadas por venda uma vez so (e nao uma busca na tabela inteira por venda)
     por_venda: dict[str, list[tuple]] = {}
-    ordenadas = propostas.sort_values("DATA", kind="stable")
-    for indice, registro in zip(ordenadas.index, ordenadas.to_dict("records")):
+    for indice, registro in _propostas_ordenadas(propostas):
         por_venda.setdefault(registro["ID_VENDA"], []).append((indice, registro))
 
-    resultado = []
-    for v in vendas.to_dict("records"):
-        da_venda = por_venda.get(v["ID_VENDA"], [])
-        ids_da_venda = {registro["ID_PROPOSTA"] for _, registro in da_venda}
-        fechadas = [i for i in fechadas_da_venda(v["BANCO_ESCOLHIDO"]) if i in ids_da_venda]
-        itens = [_proposta_da_linha(indice, registro, ultimas, pilhas, fechadas, hoje, datas)
-                 for indice, registro in da_venda]
-        nome, vendedor = por_cpf.get(apenas_digitos(v["CPF"]), ("", ""))
-        criacao = v["DATA_CRIACAO"] if pd.notna(v["DATA_CRIACAO"]) else None
-        # o status vem dos bancos (uma venda gravada com etapas de antes - "Banco escolhido", "Nota fiscal" - le certo)
-        calculado = status_calculado([p.status for p in itens if p.fechada])
-        status = v["STATUS"] if v["STATUS"] in VENDA_MANUAL else calculado
-        voltar_para = calculado if status in DESFECHOS_DA_VENDA else None
-        resultado.append(ResumoDaVenda(
-            v["ID_VENDA"], v["CPF"], nome, vendedor, v["EQUIPAMENTOS"], status, v["MOTIVO"],
-            tuple(fechadas), criacao, _dias_desde(ultimas.get(v["ID_VENDA"], criacao), hoje),
-            v["OBSERVAÇÕES"], tuple(itens), voltar_para, *_pendencias_ou_erro(v),
-        ))
+    resultado = [_resumo_da_linha(v, por_venda.get(v["ID_VENDA"], []), ultimas, pilhas, datas, por_cpf, hoje)
+                 for v in vendas.to_dict("records")]
     resultado.sort(key=lambda r: r.data_criacao if r.data_criacao is not None else pd.Timestamp.min, reverse=True)
     return resultado
+
+
+def resumo_da_venda(id_venda: str, hoje: date | None = None) -> ResumoDaVenda:
+    """O resumo de UMA venda, exatamente o item dela em listar_vendas (mesmo `hoje`): o que a tela troca no card depois
+    de gravar, sem refazer a lista inteira. ErroVenda se a venda nao existe mais."""
+    hoje = pd.Timestamp(hoje or date.today())
+    clientes = bd.ler_clientes(_caminho())
+    propostas = bd.ler_propostas(_caminho(), clientes)
+    vendas = bd.ler_vendas(_caminho())
+    linhas = vendas[vendas["ID_VENDA"] == id_venda]
+    if linhas.empty:
+        raise ErroVenda("Venda não encontrada (a lista pode ter mudado). Recarregue e tente de novo.")
+    da_venda = _propostas_ordenadas(propostas[propostas["ID_VENDA"] == id_venda])
+    # so o historico desta venda e das propostas dela: o resto nao entra na conta
+    ids = {id_venda, *(registro["ID_PROPOSTA"] for _, registro in da_venda)}
+    historico = bd.ler_historico(_caminho())
+    historico = historico[historico["ID"].isin(ids)]
+    return _resumo_da_linha(linhas.iloc[0].to_dict(), da_venda, _ultimas_mudancas(historico),
+                            _pilhas_de_anteriores(historico), _datas_das_etapas(historico), _por_cpf(clientes), hoje)
 
 
 @dataclass(frozen=True)

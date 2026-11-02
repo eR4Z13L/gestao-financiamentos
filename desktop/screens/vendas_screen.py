@@ -75,6 +75,7 @@ class VendasScreen(QWidget):
         super().__init__(parent)
         self._vigia = VigiaDoArquivo()
         self._vendas: list[vendas_mod.ResumoDaVenda] = []
+        self._desatualizada = False  # o arquivo ja tinha mudado por fora quando a gravacao comecou (ver _anotar_se_desatualizada)
         self.dialogo_resumo: ResumoPorVendedorDialog | None = None
 
         layout = QVBoxLayout(self)
@@ -124,6 +125,8 @@ class VendasScreen(QWidget):
         self.rolagem.setWidget(conteudo)
         self.lista = ListaDeVendas(self.rolagem, conteudo)
         self.lista.gravou.connect(self._depois_de_gravar)
+        self.lista.gravou_venda.connect(self._depois_de_gravar_venda)
+        self.lista.controle.antes_de_gravar = self._anotar_se_desatualizada
         self.lista.avisou.connect(lambda texto: self.faixa_aviso.avisar(texto))
         self.lista.ficha_pedida.connect(self.ficha_pedida)
         coluna.addWidget(self.lista)
@@ -196,8 +199,11 @@ class VendasScreen(QWidget):
         else:
             vazio = "Nenhuma venda ainda. Clique em \"+ Nova venda\"."
         self.lista.definir_vendas(visiveis, texto_vazio=vazio, voltar_ao_inicio=voltar_ao_inicio)
-        resumo = resumo_por_status(visiveis)
-        self.contador.setText(f"{len(visiveis)} venda(s)" + (f" · {resumo}" if resumo else ""))
+        self._atualizar_contador(visiveis)
+
+    def _atualizar_contador(self, mostradas: list[vendas_mod.ResumoDaVenda]) -> None:
+        resumo = resumo_por_status(mostradas)
+        self.contador.setText(f"{len(mostradas)} venda(s)" + (f" · {resumo}" if resumo else ""))
 
     # -- gravar -------------------------------------------------------------------------------------
 
@@ -205,6 +211,37 @@ class VendasScreen(QWidget):
         self.carregar()
         self.dados_atualizados.emit()
         self.faixa_aviso.avisar(aviso)
+
+    def _anotar_se_desatualizada(self) -> None:
+        """Logo antes de cada gravacao: o arquivo ja mudou por fora (outra tela, a nuvem) desde a ultima leitura desta
+        tela? Entao as outras vendas da lista estao velhas e depois de gravar relê tudo, em vez de so o card tocado."""
+        self._desatualizada = self._vigia.mudou_desde_a_leitura()
+
+    def _depois_de_gravar_venda(self, id_venda: str, aviso: str = "") -> None:
+        """Gravou so a venda `id_venda`: troca so o card dela. Qualquer duvida (a venda nao esta na lista, a releitura
+        dela falhou, o arquivo tinha mudado por fora), rele tudo como sempre."""
+        if not self._trocar_so_o_card(id_venda):
+            self.carregar()
+        self.dados_atualizados.emit()
+        self.faixa_aviso.avisar(aviso)
+
+    def _trocar_so_o_card(self, id_venda: str) -> bool:
+        posicao = next((i for i, v in enumerate(self._vendas) if v.id == id_venda), None)
+        if posicao is None or self._desatualizada:
+            return False
+        self._vigia.registrar_leitura()  # a propria gravacao nao parece mudanca de fora
+        try:
+            nova = vendas_mod.resumo_da_venda(id_venda)
+        except Exception:  # a releitura completa (carregar) mostra o erro, se ele persistir
+            return False
+        self._vendas[posicao] = nova
+        if nova.id not in {v.id for v in self.vendas_visiveis()}:
+            self._mostrar()  # saiu do filtro (ou da busca) com a mudanca: some da lista, refeita da memoria (sem reler o arquivo)
+            return True
+        if not self.lista.trocar_venda(nova):
+            return False
+        self._atualizar_contador(self.lista.vendas())
+        return True
 
     def avisar(self, texto: str) -> None:
         self.faixa_aviso.avisar(texto)

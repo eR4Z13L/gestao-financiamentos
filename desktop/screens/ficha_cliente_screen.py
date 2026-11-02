@@ -175,6 +175,7 @@ class FichaClienteScreen(QWidget):
         self._endereco_forcado_expandido = False
         self._historico_atual: pd.DataFrame = pd.DataFrame()  # valores "crus" (indice = posicao real no arquivo)
         self._vendas_do_cliente: list[vendas_mod.ResumoDaVenda] = []
+        self._desatualizada = False  # o arquivo ja tinha mudado por fora quando a gravacao de um card comecou
         # o VENDEDOR (so leitura) ve o historico de propostas inteiro, sem os cards de venda (que sao de edicao)
         self._so_historico = sessao_mod.eh_vendedor()
         # CPFs (so digitos) de quem tem proposta em aberto - pinta a bolinha nos cards de cliente.
@@ -729,6 +730,8 @@ class FichaClienteScreen(QWidget):
         layout.addWidget(self._titulo_vendas)
         self.lista_vendas = ListaDeVendas(self._rolagem_ficha, conteudo, com_ficha=False, uma_coluna=True)
         self.lista_vendas.gravou.connect(self._depois_de_gravar_venda)
+        self.lista_vendas.gravou_venda.connect(self._depois_de_gravar_uma_venda)
+        self.lista_vendas.controle.antes_de_gravar = self._anotar_se_desatualizada
         self.lista_vendas.avisou.connect(lambda texto: self._faixa_aviso.avisar(texto))
         layout.addWidget(self.lista_vendas)
 
@@ -1775,6 +1778,37 @@ class FichaClienteScreen(QWidget):
         self._atualizar_lista()  # a "impressao" da planilha em dia: a propria gravacao nao parece mudanca de fora
         self.dados_atualizados.emit()
         self._faixa_aviso.avisar(aviso)
+
+    def _anotar_se_desatualizada(self) -> None:
+        """Logo antes de gravar num card: se o arquivo ja mudou por fora, depois de gravar rele tudo (e nao so o card)."""
+        self._desatualizada = self._vigia.mudou_desde_a_leitura()
+
+    def _depois_de_gravar_uma_venda(self, id_venda: str, aviso: str = "") -> None:
+        """Gravou so a venda `id_venda` num card: troca so o card dela. Qualquer duvida, rele tudo."""
+        if not self._cpf_selecionado:
+            return
+        if not self._trocar_so_o_card(id_venda):
+            self._depois_de_gravar_venda(aviso)
+            return
+        self.dados_atualizados.emit()
+        self._faixa_aviso.avisar(aviso)
+
+    def _trocar_so_o_card(self, id_venda: str) -> bool:
+        posicao = next((i for i, v in enumerate(self._vendas_do_cliente) if v.id == id_venda), None)
+        if posicao is None or self._desatualizada:
+            return False
+        self._vigia.registrar_leitura()  # a propria gravacao nao parece mudanca de fora
+        try:
+            nova = vendas_mod.resumo_da_venda(id_venda)
+        except Exception:  # a releitura completa mostra o erro, se ele persistir
+            return False
+        if not self.lista_vendas.trocar_venda(nova):
+            return False
+        self._vendas_do_cliente[posicao] = nova
+        self._resumo_label.setText(_resumo_com_vendas(self._vendas_do_cliente, self._historico_atual))
+        self._invalidar_em_aberto()
+        self._atualizar_indicadores_em_aberto()  # a bolinha de "proposta em aberto" dos cards de cliente
+        return True
 
     def abrir_ficha_do_cliente(self, cpf: str) -> bool:
         """Abre a ficha de `cpf` (em qualquer formato); se os filtros da lista escondem o cliente, limpa-os.

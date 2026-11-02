@@ -79,6 +79,7 @@ class FaixaDeAviso(QFrame):
 class ListaDeVendas(ListaEmColunas):
     gravou = Signal(str)  # gravou algo (o aviso a mostrar, "" = nenhum): quem mostra a lista rele as vendas
     avisou = Signal(str)  # so um aviso (ex.: "resumo copiado"): nada gravou, ninguem precisa reler
+    gravou_venda = Signal(str, str)  # (ID_VENDA, aviso): gravou so essa venda - quem mostra troca so o card dela (trocar_venda)
     ficha_pedida = Signal(str)  # cpf
 
     def __init__(self, rolagem: QScrollArea, parent: QWidget | None = None, *, com_ficha: bool = True,
@@ -92,7 +93,7 @@ class ListaDeVendas(ListaEmColunas):
         self.rascunho: dict | None = None  # o card "Nova venda" no topo: {"cpf"} (None: o cliente se escolhe nele)
         self._vendas: list[vendas_mod.ResumoDaVenda] = []
         self.antes_de_editar: Callable[[], bool] | None = None  # False: nao abre o formulario (ver abrir_venda)
-        self.controle = ControleDasVendas(self, self.gravou.emit, self.avisou.emit)
+        self.controle = ControleDasVendas(self, self.gravou.emit, self.avisou.emit, self.gravou_venda.emit)
 
     # -- vendas -------------------------------------------------------------------------------------
 
@@ -108,6 +109,24 @@ class ListaDeVendas(ListaEmColunas):
     def _remontar(self, texto_vazio: str | None = None, voltar_ao_inicio: bool = False) -> None:
         itens = ([NOVA_VENDA] if self.rascunho is not None else []) + self._vendas
         self._definir_itens(itens, self.vazio.text() if texto_vazio is None else texto_vazio, voltar_ao_inicio)
+
+    def vendas(self) -> list[vendas_mod.ResumoDaVenda]:
+        """As vendas que a lista mostra agora (com a troca de cards de trocar_venda)."""
+        return list(self._vendas)
+
+    def trocar_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
+        """Depois de gravar so uma venda: troca no lugar o card dela pelo resumo novo. O card aberto continua aberto (e o
+        formulario dele, com o que foi digitado), a rolagem e os outros cards nao se mexem. False se a venda nao esta
+        nesta lista - quem chamou rele tudo."""
+        posicao = next((i for i, atual in enumerate(self._vendas) if atual.id == venda.id), None)
+        if posicao is None:
+            return False
+        guardado = None
+        card = self.card_aberto()
+        if card is not None and card.venda.id == venda.id and card.formulario is not None and self.editando is not None:
+            guardado = (f"{venda.id}|{self.editando}", card.formulario)
+        self._vendas[posicao] = venda
+        return self._trocar_item(venda, guardado)
 
     def total(self) -> int:
         return len(self._vendas)

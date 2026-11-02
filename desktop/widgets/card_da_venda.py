@@ -982,12 +982,23 @@ class ControleDasVendas(QObject):
     """As acoes dos cards de venda, iguais em toda tela que os mostra: menus de status, bolinhas, anel, voltar,
     confirmacoes e as perguntas. Grava pelo core e chama `ao_gravar(aviso)` (a tela rele e mostra o aviso)."""
 
-    def __init__(self, tela: QWidget, ao_gravar: Callable[[str], None], ao_avisar: Callable[[str], None] | None = None):
-        """`ao_avisar(texto)`: o aviso de algo que nao grava (copiar um resumo); sem ele, nao ha aviso."""
+    def __init__(self, tela: QWidget, ao_gravar: Callable[[str], None], ao_avisar: Callable[[str], None] | None = None,
+                 ao_gravar_venda: Callable[[str, str], None] | None = None):
+        """`ao_avisar(texto)`: o aviso de algo que nao grava (copiar um resumo); sem ele, nao ha aviso.
+        `ao_gravar_venda(id_venda, aviso)`: a gravacao so mexeu numa venda - a tela troca so o card dela em vez de reler
+        tudo (plano 1.6); sem ele, toda gravacao chama `ao_gravar`."""
         super().__init__(tela)
         self._tela = tela
         self._ao_gravar = ao_gravar
         self._ao_avisar = ao_avisar
+        self._ao_gravar_venda = ao_gravar_venda
+        self.antes_de_gravar: Callable[[], None] | None = None  # chamado logo antes de cada gravacao (ver executar)
+
+    def _gravou(self, id_venda: str, aviso: str) -> None:
+        if self._ao_gravar_venda is not None:
+            self._ao_gravar_venda(id_venda, aviso)
+        else:
+            self._ao_gravar(aviso)
 
     def conectar(self, card: CardDaVenda) -> None:
         card.lista_da_venda_pedida.connect(self._lista_da_venda)
@@ -1010,6 +1021,8 @@ class ControleDasVendas(QObject):
 
     def executar(self, titulo_erro: str, acao):
         """Roda a acao do core mostrando o erro (nunca em silencio). Devolve (True, resultado) ou (False, None)."""
+        if self.antes_de_gravar is not None:
+            self.antes_de_gravar()
         try:
             return True, acao()
         except (vendas_mod.ErroVenda, propostas_mod.ErroProposta) as exc:
@@ -1022,10 +1035,15 @@ class ControleDasVendas(QObject):
             QMessageBox.critical(self._tela, f"Erro inesperado: {titulo_erro.lower()}", f"{type(exc).__name__}: {exc}")
         return False, None
 
-    def _gravar(self, titulo_erro: str, acao, aviso) -> bool:
+    def _gravar(self, titulo_erro: str, acao, aviso, id_venda: str | None = None) -> bool:
+        """`id_venda`: a venda que a gravacao tocou (so ela) - a tela troca so o card dela; sem ele, rele tudo."""
         ok, resultado = self.executar(titulo_erro, acao)
         if ok:
-            self._ao_gravar(aviso(resultado) if callable(aviso) else aviso)
+            texto = aviso(resultado) if callable(aviso) else aviso
+            if id_venda is not None:
+                self._gravou(id_venda, texto)
+            else:
+                self._ao_gravar(texto)
         return ok
 
     @staticmethod
@@ -1067,7 +1085,7 @@ class ControleDasVendas(QObject):
         if resposta != QMessageBox.StandardButton.Yes:
             return False
         return self._gravar("Não foi possível reabrir", lambda: vendas_mod.voltar_venda(venda.id),
-                            lambda para: f"{self.nome(venda)}: reaberta (\"{para}\").")
+                            lambda para: f"{self.nome(venda)}: reaberta (\"{para}\").", venda.id)
 
     def copiar_resumo_da_venda(self, venda: vendas_mod.ResumoDaVenda) -> bool:
         """O "Copiar resumo da venda": o texto de core/resumo_vendas.py vai para a area de transferencia (nada grava)."""
@@ -1098,20 +1116,20 @@ class ControleDasVendas(QObject):
             return False
         return self._gravar("Não foi possível adicionar a pendência",
                             lambda: vendas_mod.adicionar_pendencia(venda.id, texto),
-                            f"{self.nome(venda)}: pendência adicionada.")
+                            f"{self.nome(venda)}: pendência adicionada.", venda.id)
 
     def resolver_pendencia(self, venda: vendas_mod.ResumoDaVenda, pendencia: vendas_mod.Pendencia) -> bool:
         return self._gravar("Não foi possível resolver a pendência",
                             lambda: vendas_mod.resolver_pendencia(venda.id, pendencia.id),
-                            f"{self.nome(venda)}: pendência resolvida.")
+                            f"{self.nome(venda)}: pendência resolvida.", venda.id)
 
     def fechar_banco(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         return self._gravar("Não foi possível marcar como fechado", lambda: vendas_mod.fechar_proposta(proposta.id),
-                            f"{self.nome(venda)}: {proposta.banco} marcado como fechado.")
+                            f"{self.nome(venda)}: {proposta.banco} marcado como fechado.", venda.id)
 
     def desmarcar_banco(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         return self._gravar("Não foi possível desmarcar", lambda: vendas_mod.desfazer_fechamento(proposta.id),
-                            f"{self.nome(venda)}: {proposta.banco} desmarcado.")
+                            f"{self.nome(venda)}: {proposta.banco} desmarcado.", venda.id)
 
     def efetivar_banco(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         resposta = QMessageBox.question(
@@ -1126,7 +1144,8 @@ class ControleDasVendas(QObject):
             final = " A venda está Efetivada." if status_da_venda == vendas_mod.VENDA_EFETIVADA else ""
             return f"{self.nome(venda)}: {proposta.banco} Efetivado.{final}"
 
-        return self._gravar("Não foi possível efetivar", lambda: vendas_mod.efetivar_proposta(proposta.id), _aviso)
+        return self._gravar("Não foi possível efetivar", lambda: vendas_mod.efetivar_proposta(proposta.id), _aviso,
+                            venda.id)
 
     def _desfecho(self, venda: vendas_mod.ResumoDaVenda, status: str) -> bool:
         dialogo = DesfechoDialog(venda, status, self._tela)
@@ -1135,7 +1154,7 @@ class ControleDasVendas(QObject):
         motivo = dialogo.motivo.currentData() or ""
         return self._gravar(f"Não foi possível marcar como {status}",
                             lambda: vendas_mod.mudar_status_venda(venda.id, status, motivo=motivo),
-                            f"{self.nome(venda)}: {status}.")
+                            f"{self.nome(venda)}: {status}.", venda.id)
 
     # -- proposta (a resposta de cada banco) ----------------------------------------------------------
 
@@ -1172,17 +1191,17 @@ class ControleDasVendas(QObject):
         ok, todas_negadas = self.executar("Não foi possível mudar a proposta",
                                           lambda: vendas_mod.mudar_status_proposta(proposta.id, novo))
         if ok:
-            self._ao_gravar(f"{proposta.banco}: \"{proposta.status}\" → \"{novo}\".")
+            self._gravou(venda.id, f"{proposta.banco}: \"{proposta.status}\" → \"{novo}\".")
             if todas_negadas and perguntar_se_perdida(self._tela, venda.id, self.nome(venda)):
-                self._ao_gravar(f"{self.nome(venda)}: Perdida (todos os bancos negaram).")
+                self._gravou(venda.id, f"{self.nome(venda)}: Perdida (todos os bancos negaram).")
         return ok
 
     def voltar_proposta(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
         ok, todas_negadas = self.executar("Não foi possível voltar", lambda: vendas_mod.voltar_proposta(proposta.id))
         if ok:
-            self._ao_gravar(f"{proposta.banco}: voltou para \"{proposta.anterior}\".")
+            self._gravou(venda.id, f"{proposta.banco}: voltou para \"{proposta.anterior}\".")
             if todas_negadas and perguntar_se_perdida(self._tela, venda.id, self.nome(venda)):
-                self._ao_gravar(f"{self.nome(venda)}: Perdida (todos os bancos negaram).")
+                self._gravou(venda.id, f"{self.nome(venda)}: Perdida (todos os bancos negaram).")
         return ok
 
     def excluir_proposta(self, venda: vendas_mod.ResumoDaVenda, proposta: vendas_mod.PropostaNaVenda) -> bool:
@@ -1194,6 +1213,7 @@ class ControleDasVendas(QObject):
         )
         if resposta != QMessageBox.StandardButton.Yes:
             return False
+        # sem id_venda de proposito: apagar uma linha da planilha muda a posicao (o `indice`) das propostas de outras vendas
         return self._gravar("Não foi possível excluir", lambda: vendas_mod.excluir_proposta(proposta.id),
                             f"{self.nome(venda)}: proposta do {proposta.banco or 'banco'} excluída.")
 

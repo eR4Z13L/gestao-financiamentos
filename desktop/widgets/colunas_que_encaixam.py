@@ -199,6 +199,40 @@ class ListaEmColunas(QWidget):
             self._ajustar_colunas()
         return super().eventFilter(objeto, evento)
 
+    def _trocar_item(self, item, guardado: tuple[str, QWidget] | None = None) -> bool:
+        """Troca no lugar o card do item de mesma chave (depois de gravar so ele): mesma coluna, mesma posicao, rolagem
+        e os outros cards intactos. `guardado`: o (chave, formulario) aberto no card velho, que volta no novo (ver
+        _formulario_guardado). False: nao ha item com essa chave (quem chamou recarrega tudo); True tambem quando o item
+        esta na lista mas o card dele nao esta montado (alem da pagina carregada)."""
+        chave = self._chave(item)
+        itens = [i for i, atual in enumerate(self._itens) if self._chave(atual) == chave]
+        if not itens:
+            return False
+        for i in itens:
+            self._itens[i] = item
+        if chave not in self._chaves:
+            return True
+        posicao = self._chaves.index(chave)
+        velho = self.cards[posicao]
+        coluna = self.coluna_do_card(velho)
+        if coluna is None:
+            return False  # os cards nao estao nas colunas (a lista ainda nao foi posicionada): refaz tudo
+        if guardado is not None:  # sai do card velho, escondido e com dono (como em _montar)
+            guardado[1].hide()
+            guardado[1].setParent(self)
+            self._guardado = guardado
+        novo = self._criar_card(item)
+        if self._guardado is not None:  # o card novo nao o quis (fechou o formulario): nao sobra solto
+            self._guardado[1].deleteLater()
+            self._guardado = None
+        pilha = self._pilhas[coluna]
+        pilha.insertWidget(pilha.indexOf(velho), novo)
+        pilha.removeWidget(velho)
+        velho.hide()
+        velho.deleteLater()
+        self.cards[posicao] = novo
+        return True
+
     def _carregar_mais(self) -> None:
         self._limite += TAMANHO_PAGINA
         self._montar()
