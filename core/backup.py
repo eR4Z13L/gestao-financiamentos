@@ -150,6 +150,20 @@ def fazer_backup(motivo: str = MOTIVO_MANUAL, caminho_xlsx: Path | None = None) 
     return destino
 
 
+MAXIMO_BACKUPS_PRE_NUVEM = 10
+
+
+def limpar_backups_pre_nuvem(caminho_xlsx: Path | None = None) -> int:
+    """Cada download da nuvem guarda o arquivo de antes (motivo pre-nuvem); aqui ficam so os
+    MAXIMO_BACKUPS_PRE_NUVEM mais recentes. Mesma regra dos automaticos: nunca mexe em manuais, pre-restauracao,
+    copia-da-nuvem nem nos demais motivos. Devolve quantos arquivos foram apagados."""
+    antigos = [b for b in listar_backups(caminho_xlsx) if b.motivo == MOTIVO_PRE_NUVEM]
+    excedentes = antigos[MAXIMO_BACKUPS_PRE_NUVEM:]
+    for backup in excedentes:
+        backup.caminho.unlink(missing_ok=True)
+    return len(excedentes)
+
+
 def limpar_backups_automaticos(caminho_xlsx: Path | None = None) -> int:
     """Apaga os backups automáticos mais antigos, mantendo só os MAXIMO_BACKUPS_AUTOMATICOS
     mais recentes. NUNCA mexe em backups manuais ou de pré-restauração - esses só a
@@ -208,6 +222,10 @@ def restaurar_backup(backup: Path, caminho_xlsx: Path | None = None) -> Path:
     if config.SINCRONIZACAO_GOOGLE_ATIVADA:
         try:
             estado_mod.marcar_todas_pendentes(_ABAS_SINCRONIZADAS, caminho_xlsx)
-        except Exception:
+        except Exception as exc:  # a restauracao ja foi feita: nao desfaz, mas o app passa a avisar e a nao baixar sozinho
             _logger.warning("Nao foi possivel marcar as abas como pendentes depois de restaurar.", exc_info=True)
+            estado_mod.registrar_falha_de_gravacao(
+                f"Depois de restaurar o backup não consegui registrar que as alterações ainda não foram enviadas "
+                f"({type(exc).__name__}: {exc})."
+            )
     return seguranca

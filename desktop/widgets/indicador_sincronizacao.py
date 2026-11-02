@@ -71,6 +71,14 @@ def descrever_sincronizacao(estado: sheets_sync.EstadoSincronizacao, agora: date
         )
     if nivel == sheets_sync.NIVEL_ATENCAO:
         return DescricaoDoIndicador(nivel, estado.aviso, estado.aviso_detalhe)
+    if nivel == sheets_sync.NIVEL_FALHOU and estado.falha_do_estado:
+        return DescricaoDoIndicador(
+            nivel,
+            "Falhou — clique para ver",
+            f"{estado.falha_do_estado}\n\nOs dados continuam salvos neste computador, mas o aplicativo não vai "
+            "baixar nada da nuvem sozinho enquanto isso não for resolvido. Para resolver, em Administração > "
+            "Sincronização e backup, use Avançado > Enviar os meus dados.",
+        )
     if nivel == sheets_sync.NIVEL_FALHOU:
         return DescricaoDoIndicador(
             nivel,
@@ -78,7 +86,7 @@ def descrever_sincronizacao(estado: sheets_sync.EstadoSincronizacao, agora: date
             f"A última sincronização com o Google Sheets falhou em {_data_e_hora(estado.ultima_falha)}.\n\n"
             f"{estado.ultimo_erro}\n\n"
             "Os dados continuam salvos neste computador. O aplicativo tenta de novo sozinho em "
-            "instantes - ou clique em \"Sincronizar agora\" em Administração > Sincronização e backup.",
+            "instantes - ou clique em \"Sincronizar\" em Administração > Sincronização e backup.",
         )
     if nivel == sheets_sync.NIVEL_OK:
         return DescricaoDoIndicador(

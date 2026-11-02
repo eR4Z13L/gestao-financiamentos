@@ -1,6 +1,8 @@
 """Sincronizar com a nuvem alem do envio automatico de cada gravacao (core/data_store.py):
 
-- sincronizar_tudo_agora: reenvia todas as abas sob pedido (botao "Sincronizar agora");
+- sincronizar: o botao unico "Sincronizar" - decide sozinho a direcao segura (baixar / reenviar / nada);
+- baixar_sozinho_se_seguro: ao abrir, baixa sem perguntar quando nao ha nada pendente nem conflito;
+- sincronizar_tudo_agora: reenvia todas as abas (usado pelo envio substituindo);
 - verificar_ao_abrir: ao abrir o app como Administrador, compara este computador com a nuvem
   (versao, o que ficou pendente, quem mais esta com o app aberto) e diz o que fazer;
 - baixar_da_nuvem: troca os dados LOCAIS pelos da nuvem (backup antes, tudo-ou-nada);
@@ -56,6 +58,11 @@ _ABAS_OPCIONAIS_NA_NUVEM = {bd.ABA_BANCOS: "ler_bancos", bd.ABA_VENDAS: "ler_ven
 
 class ErroNuvem(Exception):
     """Algo impediu a operacao com a nuvem; a mensagem diz o que e que nada foi alterado."""
+
+
+class ErroNuvemArquivoTrocado(ErroNuvem):
+    """Excecao a regra acima: o arquivo deste computador JA foi trocado pelos dados da nuvem, mas um passo
+    seguinte falhou. A mensagem diz isso; quem trata deve recarregar as telas e nunca dizer "nada foi alterado"."""
 
 
 @dataclass(frozen=True)
@@ -186,11 +193,48 @@ def _recusar_se_a_nuvem_parece_vazia_por_engano(dados: dict[str, pd.DataFrame], 
             raise ErroNuvem(
                 f"A aba {aba} está vazia na nuvem, mas aqui tem {aqui} linha(s). Isso parece um envio "
                 "interrompido - por segurança não vou apagar os dados deste computador. Nada foi alterado. "
-                "Use \"Sincronizar agora\" no computador que tem os dados certos."
+                "Use \"Avançado > Enviar os meus dados\" no computador que tem os dados certos."
             )
 
 
-def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = False) -> ResultadoDoDownload:
+def _conferir_que_nada_esta_pendente(caminho: Path, *, exigir_revisao_conhecida: bool) -> None:
+    """Chamar DENTRO do bloqueio de envio. Levanta ErroNuvem (nada foi alterado) se nao da pra garantir que este
+    computador nao tem nada a perder: estado local ilegivel ou sem a versao conhecida, falha ao gravar uma marca
+    de pendencia, aba nao enviada em disco ou ainda na fila em memoria. "Nao consegui ler" nunca vale como "vazio"."""
+    falha = estado_mod.falha_de_gravacao_atual()
+    if falha:
+        raise ErroNuvem(
+            f"{falha}\n\nPor segurança não troco os dados deste computador sem você decidir. Nada foi alterado. "
+            "Use Administração > Sincronização e backup > Avançado."
+        )
+    try:
+        local = estado_mod.ler_estrito(caminho)
+    except estado_mod.EstadoIlegivel as exc:
+        raise ErroNuvem(
+            "Não foi possível conferir o estado de sincronização deste computador "
+            f"({exc}), então não sei se há alterações ainda não enviadas. Por segurança não baixei nada. "
+            "Se você tem certeza de que quer os dados da nuvem, use Administração > Sincronização e backup > "
+            "Avançado > Baixar da nuvem (o arquivo daqui é guardado em Backups antes)."
+        ) from exc
+    if exigir_revisao_conhecida and local.revisao_conhecida is None:
+        raise ErroNuvem(
+            "Este computador não tem registro de qual versão da nuvem ele conhece (primeira vez, ou o registro se "
+            "perdeu), então não sei se há alterações ainda não enviadas. Por segurança não baixei nada sozinho. "
+            "Nada foi alterado."
+        )
+    if local.abas_pendentes:
+        raise ErroNuvem("Este computador tem alterações que ainda não foram enviadas. Nada foi alterado.")
+    if sheets_sync.abas_na_fila():
+        raise ErroNuvem("Há alterações deste computador esperando para serem enviadas. Nada foi alterado.")
+
+
+def baixar_da_nuvem(
+    caminho_xlsx: Path | None = None,
+    *,
+    ligar_controle: bool = False,
+    exigir_sem_pendencias: bool = False,
+    exigir_revisao_conhecida: bool = False,
+) -> ResultadoDoDownload:
     """Troca os dados LOCAIS pelos da nuvem. Faz backup do arquivo atual antes; e tudo-ou-nada (as 4
     abas numa unica gravacao) e nao manda nada de volta pra nuvem. Alteracoes daqui que ainda nao
     tinham sido enviadas sao substituidas (por isso o backup). Sem arquivo local (primeira abertura),
@@ -200,9 +244,15 @@ def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = 
     `ligar_controle=True`: depois de baixar, cria a aba META (sem reenviar dados) e este PC passa a
     conhecer essa versao - os envios seguintes ja passam pela trava.
 
+    `exigir_sem_pendencias`: usado quando a pessoa NAO decidiu um conflito (baixar sozinho, ou a pergunta
+    "dados mais novos"): recusa se houver aba nao enviada (em disco ou na fila em memoria) ou se o estado local
+    nao puder ser lido, conferindo DENTRO do bloqueio de envio (entre a decisao e o download pode ter entrado uma
+    gravacao). `exigir_revisao_conhecida`: so no baixar sozinho - recusa tambem se este computador nao sabe qual
+    versao da nuvem conhece.
+
     Levanta ErroNuvem (nada foi alterado) se a nuvem nao tem controle e `ligar_controle` e False, se
     ela mudou durante o download ou parece incompleta, e ErroArquivoBloqueado se o Excel esta com o
-    arquivo aberto."""
+    arquivo aberto. Se o arquivo JA foi trocado e um passo seguinte falhou, levanta ErroNuvemArquivoTrocado."""
     caminho = caminho_xlsx or CAMINHO_XLSX
     if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
         raise ErroNuvem("A sincronização com o Google Sheets está desativada neste aplicativo.")
@@ -213,6 +263,8 @@ def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = 
         )
 
     with sheets_sync.bloqueio_de_envio():  # nenhum envio deste PC no meio da troca
+        if exigir_sem_pendencias:
+            _conferir_que_nada_esta_pendente(caminho, exigir_revisao_conhecida=exigir_revisao_conhecida)
         meta_antes = sheets_sync.ler_meta_da_nuvem()
         if not meta_antes.com_controle and not ligar_controle:
             raise ErroNuvem(
@@ -237,23 +289,107 @@ def baixar_da_nuvem(caminho_xlsx: Path | None = None, *, ligar_controle: bool = 
             if not existia:  # nao deixa uma planilha vazia "de verdade" no lugar da que nao chegou
                 caminho.unlink(missing_ok=True)
             raise
-        sheets_sync.descartar_envios_velhos()
-
-        meta_final = meta_antes
-        if not meta_antes.com_controle:
-            try:
-                meta_final = sheets_sync.ligar_controle_de_versao()
-            except Exception as exc:
-                onde = f" O arquivo de antes está em:\n{seguranca}" if seguranca else ""
-                raise ErroNuvem(
-                    "Os dados da nuvem foram baixados para este computador, mas não consegui ligar o controle "
-                    f"de versão na nuvem ({type(exc).__name__}: {exc}). Abra o aplicativo de novo para tentar "
-                    f"outra vez.{onde}"
-                ) from exc
-        estado_mod.registrar_download(meta_final.revisao, caminho)
+        # daqui em diante o arquivo JA e o da nuvem: uma falha nao pode mais dizer "nada foi alterado"
+        onde = f"\n\nO arquivo de antes está em:\n{seguranca}" if seguranca else ""
+        try:
+            sheets_sync.descartar_envios_velhos()
+            meta_final = meta_antes
+            if not meta_antes.com_controle:
+                try:
+                    meta_final = sheets_sync.ligar_controle_de_versao()
+                except Exception as exc:
+                    raise ErroNuvemArquivoTrocado(
+                        "Os dados da nuvem foram baixados para este computador, mas não consegui ligar o controle "
+                        f"de versão na nuvem ({type(exc).__name__}: {exc}). Abra o aplicativo de novo para tentar "
+                        f"outra vez.{onde}"
+                    ) from exc
+            estado_mod.registrar_download(meta_final.revisao, caminho)
+        except ErroNuvemArquivoTrocado:
+            raise
+        except Exception as exc:
+            raise ErroNuvemArquivoTrocado(
+                "Os dados da nuvem JÁ foram gravados neste computador, mas um passo seguinte falhou "
+                f"({type(exc).__name__}: {exc}). Feche e abra o aplicativo para conferir.{onde}"
+            ) from exc
+        try:
+            backup_mod.limpar_backups_pre_nuvem(caminho)
+        except OSError:  # arrumar a pasta e so conveniencia: o download ja deu certo
+            _logger.warning("Nao foi possivel apagar backups pre-nuvem antigos.", exc_info=True)
     sheets_sync.limpar_conflito()
     return ResultadoDoDownload(
         seguranca, meta_final, {aba: len(df) for aba, df in dados.items()}, ligou_controle=not meta_antes.com_controle
+    )
+
+
+def baixar_sozinho_se_seguro(
+    situacao: SituacaoAoAbrir, caminho_xlsx: Path | None = None
+) -> ResultadoDoDownload | None:
+    """Ao abrir: baixa da nuvem SEM perguntar, mas so quando e seguro - a nuvem esta mais nova, nao ha
+    outro computador ativo e DENTRO do download se confirma que este computador conhece a versao dele, nao tem
+    nada pendente (disco e fila) e o estado local e legivel. Devolve None, sem tocar em nada, quando a situacao
+    nao e essa. Se a tentativa for recusada ou falhar, a excecao sobe (ErroNuvem: nada foi alterado, exceto
+    ErroNuvemArquivoTrocado; ErroArquivoBloqueado...) e quem chamou mostra a pergunta de sempre. Rede!"""
+    caminho = caminho_xlsx or CAMINHO_XLSX
+    if situacao.tipo != SITUACAO_NUVEM_MAIS_NOVA or situacao.outro_computador:
+        return None
+    return baixar_da_nuvem(caminho, exigir_sem_pendencias=True, exigir_revisao_conhecida=True)
+
+
+ACAO_EM_DIA = "em_dia"  # nada a fazer
+ACAO_BAIXOU = "baixou"
+ACAO_ENVIOU = "enviou"  # reenviou as abas pendentes
+ACAO_DECIDIR = "decidir"  # conflito / nuvem sem controle: so a pessoa pode decidir o lado
+ACAO_SEM_REDE = "sem_rede"
+
+
+@dataclass(frozen=True)
+class ResultadoDoSincronizar:
+    acao: str
+    texto: str  # o que foi feito, em portugues claro, para mostrar na tela
+    situacao: SituacaoAoAbrir
+    download: ResultadoDoDownload | None = None  # so quando baixou
+    abas_enviadas: tuple[str, ...] = ()  # so quando enviou
+
+
+def sincronizar(caminho_xlsx: Path | None = None) -> ResultadoDoSincronizar:
+    """O botao "Sincronizar": compara com a nuvem e faz sozinho o que e seguro - baixar se a nuvem esta mais
+    nova e nada esta pendente aqui; reenviar se so ha pendencia aqui; nada se esta em dia. Conflito ou nuvem
+    sem controle voltam como ACAO_DECIDIR, sem tocar em nada (a tela abre a pergunta de sempre). Sem rede
+    volta como ACAO_SEM_REDE. Aqui o "outro computador ativo" nao barra: a pessoa pediu agora, e baixar
+    nao apaga nada la. Rede! Chamar fora da thread da tela quando possivel."""
+    caminho = caminho_xlsx or CAMINHO_XLSX
+    situacao = verificar_ao_abrir(caminho)
+    tipo = situacao.tipo
+    if tipo == SITUACAO_DESATIVADA:
+        raise ErroNuvem("A sincronização com o Google Sheets está desativada neste aplicativo.")
+    if tipo == SITUACAO_SEM_REDE:
+        return ResultadoDoSincronizar(
+            ACAO_SEM_REDE,
+            "Sem conexão com a nuvem agora. Nada foi alterado; seus dados continuam salvos neste computador.",
+            situacao,
+        )
+    if tipo in (SITUACAO_CONFLITO, SITUACAO_SEM_CONTROLE):
+        return ResultadoDoSincronizar(ACAO_DECIDIR, "", situacao)
+    if tipo == SITUACAO_LOCAL_PENDENTE:
+        abas = tuple(enviar_pendentes_do_estado(caminho))
+        return ResultadoDoSincronizar(
+            ACAO_ENVIOU,
+            "Disparei o envio das alterações deste computador para a nuvem; ainda não há confirmação. "
+            "Acompanhe o indicador na barra lateral.",
+            situacao,
+            abas_enviadas=abas,
+        )
+    if tipo == SITUACAO_NUVEM_MAIS_NOVA:
+        download = baixar_da_nuvem(caminho, exigir_sem_pendencias=True, exigir_revisao_conhecida=True)
+        return ResultadoDoSincronizar(
+            ACAO_BAIXOU,
+            ("A nuvem tinha dados mais novos e eu os trouxe para este computador. "
+             + ("O arquivo de antes ficou guardado em Backups." if download.backup is not None else "")).strip(),
+            situacao,
+            download=download,
+        )
+    return ResultadoDoSincronizar(
+        ACAO_EM_DIA, "Nenhuma alteração pendente: este computador está na mesma versão da nuvem.", situacao
     )
 
 

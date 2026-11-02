@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 import config
+from core import data_store as bd
 from core import data_store_sheets as leitura_sheets
 from core import migracao_legado
 from core import propostas as propostas_mod
@@ -44,6 +45,7 @@ from core import sheets_sync
 from core import sincronizacao as sincronizacao_mod
 from desktop import settings as settings_mod
 from desktop.dialogs import escolha_dialog
+from desktop.espera import rodar_esperando
 from desktop.screens.cadastros_screen import CadastrosScreen
 from desktop.screens.dashboard_screen import DashboardScreen
 from desktop.screens.ficha_cliente_screen import FichaClienteScreen
@@ -101,6 +103,8 @@ def tamanho_inicial_da_janela(area_da_tela: QSize) -> QSize:
     )
 _INTERVALO_DO_INDICADOR_MS = 2000  # relê so a memoria (nunca a rede): barato
 _INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS = 60_000  # rede de verdade: nao martelar a API a cada 2s
+_DURACAO_DA_FAIXA_MS = 15_000  # a faixa "Dados atualizados da nuvem" some sozinha
+_DURACAO_DA_FAIXA_DO_PROBLEMA_MS = 90_000  # a faixa que conta um problema fica mais tempo
 _INTERVALO_DO_SINAL_MS = 60_000  # "este computador esta com o app aberto" (aviso pra outro PC): 1 escrita por minuto
 
 
@@ -127,7 +131,21 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(sidebar)
-        layout.addWidget(self._paginas, stretch=1)
+        # faixa discreta acima das telas ("Dados atualizados da nuvem"): some sozinha
+        self._faixa_da_nuvem = QLabel()
+        self._faixa_da_nuvem.setProperty("role", "secundario")
+        self._faixa_da_nuvem.setWordWrap(True)
+        self._faixa_da_nuvem.setContentsMargins(16, 8, 16, 8)
+        self._faixa_da_nuvem.hide()
+        self._temporizador_da_faixa = QTimer(self)
+        self._temporizador_da_faixa.setSingleShot(True)
+        self._temporizador_da_faixa.timeout.connect(self._faixa_da_nuvem.hide)
+        coluna = QVBoxLayout()
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(0)
+        coluna.addWidget(self._faixa_da_nuvem)
+        coluna.addWidget(self._paginas, stretch=1)
+        layout.addLayout(coluna, stretch=1)
         self.setCentralWidget(corpo)
 
         self._aplicar_estado_sidebar()
@@ -143,6 +161,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_tela_administracao"):
             self._tela_administracao.dados_atualizados.connect(self._atualizar_selo_propostas)
             self._tela_administracao.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
+            self._tela_administracao.decisao_pedida.connect(self._perguntar_sobre_a_nuvem)
             # Cadastros: renomear um banco ou um vendedor muda propostas e clientes
             self._tela_cadastros.dados_atualizados.connect(self._atualizar_selo_propostas)
             self._tela_cadastros.dados_atualizados.connect(self._tela_dashboard.marcar_como_desatualizado)
@@ -165,7 +184,7 @@ class MainWindow(QMainWindow):
         self._temporizador_do_indicador.start(_INTERVALO_DO_INDICADOR_MS)
 
         # fila de repeticao (E9): reenvia sozinho o que falhou, sem esperar a proxima
-        # edicao daquela aba nem precisar clicar em "Sincronizar agora"
+        # edicao daquela aba nem precisar clicar em "Sincronizar"
         self._temporizador_da_fila = QTimer(self)
         self._temporizador_da_fila.timeout.connect(sheets_sync.reenviar_pendentes)
         self._temporizador_da_fila.start(_INTERVALO_DA_FILA_DE_SINCRONIZACAO_MS)
@@ -563,22 +582,77 @@ class MainWindow(QMainWindow):
             if escolha == 0:
                 self.close()
                 return False
+        motivo = ""
+        if situacao.tipo == S.SITUACAO_NUVEM_MAIS_NOVA:
+            feito, motivo = self._baixar_sozinho_ao_abrir(situacao)
+            if feito:
+                return True
+            if motivo:  # recusou: o que valia na hora da leitura pode ter mudado - pergunta pela situacao de AGORA
+                situacao = self._conferir_a_nuvem_de_novo(situacao)
         if situacao.tipo == S.SITUACAO_LOCAL_PENDENTE:
             S.enviar_pendentes_do_estado()  # sobreviveu a fechar o app: reenvia sem incomodar
         elif situacao.tipo in (S.SITUACAO_SEM_CONTROLE, S.SITUACAO_NUVEM_MAIS_NOVA, S.SITUACAO_CONFLITO):
-            self._perguntar_sobre_a_nuvem(situacao.tipo, situacao.meta)
+            self._perguntar_sobre_a_nuvem(situacao.tipo, situacao.meta, motivo)
         return True
 
-    def _perguntar_sobre_a_nuvem(self, tipo: str, meta: sheets_sync.MetaNuvem) -> None:
+    def _conferir_a_nuvem_de_novo(self, situacao: sincronizacao_mod.SituacaoAoAbrir) -> sincronizacao_mod.SituacaoAoAbrir:
+        """Depois de uma recusa do download automatico: le a nuvem e o estado local outra vez (rede, numa thread).
+        Se isso nao for possivel agora, fica com a leitura de antes."""
+        try:
+            nova = rodar_esperando(self, "Conferindo a nuvem…", sincronizacao_mod.verificar_ao_abrir, limite_s=60)
+        except Exception:
+            _logger.warning("Nao foi possivel conferir a nuvem de novo depois da recusa.", exc_info=True)
+            return situacao
+        sem_resposta = (sincronizacao_mod.SITUACAO_SEM_REDE, sincronizacao_mod.SITUACAO_DESATIVADA)
+        return situacao if nova.tipo in sem_resposta else nova
+
+    def _baixar_sozinho_ao_abrir(self, situacao: sincronizacao_mod.SituacaoAoAbrir) -> tuple[bool, str]:
+        """Nuvem mais nova, nenhum outro PC ativo e nada a perder aqui (conferido dentro do download): baixa sem
+        perguntar (o backup 'pre-nuvem' e feito antes) e avisa numa faixa. Devolve (resolveu, motivo): resolveu=False
+        com motivo vazio e "nao se aplica" (outro PC ativo); com motivo e "recusou/falhou" - quem chamou pergunta
+        pela situacao real, com esse texto."""
+        if not hasattr(self, "_tela_administracao"):
+            return False, ""
+        try:
+            resultado = rodar_esperando(
+                self, "Atualizando os dados com a nuvem…",
+                lambda: sincronizacao_mod.baixar_sozinho_se_seguro(situacao), limite_s=None,
+            )
+        except sincronizacao_mod.ErroNuvemArquivoTrocado as exc:  # o arquivo JA e o da nuvem: nada de "nada foi alterado"
+            _logger.warning("Baixei da nuvem ao abrir, mas um passo seguinte falhou: %s", exc)
+            self._tela_administracao.recarregar_apos_mudar_os_dados()
+            self._mostrar_faixa_da_nuvem(str(exc), _DURACAO_DA_FAIXA_DO_PROBLEMA_MS)
+            return True, ""
+        except (sincronizacao_mod.ErroNuvem, bd.ErroArquivoBloqueado) as exc:  # recusa esperada
+            _logger.warning("Nao baixei sozinho da nuvem ao abrir: %s", exc)
+            return False, str(exc)
+        except Exception as exc:
+            _logger.warning("Falha ao baixar sozinho da nuvem ao abrir.", exc_info=True)
+            return False, f"A tentativa de baixar sozinho falhou ({type(exc).__name__}: {exc})."
+        if resultado is None:
+            return False, ""
+        self._tela_administracao.recarregar_apos_mudar_os_dados()
+        guardado = " O arquivo de antes ficou guardado em Backups." if resultado.backup is not None else ""
+        self._mostrar_faixa_da_nuvem(f"Dados atualizados da nuvem (enviados por {self._quando_e_quem(situacao.meta)}).{guardado}")
+        return True, ""
+
+    def _mostrar_faixa_da_nuvem(self, texto: str, duracao_ms: int | None = None) -> None:
+        self._faixa_da_nuvem.setText(texto)
+        self._faixa_da_nuvem.show()
+        self._temporizador_da_faixa.start(duracao_ms or _DURACAO_DA_FAIXA_MS)
+
+    def _perguntar_sobre_a_nuvem(self, tipo: str, meta: sheets_sync.MetaNuvem, motivo: str = "") -> None:
+        """`motivo`: por que o app nao resolveu sozinho (vai no comeco do texto da pergunta)."""
         S = sincronizacao_mod
         if not hasattr(self, "_tela_administracao"):
             return
         administracao = self._tela_administracao
+        antes = f"{motivo}\n\n" if motivo else ""
         if tipo == S.SITUACAO_SEM_CONTROLE:
             escolha = escolha_dialog.escolher(
                 self,
                 "Ligar o controle de versão na nuvem",
-                "A planilha na nuvem ainda não tem controle de versão, e por isso nada está sendo enviado para ela. "
+                f"{antes}A planilha na nuvem ainda não tem controle de versão, e por isso nada está sendo enviado para ela. "
                 "Escolha qual lado tem os dados certos:\n\n"
                 "• Baixar da nuvem: este computador fica com os dados da nuvem (o arquivo daqui é guardado antes "
                 "em Backups).\n"
@@ -599,18 +673,24 @@ class MainWindow(QMainWindow):
             escolha = escolha_dialog.escolher(
                 self,
                 "Dados mais novos na nuvem",
-                f"A nuvem tem dados mais novos, enviados por {self._quando_e_quem(meta)}.\n\n"
+                f"{antes}A nuvem tem dados mais novos, enviados por {self._quando_e_quem(meta)}.\n\n"
                 "Baixar agora para trabalhar com eles? Um backup do arquivo deste computador é feito antes.",
                 ["Baixar da nuvem", "Agora não"],
             )
             if escolha == 0:
-                administracao.executar_download_da_nuvem()
+                administracao.executar_download_da_nuvem(exigir_sem_pendencias=True)  # so o conflito decidido passa por cima
         elif tipo == S.SITUACAO_CONFLITO:
+            outro = sheets_sync.outro_computador_ativo(meta)
+            quem_esta_ativo = (
+                f"\n\nAtenção: o computador {outro[0]} está com o aplicativo aberto agora (último sinal às "
+                f"{outro[1].astimezone().strftime('%H:%M')}) e pode estar gravando."
+                if outro else ""
+            )
             escolha = escolha_dialog.escolher(
                 self,
                 "Conflito com a nuvem",
-                f"Este computador tem alterações que ainda não foram enviadas E a nuvem foi atualizada por "
-                f"{self._quando_e_quem(meta)}.\n\nNenhum dos dois lados será apagado sem cópia. Escolha:\n"
+                f"{antes}Este computador tem alterações que ainda não foram enviadas E a nuvem foi atualizada por "
+                f"{self._quando_e_quem(meta)}.{quem_esta_ativo}\n\nNenhum dos dois lados será apagado sem cópia. Escolha:\n"
                 "• Baixar da nuvem: fica com os dados dela; o que só existe aqui é substituído (o arquivo de "
                 "antes é guardado em Backups).\n"
                 "• Manter o meu: envia o que está aqui e sobrescreve a nuvem (a cópia dela é guardada em Backups).",

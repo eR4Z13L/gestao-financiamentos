@@ -2,9 +2,11 @@
 pra um VENDEDOR - ver desktop/main_window.py). Duas abas:
 1. "Meu acesso": trocar o PIN de entrada deste computador (recolhido por padrão - usado raramente).
    Vendedores e Bancos ficam na tela Cadastros (desktop/screens/cadastros_screen.py).
-2. "Sincronização e backup": "Sincronizar agora" (reenvia as abas pro Google Sheets na
-   hora - core/sincronizacao.py; cada escrita já sincroniza sozinha, e uma falha entra
-   numa fila que tenta de novo sozinha - core/sheets_sync.reenviar_pendentes), backup
+2. "Sincronização e backup": um botão só, "Sincronizar" (core/sincronizacao.sincronizar: decide sozinho
+   a direção segura - baixar, reenviar ou nada; conflito abre a pergunta da janela principal; cada
+   escrita já sincroniza sozinha, e uma falha entra numa fila que tenta de novo sozinha -
+   core/sheets_sync.reenviar_pendentes), o menu "Avançado" (baixar da nuvem / enviar substituindo a nuvem,
+   sempre com confirmação), backup
    automático (1x/dia, ao abrir o app - core/backup.py e desktop/main.py), manual
    ("Fazer backup agora") e "Restaurar".
 """
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableView,
@@ -88,6 +91,8 @@ class UsuariosScreen(QWidget):
     # vendedores) - quem escuta (MainWindow) reaproveita o mesmo sinal que Propostas/Ficha
     # usam pra avisar o selo da barra lateral e marcar o Dashboard como desatualizado.
     dados_atualizados = Signal()
+    # "Sincronizar" achou conflito (ou nuvem sem controle): (tipo da situacao, MetaNuvem) - a janela principal pergunta
+    decisao_pedida = Signal(str, object)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -257,14 +262,25 @@ class UsuariosScreen(QWidget):
         subtitulo.setProperty("role", "subtitulo")
         cabecalho.addWidget(subtitulo)
         cabecalho.addStretch()
-        botao_sincronizar = QPushButton("Sincronizar agora")
-        botao_sincronizar.setProperty("role", "botao_primario")
-        botao_sincronizar.clicked.connect(self._sincronizar_agora)
-        botao_baixar = QPushButton("Baixar da nuvem")
-        botao_baixar.clicked.connect(self._baixar_da_nuvem_pelo_botao)
-        cabecalho.addWidget(botao_baixar)
-        cabecalho.addWidget(botao_sincronizar)
+        self._botao_sincronizar = QPushButton("Sincronizar")
+        self._botao_sincronizar.setProperty("role", "botao_primario")
+        self._botao_sincronizar.clicked.connect(self._sincronizar_pelo_botao)
+        botao_avancado = QPushButton("Avançado")
+        menu_avancado = QMenu(botao_avancado)
+        self._acao_baixar_avancado = menu_avancado.addAction("Baixar da nuvem (substitui os dados deste computador)…")
+        self._acao_baixar_avancado.triggered.connect(self._baixar_da_nuvem_pelo_botao)
+        self._acao_enviar_avancado = menu_avancado.addAction("Enviar os meus dados (substitui os da nuvem)…")
+        self._acao_enviar_avancado.triggered.connect(self._enviar_substituindo_pelo_botao)
+        botao_avancado.setMenu(menu_avancado)
+        cabecalho.addWidget(botao_avancado)
+        cabecalho.addWidget(self._botao_sincronizar)
         layout_cartao.addLayout(cabecalho)
+
+        self._rotulo_resultado_sync = QLabel("")
+        self._rotulo_resultado_sync.setWordWrap(True)
+        self._rotulo_resultado_sync.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._rotulo_resultado_sync.hide()
+        layout_cartao.addWidget(self._rotulo_resultado_sync)
 
         linha_conta = QHBoxLayout()
         self._rotulo_conta_google = QLabel("")
@@ -277,14 +293,11 @@ class UsuariosScreen(QWidget):
         self._atualizar_conta_google()
 
         explicacao = QLabel(
-            "Cada alteração já é enviada automaticamente. Se uma sincronização falhar (sem "
-            "internet, por exemplo), o aplicativo tenta de novo sozinho em instantes. "
-            "\"Sincronizar agora\" força uma tentativa imediata de todas as abas (clientes, "
-            "equipamentos, propostas, vendedores e bancos), mesmo sem nada ter mudado - útil depois "
-            "de Restaurar um backup, que só mexe no arquivo local. "
-            "\"Baixar da nuvem\" faz o contrário: troca os dados DESTE computador pelos da nuvem (útil ao "
-            "voltar para um computador depois de trabalhar em outro) - um backup do arquivo atual é "
-            "feito antes, e alterações daqui que ainda não foram enviadas são substituídas."
+            "Cada alteração já é enviada automaticamente. \"Sincronizar\" compara este computador com a nuvem e "
+            "faz sozinho o que é seguro: traz os dados da nuvem se ela estiver mais nova (um backup do arquivo "
+            "daqui é feito antes), ou envia o que ficou pendente aqui. Se os dois lados mudaram, ele pergunta "
+            "qual manter - nunca apaga nada sem guardar uma cópia. Em \"Avançado\" ficam as trocas à força: "
+            "baixar tudo da nuvem ou enviar tudo daqui por cima dela."
         )
         explicacao.setProperty("role", "secundario")
         explicacao.setWordWrap(True)
@@ -353,33 +366,61 @@ class UsuariosScreen(QWidget):
         self._atualizar_conta_google()
         self._atualizar_meu_pin()
 
-    def _sincronizar_agora(self) -> None:
-        if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
-            QMessageBox.information(
-                self,
-                "Sincronização desativada",
-                "A sincronização com o Google Sheets está desativada neste aplicativo.",
-            )
-            return
-        try:
-            sincronizacao_mod.sincronizar_tudo_agora()
-        except Exception as exc:  # nunca falhar em silencio
-            QMessageBox.critical(self, "Erro ao sincronizar", str(exc))
-            return
+    def _avisar_sincronizacao_desativada(self) -> bool:
+        """True (e avisa) se a sincronizacao esta desligada neste aplicativo."""
+        if config.SINCRONIZACAO_GOOGLE_ATIVADA:
+            return False
         QMessageBox.information(
             self,
-            "Sincronização iniciada",
-            "Todas as abas (clientes, equipamentos, propostas, vendedores e bancos) foram enviadas para "
-            "sincronizar. Acompanhe o indicador na barra lateral.",
+            "Sincronização desativada",
+            "A sincronização com o Google Sheets está desativada neste aplicativo.",
         )
+        return True
+
+    def _mostrar_resultado_da_sincronizacao(self, texto: str) -> None:
+        self._rotulo_resultado_sync.setText(texto)
+        self._rotulo_resultado_sync.show()
+
+    def _sincronizar_pelo_botao(self) -> None:
+        if self._avisar_sincronizacao_desativada():
+            return
+        try:
+            resultado = rodar_esperando(self, "Sincronizando com a nuvem…", sincronizacao_mod.sincronizar, limite_s=None)
+        except bd.ErroArquivoBloqueado as exc:
+            QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return
+        except sincronizacao_mod.ErroNuvemArquivoTrocado as exc:  # o arquivo JA mudou: as telas precisam reler
+            self.recarregar_apos_mudar_os_dados()
+            self._mostrar_resultado_da_sincronizacao(str(exc))
+            QMessageBox.warning(self, "Os dados foram trocados, mas houve um problema", str(exc))
+            return
+        except sincronizacao_mod.ErroNuvem as exc:
+            QMessageBox.warning(self, "Não foi possível sincronizar", str(exc))
+            return
+        except Exception as exc:  # nunca falhar em silencio
+            QMessageBox.critical(
+                self,
+                "Erro ao sincronizar",
+                f"{type(exc).__name__}: {exc}\n\nNada foi alterado neste computador. Tente de novo em instantes.",
+            )
+            return
+        S = sincronizacao_mod
+        if resultado.acao == S.ACAO_DECIDIR:
+            self._mostrar_resultado_da_sincronizacao(
+                "Os dois lados têm alterações diferentes (ou a nuvem ainda não tem controle de versão). "
+                "Nada foi alterado: escolha o que fazer na janela que se abriu."
+            )
+            self.decisao_pedida.emit(resultado.situacao.tipo, resultado.situacao.meta)
+        elif resultado.acao == S.ACAO_BAIXOU:
+            self.recarregar_apos_mudar_os_dados()
+            self._mostrar_resultado_da_sincronizacao(
+                "A nuvem tinha dados mais novos. " + texto_do_download(resultado.download)
+            )
+        else:
+            self._mostrar_resultado_da_sincronizacao(resultado.texto)
 
     def _baixar_da_nuvem_pelo_botao(self) -> None:
-        if not config.SINCRONIZACAO_GOOGLE_ATIVADA:
-            QMessageBox.information(
-                self,
-                "Sincronização desativada",
-                "A sincronização com o Google Sheets está desativada neste aplicativo.",
-            )
+        if self._avisar_sincronizacao_desativada():
             return
         resposta = QMessageBox.question(
             self,
@@ -393,15 +434,39 @@ class UsuariosScreen(QWidget):
         if resposta == QMessageBox.StandardButton.Yes:
             self.executar_download_da_nuvem()
 
-    def executar_download_da_nuvem(self, *, ligar_controle: bool = False) -> bool:
+    def _enviar_substituindo_pelo_botao(self) -> None:
+        if self._avisar_sincronizacao_desativada():
+            return
+        resposta = QMessageBox.question(
+            self,
+            "Enviar os meus dados",
+            "Trocar os dados da NUVEM pelos DESTE computador?\n\n"
+            "Uma cópia do que a nuvem tem hoje é guardada antes (aparece em Backups). Se outro computador "
+            "enviou alterações que não estão aqui, elas serão substituídas.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resposta == QMessageBox.StandardButton.Yes:
+            self.executar_envio_substituindo_a_nuvem(copia_obrigatoria=True)
+
+    def executar_download_da_nuvem(self, *, ligar_controle: bool = False, exigir_sem_pendencias: bool = False) -> bool:
         """Baixa da nuvem SEM perguntar (quem chama ja perguntou) e mostra o resultado. True se deu certo.
-        `ligar_controle`: aceita uma nuvem ainda sem controle de versao e liga o controle depois de baixar."""
+        `ligar_controle`: aceita uma nuvem ainda sem controle de versao e liga o controle depois de baixar.
+        `exigir_sem_pendencias`: recusa se houver alteracao daqui nao enviada (so o conflito decidido pela pessoa
+        passa por cima disso)."""
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            resultado = sincronizacao_mod.baixar_da_nuvem(ligar_controle=ligar_controle)
+            resultado = sincronizacao_mod.baixar_da_nuvem(
+                ligar_controle=ligar_controle, exigir_sem_pendencias=exigir_sem_pendencias
+            )
         except bd.ErroArquivoBloqueado as exc:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Arquivo bloqueado", str(exc))
+            return False
+        except sincronizacao_mod.ErroNuvemArquivoTrocado as exc:  # o arquivo JA mudou: as telas precisam reler
+            QApplication.restoreOverrideCursor()
+            self.recarregar_apos_mudar_os_dados()
+            QMessageBox.warning(self, "Os dados foram trocados, mas houve um problema", str(exc))
             return False
         except sincronizacao_mod.ErroNuvem as exc:
             QApplication.restoreOverrideCursor()

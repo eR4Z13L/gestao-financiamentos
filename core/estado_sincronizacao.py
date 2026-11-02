@@ -39,8 +39,45 @@ class EstadoLocal:
     abas_pendentes: tuple[str, ...] = ()
 
 
+class EstadoIlegivel(Exception):
+    """O arquivo de estado existe mas nao foi possivel le-lo (erro de disco ou conteudo corrompido): NAO e
+    o mesmo que "nada pendente" - quem decide algo irreversivel (baixar sem perguntar) nao pode seguir."""
+
+
+# Uma gravacao do estado que FALHOU (disco cheio, arquivo travado...): a alteracao ficou salva so aqui e a marca de
+# "pendente" se perdeu. Enquanto isso estiver registrado, o app nao baixa nada sozinho e o indicador avisa.
+# Some quando este computador volta a conhecer a nuvem (baixar) - ver registrar_download.
+_falha_de_gravacao = ""
+
+
+def registrar_falha_de_gravacao(texto: str) -> None:
+    global _falha_de_gravacao
+    with _lock:
+        _falha_de_gravacao = texto[:300]
+
+
+def falha_de_gravacao_atual() -> str:
+    with _lock:
+        return _falha_de_gravacao
+
+
+def limpar_falha_de_gravacao() -> None:
+    global _falha_de_gravacao
+    with _lock:
+        _falha_de_gravacao = ""
+
+
 def _arquivo(caminho_xlsx: Path | None) -> Path:
     return (caminho_xlsx or CAMINHO_XLSX).parent / NOME_DO_ARQUIVO
+
+
+def _interpretar(texto: str) -> EstadoLocal:
+    dados = json.loads(texto)
+    revisao = dados.get("revisao_conhecida")
+    return EstadoLocal(
+        revisao_conhecida=None if revisao is None else int(revisao),
+        abas_pendentes=tuple(str(aba) for aba in dados.get("abas_pendentes", [])),
+    )
 
 
 def ler(caminho_xlsx: Path | None = None) -> EstadoLocal:
@@ -54,15 +91,28 @@ def ler(caminho_xlsx: Path | None = None) -> EstadoLocal:
         _logger.warning("Nao foi possivel ler o estado da sincronizacao (%s).", arquivo, exc_info=True)
         return EstadoLocal()
     try:
-        dados = json.loads(texto)
-        revisao = dados.get("revisao_conhecida")
-        return EstadoLocal(
-            revisao_conhecida=None if revisao is None else int(revisao),
-            abas_pendentes=tuple(str(aba) for aba in dados.get("abas_pendentes", [])),
-        )
+        return _interpretar(texto)
     except (ValueError, TypeError, AttributeError):
         _logger.warning("Estado da sincronizacao ilegivel (%s) - tratado como 'nunca sincronizou'.", arquivo)
         return EstadoLocal()
+
+
+def ler_estrito(caminho_xlsx: Path | None = None) -> EstadoLocal:
+    """Como `ler`, mas um arquivo que existe e nao da pra ler (disco, conteudo corrompido) levanta
+    EstadoIlegivel em vez de virar "vazio". Sem arquivo (nunca sincronizou) continua sendo o estado vazio:
+    revisao_conhecida None. Para decisoes que apagariam dados."""
+    arquivo = _arquivo(caminho_xlsx)
+    try:
+        with _lock:
+            texto = arquivo.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return EstadoLocal()
+    except OSError as exc:
+        raise EstadoIlegivel(f"{type(exc).__name__}: {exc}") from exc
+    try:
+        return _interpretar(texto)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise EstadoIlegivel(f"conteúdo corrompido ({type(exc).__name__})") from exc
 
 
 def _gravar(estado: EstadoLocal, caminho_xlsx: Path | None) -> None:
@@ -123,3 +173,4 @@ def registrar_download(revisao: int, caminho_xlsx: Path | None = None) -> None:
     """Depois de baixar tudo da nuvem: este PC passa a ter exatamente aquela versao, sem nada pendente."""
     with _lock:
         _gravar(EstadoLocal(revisao, ()), caminho_xlsx)
+        limpar_falha_de_gravacao()  # o estado acabou de ser regravado do zero: nao falta marca nenhuma

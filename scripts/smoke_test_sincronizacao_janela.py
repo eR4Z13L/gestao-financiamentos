@@ -1,5 +1,5 @@
 """Testa a INTERFACE da sincronizacao entre dois computadores: o indicador da barra lateral (conflito e
-aviso), o botao "Baixar da nuvem" em Administracao, o que a janela faz em cada situacao ao abrir
+aviso), o "Baixar da nuvem" do menu Avancado em Administracao, o que a janela faz em cada situacao ao abrir
 (sem controle / nuvem mais nova / conflito / outro computador ativo), o sinal de atividade e o
 fechamento. A janela e a de verdade (sem tela); o Google e a nuvem falsa de
 smoke_test_sincronizacao_versao.py e as perguntas ao usuario (escolha_dialog.escolher) sao
@@ -170,21 +170,23 @@ def main() -> None:
                 sheets_sync.limpar_conflito()
 
                 # ------------------------------------------------------------------------------------
-                linha("3) Administracao: botao 'Baixar da nuvem'")
+                linha("3) Administracao: 'Baixar da nuvem' no menu Avancado")
                 preparar_app(versao_conhecida=rev - 1)
                 adm = janela._tela_administracao
                 avisos = []
                 adm.dados_atualizados.connect(lambda: avisos.append(1))
-                botao = _botao(adm, "Baixar da nuvem")
+                assert janela._tela_administracao is adm
+                botao = adm._acao_baixar_avancado
+                assert botao.text().startswith("Baixar da nuvem") and not [b for b in adm.findChildren(QPushButton) if b.text() == "Baixar da nuvem"]
                 assert not igual_ao_dono()
 
                 msgs.limpar(); msgs.resposta_pergunta = QMessageBox.StandardButton.No
-                botao.click()
+                botao.trigger()
                 assert not igual_ao_dono() and not avisos, "respondendo Nao, nada muda"
                 print("OK: respondendo 'Nao' na confirmacao, nada muda.")
 
                 msgs.limpar(); msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
-                botao.click()
+                botao.trigger()
                 assert igual_ao_dono(), "depois de baixar, o app tem os dados da nuvem"
                 assert avisos, "as outras telas foram avisadas (dados_atualizados)"
                 assert any(m[1] == "Dados baixados" for m in msgs.registro), msgs.registro
@@ -195,7 +197,7 @@ def main() -> None:
 
                 msgs.limpar()
                 config.SINCRONIZACAO_GOOGLE_ATIVADA = False
-                botao.click()
+                botao.trigger()
                 assert "desativada" in msgs.ultima()[2].lower()
                 config.SINCRONIZACAO_GOOGLE_ATIVADA = True
                 print("OK: com a sincronizacao desligada, o botao so avisa.")
@@ -203,7 +205,7 @@ def main() -> None:
                 msgs.limpar()
                 nuvem.abas.clear()  # nuvem sem nada
                 msgs.resposta_pergunta = QMessageBox.StandardButton.Yes
-                botao.click()
+                botao.trigger()
                 assert msgs.ultima()[0] in ("warning", "critical") and msgs.ultima()[1] in (
                     "Não foi possível baixar da nuvem", "Erro ao baixar da nuvem"), msgs.registro
                 print("OK: se nao da pra baixar, a janela explica (nunca em silencio).")
@@ -216,15 +218,72 @@ def main() -> None:
                 # 4a nuvem mais nova
                 preparar_app(versao_conhecida=rev - 1)
                 meta = sheets_sync.ler_meta_da_nuvem()
-                escolhas.responder(1)  # Agora nao
-                assert janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta)) is True
-                assert escolhas.vistas[0][0] == "Dados mais novos na nuvem" and "PC-DO-A" in escolhas.vistas[0][1]
+                # com outro computador ativo nao baixa sozinho: pergunta do jeito de sempre
+                com_outro = S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta, outro_computador="PC-DO-A")
+                escolhas.responder(1, 1)  # Continuar mesmo assim; Agora nao
+                assert janela._tratar_situacao_ao_abrir(com_outro) is True
+                assert [v[0] for v in escolhas.vistas] == ["Outro computador ativo", "Dados mais novos na nuvem"]
+                assert "PC-DO-A" in escolhas.vistas[1][1]
                 assert not igual_ao_dono()
-                escolhas.responder(0)  # Baixar
+                escolhas.responder(1, 0)  # Continuar mesmo assim; Baixar
                 msgs.limpar()
-                janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta))
+                janela._tratar_situacao_ao_abrir(com_outro)
                 assert igual_ao_dono()
-                print("OK: 'nuvem mais nova': 'Agora nao' nao muda nada; 'Baixar da nuvem' deixa o app igual a nuvem.")
+                print("OK: 'nuvem mais nova' COM outro PC ativo ainda pergunta: 'Agora nao' nao muda nada; 'Baixar da nuvem' deixa o app igual a nuvem.")
+
+                # 4a' baixar sozinho: so quando e seguro; senao a pergunta de sempre, sem mexer em nada
+                repor_nuvem_do_dono(); rev = nuvem.revisao()
+                preparar_app(versao_conhecida=rev - 1, pendentes=(bd.ABA_CLIENTES,))
+                meta = sheets_sync.ler_meta_da_nuvem()
+                h = amb.caminho.read_bytes()
+                janela._faixa_da_nuvem.hide()
+                # a situacao (lida antes) dizia "mais nova", mas ha pendencia agora: nao baixa sozinho
+                escolhas.responder(1)  # Agora nao
+                janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta))
+                assert escolhas.vistas and escolhas.vistas[0][0] == "Dados mais novos na nuvem"
+                assert amb.caminho.read_bytes() == h and not janela._faixa_da_nuvem.isVisibleTo(janela)
+                assert estado_mod.ler(amb.caminho).abas_pendentes == (bd.ABA_CLIENTES,)
+                # nuvem com aba vazia por engano: o download automatico recusa e cai na pergunta
+                preparar_app(versao_conhecida=rev - 1)
+                h = amb.caminho.read_bytes()
+                guardado = dict(nuvem.abas["PROPOSTAS"].celulas)
+                nuvem.abas["PROPOSTAS"].celulas.clear(); nuvem.abas["PROPOSTAS"].celulas[(1, 1)] = "DATA"
+                escolhas.responder(1)
+                msgs.limpar()
+                try:
+                    janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta))
+                finally:
+                    nuvem.abas["PROPOSTAS"].celulas.update(guardado)
+                assert escolhas.vistas and escolhas.vistas[0][0] == "Dados mais novos na nuvem"
+                assert amb.caminho.read_bytes() == h and not janela._faixa_da_nuvem.isVisibleTo(janela)
+                # seguro: baixa sem perguntar, avisa na faixa e deixa o backup 'pre-nuvem'
+                preparar_app(versao_conhecida=rev - 1)
+                antes_dos_backups = len([b_ for b_ in backup_mod.listar_backups(amb.caminho) if b_.motivo == backup_mod.MOTIVO_PRE_NUVEM])
+                escolhas.responder()
+                avisos_antes = len(avisos)
+                janela._tratar_situacao_ao_abrir(S.SituacaoAoAbrir(S.SITUACAO_NUVEM_MAIS_NOVA, meta))
+                assert not escolhas.vistas and igual_ao_dono()
+                assert len(avisos) == avisos_antes + 1, "as outras telas foram avisadas (dados_atualizados)"
+                faixa = janela._faixa_da_nuvem
+                assert faixa.isVisibleTo(janela) and "Dados atualizados da nuvem" in faixa.text() and "PC-DO-A" in faixa.text()
+                assert janela._temporizador_da_faixa.isActive()
+                assert len([b_ for b_ in backup_mod.listar_backups(amb.caminho) if b_.motivo == backup_mod.MOTIVO_PRE_NUVEM]) == antes_dos_backups + 1
+                assert estado_mod.ler(amb.caminho).revisao_conhecida == nuvem.revisao()
+                janela._temporizador_da_faixa.timeout.emit()
+                assert not faixa.isVisibleTo(janela), "a faixa some sozinha"
+                print("OK: baixar ao abrir: com pendencia ou aba vazia por engano pergunta e nao muda nada; seguro baixa sozinho, faixa + backup.")
+
+                # 4a'' o botao 'Sincronizar' da Administracao com conflito abre a pergunta da janela principal
+                repor_nuvem_do_dono(); rev = nuvem.revisao()
+                preparar_app(versao_conhecida=rev - 1, pendentes=(bd.ABA_CLIENTES,))
+                h = amb.caminho.read_bytes()
+                escolhas.responder(2)  # Decidir depois
+                msgs.limpar()
+                adm._botao_sincronizar.click()
+                assert escolhas.vistas and escolhas.vistas[0][0] == "Conflito com a nuvem" and len(escolhas.vistas[0][2]) == 3
+                assert amb.caminho.read_bytes() == h and sheets_sync.estado_atual().conflito == sheets_sync.TIPO_DIVERGENTE
+                sheets_sync.limpar_conflito()
+                print("OK: 'Sincronizar' com conflito abre a pergunta de 3 opcoes; 'Decidir depois' nao muda nada.")
 
                 # 4b conflito
                 repor_nuvem_do_dono(); rev = nuvem.revisao()
@@ -320,17 +379,17 @@ def main() -> None:
                 repor_nuvem_do_dono(); rev = nuvem.revisao()
                 preparar_app(versao_conhecida=rev - 1)
                 completa = amb.nova_janela("admin", TEMA_ESCURO)
-                escolhas.responder(1)  # Agora nao (na pergunta de "dados mais novos")
+                escolhas.responder()  # nenhuma pergunta: baixa sozinho
+                assert not igual_ao_dono()
                 completa.iniciar_sincronizacao_da_nuvem()
                 _esperar_processando(lambda: completa._situacao_ao_abrir is not None)
                 completa._atualizar_indicador_de_sincronizacao()  # o tique do temporizador
-                assert completa._situacao_ao_abrir is None and escolhas.vistas[0][0] == "Dados mais novos na nuvem"
+                assert completa._situacao_ao_abrir is None and not escolhas.vistas
+                assert igual_ao_dono(), "baixou sozinho"
+                assert completa._faixa_da_nuvem.isVisibleTo(completa) is True and "Dados atualizados da nuvem" in completa._faixa_da_nuvem.text()
                 assert completa._temporizador_do_sinal.isActive(), "depois de tratar a situacao, o sinal de atividade liga"
                 _esperar_processando(lambda: nuvem.meta().get("editando_por") == "PC-DO-APP")
-                _esperar_processando(lambda: sheets_sync.estado_atual().aviso == "Nuvem com dados mais novos")
-                completa._atualizar_indicador_de_sincronizacao()
-                assert completa._indicador_sincronizacao.descricao().nivel == sheets_sync.NIVEL_ATENCAO
-                print("OK: abriu -> perguntou -> ligou o sinal (a nuvem ve 'PC-DO-APP') -> o indicador avisa que a nuvem e mais nova.")
+                print("OK: abriu -> baixou sozinho (faixa avisa) -> ligou o sinal (a nuvem ve 'PC-DO-APP').")
 
                 completa.desligar()
                 assert not completa._temporizador_do_sinal.isActive()

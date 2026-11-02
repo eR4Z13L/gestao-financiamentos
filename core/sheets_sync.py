@@ -164,6 +164,7 @@ class EstadoSincronizacao:
     conflito: str = ""  # TIPO_* do conflito esperando decisao ("" = nenhum)
     aviso: str = ""  # frase curta do aviso sem urgencia ("" = nenhum)
     aviso_detalhe: str = ""
+    falha_do_estado: str = ""  # nao deu pra gravar a marca de "pendente": texto da falha ("" = nenhuma)
 
     @property
     def nivel(self) -> str:
@@ -177,6 +178,8 @@ class EstadoSincronizacao:
             return NIVEL_SINCRONIZANDO
         if self.conflito:
             return NIVEL_CONFLITO
+        if self.falha_do_estado:
+            return NIVEL_FALHOU
         if self.ultima_falha is not None and (self.ultimo_sucesso is None or self.ultima_falha >= self.ultimo_sucesso):
             return NIVEL_FALHOU
         if self.aviso:
@@ -198,6 +201,7 @@ def estado_atual() -> EstadoSincronizacao:
             conflito=_conflito.tipo if _conflito is not None else "",
             aviso=_aviso[0],
             aviso_detalhe=_aviso[1],
+            falha_do_estado=estado_mod.falha_de_gravacao_atual(),
         )
 
 
@@ -257,6 +261,7 @@ def _reiniciar_estado() -> None:
         _ultimo_erro = ""
         _conflito = None
         _aviso = ("", "")
+    estado_mod.limpar_falha_de_gravacao()
     _sinal_enviado = False
     _epoca = 0
     _esquecer_planilha_aberta()
@@ -474,8 +479,12 @@ def sincronizar_em_background(nome_aba: str, df: pd.DataFrame | Callable[[], pd.
 
     try:
         estado_mod.marcar_pendente(nome_aba)
-    except Exception:  # nunca atrapalha quem acabou de salvar - so perde a protecao extra
+    except Exception as exc:  # nunca atrapalha quem acabou de salvar, mas a pessoa fica sabendo (indicador) e nada baixa sozinho
         _logger.warning("Nao foi possivel gravar o estado da sincronizacao (aba %s).", nome_aba, exc_info=True)
+        estado_mod.registrar_falha_de_gravacao(
+            f"Salvei a aba {nome_aba} neste computador, mas não consegui registrar que ela ainda não foi enviada "
+            f"({type(exc).__name__}: {exc})."
+        )
 
     if conflito_atual() is not None:
         _logger.info("Envio da aba %s adiado: ha um conflito com a nuvem esperando decisao.", nome_aba)
@@ -544,6 +553,12 @@ def reenviar_pendentes() -> None:
         sincronizar_em_background(nome_aba, df)
 
 
+def abas_na_fila() -> tuple[str, ...]:
+    """As abas com envio ainda nao confirmado NESTE processo (fila em memoria): o que baixar da nuvem nao pode ignorar."""
+    with _pendentes_lock:
+        return tuple(_pendentes)
+
+
 def bloqueio_de_envio():
     """Segura os envios deste processo enquanto um download da nuvem le e troca os dados locais
     (um envio no meio mandaria dados velhos por cima da nuvem)."""
@@ -568,6 +583,7 @@ def preparar_envio_forcado() -> MetaNuvem:
         _garantir_meta(planilha)
         meta = _ler_meta(planilha)
         estado_mod.definir_revisao(meta.revisao)
+    estado_mod.limpar_falha_de_gravacao()  # vai mandar tudo: nao falta marca nenhuma
     limpar_conflito()
     return meta
 
@@ -613,7 +629,7 @@ def _atualizar_aviso(meta: MetaNuvem) -> None:
             aviso = (
                 "Nuvem com dados mais novos",
                 "Outro computador enviou dados depois da última vez que este atualizou. Em Administração > "
-                "Sincronização e backup, use \"Baixar da nuvem\" para trazer esses dados.",
+                "Sincronização e backup, clique em \"Sincronizar\" para trazer esses dados.",
             )
     with _estado_lock:
         _aviso = aviso
